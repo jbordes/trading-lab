@@ -4,11 +4,12 @@ Laboratorio para investigar, preparar, validar e incubar estrategias de trading 
 
 ## Estado
 
-El proyecto se encuentra en fase de diseño y validación de arquitectura. La versión vigente es la Arquitectura 2.2.
+El proyecto se encuentra en fase de diseño y validación de arquitectura. La versión vigente es la Arquitectura 2.3.
 
 ## Documentación principal
 
-- [Arquitectura 2.2](docs/architecture/tradinglab-architecture-v2.md)
+- [Arquitectura 2.3](docs/architecture/tradinglab-architecture-v2.md)
+- [Comparación y cobertura de TradingLab 1.0 frente a 2.3](docs/architecture/architecture-v1-vs-v2.3-coverage.md)
 - [Guía de estructura del repositorio](docs/architecture/repository-structure-guide.md)
 - [Guía de decisiones de arquitectura](docs/architecture/architecture-decisions-guide.md)
 - [Pipeline SQX → MT5 → Incubación](docs/architecture/sqx-mt5-incubation-pipeline.md)
@@ -29,4 +30,4 @@ El documento `Trading_Lab_2_0_Arquitectura_Inicial.pdf` se conserva para compara
 
 ## Próximo hito
 
-Validar la Arquitectura 2.2 con los socios y comenzar la fase de fundación: estructura mínima, reglas del repositorio, contratos iniciales y primer flujo piloto SQX–MT5.
+Validar la Arquitectura 2.3 con los socios y comenzar la fase de fundación: estructura mínima, contratos iniciales y migración de una estrategia piloto SQX–MT5.

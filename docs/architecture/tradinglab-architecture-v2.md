@@ -1,8 +1,11 @@
 # TradingLab 2.0 — Arquitectura propuesta
 
-**Versión:** 2.2  
-**Estado:** Propuesta para validación de socios  
-**Fecha:** 7 de octubre de 2026  
+**Versión:** 2.3
+
+**Estado:** Propuesta para validación de socios
+
+**Fecha:** 8 de octubre de 2026
+
 **Documento precedente:** `Trading_Lab_2_0_Arquitectura_Inicial.pdf`
 
 ## 1. Resumen ejecutivo
@@ -17,6 +20,8 @@ La arquitectura se apoya en cuatro sistemas con responsabilidades distintas:
 4. **Servicios y herramientas:** API, CLI, procesos de importación y adaptadores para agentes como Codex.
 
 La unidad fundamental de reproducibilidad será el **run manifest**: un registro inmutable que identifica el código, datos, configuración, motor, condiciones de mercado y artefactos utilizados en cada ejecución. Para estrategias generadas en SQX se incorpora además un pipeline formal de preparación, compilación, validación, despliegue e incubación en MT5. La ejecución MT5 ocurre en una VPS externa sin acceso remoto desde TradingLab y se coordina mediante paquetes verificables intercambiados inicialmente por Google Drive.
+
+La versión 2.3 incorpora las capacidades operativas comprobadas en TradingLab 1.0: ejecución manual asistida, embudos SQX por etapas, cohortes y portfolios de estrategias, aliases externos como IDs SQX y Magic Numbers, procedencia de artefactos derivados, evidencia incremental de incubación y promoción controlada de conocimiento y activos reutilizables.
 
 ## 2. Decisiones principales
 
@@ -59,6 +64,24 @@ La versión 2.2 formaliza que TradingLab y MT5 se ejecutan en VPS diferentes y q
 
 Se introducen `RunnerRelease`, `JobPackage`, `Acknowledgement` y `EvidenceBundle`. Google Drive se utiliza como transporte, nunca como fuente de verdad ni como autorización automática de ejecución. El workflow completo se define en `tradinglab-mt5-runner-workflow.md`.
 
+### 2.5 Modificación 2.3 — Cobertura del workflow operativo de TradingLab 1.0
+
+La versión 2.3 contrasta la arquitectura con el workspace histórico y el procedimiento manual utilizado para crear, filtrar, seleccionar, preparar e incubar estrategias. El detalle del contraste se conserva en `architecture-v1-vs-v2.3-coverage.md`.
+
+Se incorporan formalmente:
+
+- un registro manual ligero en `projects/<slug>/records/` mientras no exista el catálogo;
+- un workspace operativo no versionado en `_storage/projects/<slug>/`;
+- `StageRun` para representar cada etapa de un workflow SQX/MT5 y sus conteos;
+- `StrategySet` para cohortes, snapshots de databank, selecciones y portfolios versionados;
+- `Assessment` para decisiones humanas o automáticas, criterios aplicados y supersesión;
+- `ExternalIdentifier` para Magic Numbers, IDs SQX y otros aliases con alcance y vigencia;
+- `ArtifactLineage` para vincular originales con outputs normalizados o derivados;
+- múltiples `EvidenceBundle` u `ObservationBatch` durante una incubación prolongada;
+- reglas de promoción desde proyectos hacia conocimiento, plantillas, componentes y estrategias reutilizables.
+
+Estas extensiones no obligan a crear todas sus tablas en la primera migración. Primero se validarán mediante archivos y un caso piloto; el catálogo se ampliará cuando el flujo demuestre la necesidad.
+
 ## 3. Principios de diseño
 
 1. **Una fuente de verdad por tipo de información.** No se duplicarán resultados, decisiones o configuraciones sin indicar cuál copia es autoritativa.
@@ -71,6 +94,8 @@ Se introducen `RunnerRelease`, `JobPackage`, `Acknowledgement` y `EvidenceBundle
 8. **Promoción mediante gates.** Un bot solo avanza de SQX a incubación cuando supera controles explícitos de preparación, compilación y validación.
 9. **Aislamiento por zonas de confianza.** La automatización no requiere acceso remoto a MT5; cada zona conserva sus credenciales y responsabilidades.
 10. **Pull verificado y aprobación local.** La VPS MT5 obtiene paquetes, verifica integridad y autoriza localmente su ejecución.
+11. **Compatibilidad con la operación humana.** La automatización debe preservar checklists, evidencias y puntos de decisión que hoy permiten al operador comprender y controlar el proceso.
+12. **Migración sin pérdida de procedencia.** Un archivo histórico no se reclasifica, transforma o descarta sin inventario, hash y relación con su ubicación anterior.
 
 ## 4. Vista lógica
 
@@ -151,6 +176,10 @@ MCP será opcional y se implementará como adaptador de operaciones tipadas. Nin
 | `JobPackage` emitido | Storage + catálogo | Copia de transporte en Google Drive |
 | `Acknowledgement` y `EvidenceBundle` | Storage + catálogo | Copia recibida por Google Drive |
 | Estado efectivo informado por VPS MT5 | Catálogo con nivel de verificación | Dashboards y bitácora |
+| Embudo por etapas, cohortes y selecciones | Catálogo; `records/` durante el piloto | Resúmenes y dashboards |
+| Identificadores externos y aliases | Catálogo; `records/` durante el piloto | Nombres de carpetas y reportes heredados |
+| Procedencia de un artefacto derivado | Catálogo + manifiesto de transformación | Documentación y reportes |
+| Material de referencia original | Storage + registro de procedencia/licencia | Resumen promovido a `docs/knowledge/` |
 | Decisión arquitectónica | ADR en Git | Resumen enlazado desde sesiones |
 | Historia de trabajo | Bitácora en Git | Resúmenes periódicos |
 | Secretos | Gestor de secretos o entorno local | Nunca Git ni bitácora |
@@ -182,6 +211,9 @@ trading-lab/
 │       │   ├── strategy/
 │       │   ├── build/
 │       │   └── incubation/
+│       ├── records/                 # registro ligero del piloto
+│       │   ├── strategies/
+│       │   └── runs/
 │       └── platforms/
 │           ├── mt5/
 │           │   ├── src/
@@ -212,7 +244,14 @@ trading-lab/
 │   └── README.md
 │
 ├── infra/
-└── tools/
+├── tools/
+│
+└── _storage/                            # ignorado por Git
+    ├── datasets/
+    ├── artifacts/
+    ├── projects/
+    ├── inbox/
+    └── quarantine/
 ```
 
 ### Convenciones de rutas
@@ -228,14 +267,24 @@ trading-lab/
 ```text
 Project
   └── Strategy
+      ├── ExternalIdentifier
       └── StrategyVersion
           ├── BotBuild
           │   └── JobPackage
           │       └── Deployment ───────────┐
           └── Experiment                    │
               └── Run ◄─────────────────────┘
+                  ├── StageRun
+                  │   ├── input StrategySet
+                  │   └── output StrategySet
                   ├── Metric
-                  └── EvidenceBundle
+                  ├── Assessment
+                  └── EvidenceBundle [1..n]
+
+StrategySet
+  └── StrategySetMember ──► StrategyVersion
+
+Artifact ── ArtifactLineage ──► Artifact
 
 Dataset
   └── DatasetVersion ───────────────┘
@@ -265,6 +314,11 @@ RunnerRelease ──► MT5 Runner ──► JobPackage / EvidenceBundle
 - **DatasetVersion:** snapshot identificable del mercado y sus transformaciones.
 - **Metric:** observación normalizada asociada a un run y a un scope.
 - **Artifact:** archivo inmutable generado o consumido por el laboratorio.
+- **StageRun:** ejecución de una etapa concreta —por ejemplo Build, OOS, HBP, Monte Carlo, SPP o RTRS— con entradas, filtros, conteos y salida identificables.
+- **StrategySet:** conjunto versionado de estrategias; puede representar una cohorte, snapshot de databank, selección manual o portfolio. Su membresía, roles y orden no dependen de una carpeta.
+- **Assessment:** evaluación o decisión sobre una estrategia, set, build, run o deployment, con criterio, resultado, autor u origen, fecha y posible supersesión.
+- **ExternalIdentifier:** alias emitido por otro sistema —ID SQX, Magic Number, nombre histórico o identificador de cuenta— con namespace, alcance y vigencia. Nunca reemplaza la identidad interna.
+- **ArtifactLineage:** relación tipada entre un artefacto derivado y sus fuentes, incluyendo proceso y versión que lo produjeron.
 
 ### Entidades iniciales
 
@@ -289,11 +343,21 @@ El primer esquema debería limitarse a:
 - `artifacts`
 - `run_artifacts`
 
+Capacidades que el piloto debe validar antes de decidir su esquema físico definitivo:
+
+- `stage_runs`
+- `strategy_sets` y `strategy_set_members`
+- `assessments`
+- `external_identifiers`
+- `artifact_lineage`
+
 Las tablas se ampliarán solamente después de validar un caso real. Se aplicarán claves foráneas, restricciones únicas, timestamps en UTC y migraciones versionadas.
 
 ## 8. Identificadores y estados
 
 Las claves internas pueden ser UUID/ULID. Los nombres visibles no serán claves. Cada entidad tendrá además un `slug` estable cuando sea útil.
+
+Los identificadores heredados o externos se conservarán como aliases tipados. Un Magic Number no se considerará globalmente único: su validez puede depender de cuenta, entorno, terminal y periodo. Los IDs internos de SQX, nombres de databank y nombres de carpetas seguirán la misma regla. Toda colisión se registra; nunca se resuelve sobrescribiendo historia.
 
 Estados iniciales sugeridos:
 
@@ -321,6 +385,13 @@ deployment_id: dep_01...
 job_id: job_01...
 evidence_bundle_id: evb_01...
 
+workflow:
+  definition_id: wf_01...
+  stage_run_id: sgr_01...
+  stage: monte-carlo
+  input_strategy_set_id: set_01...
+  output_strategy_set_id: set_02...
+
 source:
   git_commit: 8f31c2a...
   git_dirty: false
@@ -339,7 +410,8 @@ environment:
 data:
   dataset_version_id: dsv_01...
   sha256: "..."
-  timezone: UTC
+  timezone: UTC                 # usar unknown si la fuente no lo declara
+  timezone_verification: declared
 
 execution:
   configuration_sha256: "..."
@@ -355,6 +427,10 @@ execution:
 verification:
   status: verified
   operator_alias: "..."
+
+external_identifiers:
+  sqx_strategy_id: "3.14.77"
+  magic_number: "11112"
 
 market_assumptions:
   symbol: XAUUSD
@@ -388,6 +464,7 @@ No se utilizará un único campo ambiguo `metric_value`. Cada métrica se asocia
 Cada valor incluirá:
 
 - `run_id`;
+- `stage_run_id` o `strategy_set_id` cuando la métrica describa una etapa o cohorte;
 - `metric_definition_id`;
 - valor numérico, textual o booleano;
 - scope: `in_sample`, `out_of_sample`, `full`, `monte_carlo`, etc.;
@@ -406,6 +483,10 @@ Se podrá usar un directorio local ignorado por Git, por ejemplo `_storage/`, si
 - exista un hash SHA-256;
 - el directorio tenga respaldo;
 - una verificación periódica detecte archivos faltantes o alterados.
+
+Durante la operación manual, `_storage/projects/<slug>/` podrá organizar artefactos por estrategia y run, con subdirectorios `inputs/`, `sqx/`, `mt5/` y `derived/`. Esta organización conserva la ergonomía del expediente utilizado en TradingLab 1.0 sin mezclar outputs pesados con `platforms/` o Git. El plano de control correspondiente vive en el catálogo o, durante el piloto, en `projects/<slug>/records/`.
+
+Los materiales oficiales, cursos, documentos aportados y otras referencias binarias se conservarán como artefactos con procedencia, autor, fecha de obtención, licencia o restricción conocida y hash. Solo el conocimiento derivado y autorizado para versionarse se promoverá a `docs/knowledge/`.
 
 ### Evolución
 
@@ -429,6 +510,8 @@ La aparición de un archivo en Drive nunca provocará ejecución automática por
 - fecha de creación;
 - política de retención;
 - productor y run relacionado.
+
+Todo artefacto derivado registrará además sus artefactos fuente, la herramienta y versión del proceso, parámetros relevantes y fecha de transformación. Un workbook, SQLite o resumen regenerable nunca ocultará qué reportes originales utilizó.
 
 ## 12. Procedimientos operativos
 
@@ -566,6 +649,41 @@ El contrato del pipeline se encuentra en `sqx-mt5-incubation-pipeline.md`; la op
 4. Probar restauraciones periódicamente.
 5. Definir RPO y RTO antes de utilizar el laboratorio para operaciones críticas.
 
+### 12.15 Ejecutar un workflow manual por etapas
+
+1. Seleccionar una definición versionada del workflow y registrar sus etapas activas.
+2. Crear el run general y un `StageRun` por etapa realmente ejecutada.
+3. Registrar el `StrategySet` de entrada, configuración, dataset, filtros y conteo inicial.
+4. Preservar el output original, registrar fallos y crear el set de salida sin sobrescribir el anterior.
+5. Vincular cada miembro aceptado, rechazado o no resuelto con su criterio y `Assessment`.
+6. Permitir pausas, repetición o invalidación de una etapa sin reescribir las etapas previas.
+7. Cerrar el workflow solamente cuando los conteos de entrada, salida, rechazo y error reconcilien.
+
+### 12.16 Registrar una selección o portfolio
+
+1. Crear un `StrategySet` versionado de tipo `selection` o `portfolio`.
+2. Registrar miembros mediante IDs internos y conservar IDs SQX, Magic Numbers y nombres históricos como aliases.
+3. Guardar rol, orden, dirección, peso o asignación de riesgo cuando corresponda.
+4. Asociar matrices de correlación, similitud y reportes como artefactos derivados con lineage.
+5. Registrar la decisión humana, criterios, exclusiones y responsable mediante `Assessment`.
+6. Toda modificación crea una nueva versión del set; no se altera una selección ya utilizada.
+
+### 12.17 Incorporar evidencia incremental de incubación
+
+1. Mantener un único run de incubación para el periodo definido y aceptar múltiples bundles o lotes de observación.
+2. Identificar rango temporal, cuenta, environment, deployment y fuentes de cada lote.
+3. Preservar duplicados crudos y deduplicar solo mediante claves nativas demostrables.
+4. Reconciliar cada lote y luego el acumulado, sin confundir un snapshot parcial con el cierre de incubación.
+5. Registrar incidentes, cambios de configuración y gaps temporales como eventos auditables.
+
+### 12.18 Promover conocimiento o activos reutilizables
+
+1. Concluir el experimento y conservar resultados positivos y negativos en su proyecto.
+2. Clasificar el resultado como conocimiento, plantilla/configuración, componente, estrategia candidata o material histórico.
+3. Revisar licencia, procedencia, seguridad y capacidad de reproducción.
+4. Copiar o materializar solo la versión aprobada en `docs/knowledge/`, `platforms/`, `packages/` u otra ubicación autoritativa.
+5. Registrar origen, versión y decisión de promoción; no mover ni borrar automáticamente el expediente del proyecto.
+
 ## 13. Git y GitHub
 
 ### Contenido versionado
@@ -576,6 +694,7 @@ El contrato del pipeline se encuentra en `sqx-mt5-incubation-pipeline.md`; la op
 - configuraciones sin secretos;
 - migraciones y seeds no sensibles;
 - manifiestos pequeños;
+- registros manuales ligeros de estrategias y runs durante el piloto;
 - definición de skills y reglas de agentes.
 
 ### Contenido excluido
@@ -642,6 +761,10 @@ Cada servicio deberá emitir logs estructurados con `correlation_id`, `project_i
 - duplicados rechazados;
 - versión de parsers;
 - migraciones aplicadas.
+- reconciliación de conteos entre etapas;
+- identificadores externos duplicados o no resueltos;
+- derivados sin lineage completo;
+- periodos de incubación sin evidencia recibida.
 
 La calidad mínima incluirá tests unitarios del dominio, fixtures representativas de MT5/SQX, tests de migraciones y al menos un test de extremo a extremo del flujo piloto.
 
@@ -658,6 +781,7 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 
 - Crear estructura mínima, README, AGENTS y `.gitignore`.
 - Definir glosario, identificadores y run manifest.
+- Definir schemas piloto para `records/`, `StageRun`, `StrategySet`, `Assessment`, aliases y artifact lineage.
 - Definir build manifest, política de warnings y gates del pipeline SQX/MT5.
 - Definir esquemas de `RunnerRelease`, `JobPackage`, `Acknowledgement` y `EvidenceBundle`.
 - Definir permisos y estructura de intercambio en Google Drive.
@@ -667,12 +791,14 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 ### Fase 2 — Flujo piloto SQX a MT5
 
 - Seleccionar un proyecto y una estrategia candidata real de SQX.
+- Modelar al menos un embudo SQX real con sus cohortes y una selección/portfolio versionada.
 - Registrar proyecto, estrategia, versión y exportación original.
 - Preparar, compilar y validar un `BotBuild` reproducible.
 - Empaquetar manualmente la primera versión del MT5 Runner y entregarla por Google Drive.
 - Crear el primer JobPackage, procesarlo con aprobación local en la VPS MT5 e iniciar una incubación.
 - Ingerir resultados, conservar artefactos y normalizar métricas.
 - Demostrar trazabilidad desde la métrica hasta evidence bundle, job, deployment, `.ex5`, build, código preparado, exportación SQX, configuración y datos.
+- Demostrar que el socio puede ejecutar el checklist manual y localizar los mismos datos que en el expediente 1.0.
 
 ### Fase 3 — Operación repetible
 
@@ -710,6 +836,13 @@ La arquitectura se considerará validada cuando un caso real permita:
 14. Procesar un job declarativo sin aceptar comandos arbitrarios.
 15. Verificar e ingerir el evidence bundle retornado mediante Google Drive.
 16. Demostrar que Drive puede dejar de estar disponible sin perder la evidencia autoritativa.
+17. Reconstruir un embudo SQX etapa por etapa, incluidos conteos, filtros, cohortes de entrada/salida y descartes.
+18. Identificar una estrategia por su ID interno y resolver correctamente sus aliases SQX y Magic Number dentro del alcance adecuado.
+19. Versionar una selección o portfolio y explicar por qué cada miembro fue incluido o excluido.
+20. Trazar un workbook, SQLite o resumen derivado hasta todos sus reportes originales y la versión del proceso que lo produjo.
+21. Ingerir al menos dos lotes de evidencia de una misma incubación sin duplicar operaciones ni cerrar prematuramente el periodo.
+22. Ejecutar el flujo manual del socio usando `records/` y `_storage/` sin depender de nombres de carpetas como única identidad.
+23. Preservar y localizar resultados negativos, inválidos o superseded sin confundirlos con candidatos vigentes.
 
 ## 19. Decisiones abiertas para los socios
 
@@ -732,9 +865,16 @@ La arquitectura se considerará validada cuando un caso real permita:
 17. Acciones que requerirán aprobación humana en la VPS MT5.
 18. Frecuencia de comprobación de jobs y política de expiración.
 19. Momento y requisitos para migrar a releases inmutables de GitHub.
+20. Convención de IDs internos y namespaces para aliases SQX, Magic Numbers, cuentas y nombres históricos.
+21. Schema mínimo de `StageRun`, `StrategySet` y `Assessment` para el piloto.
+22. Criterios y responsable para promover configuraciones, componentes, conocimiento y estrategias fuera de un proyecto.
+23. Frecuencia de evidencia incremental y condición de cierre de una incubación.
+24. Política de archivo, licencia y acceso para cursos, documentación oficial y fuentes aportadas.
 
 ## 20. Conclusión
 
 TradingLab 2.0 debe construirse como un sistema de evidencia experimental, no como una colección de carpetas o reportes. El monorepo y el catálogo central ofrecen una base adecuada, siempre que el almacenamiento, las fuentes de verdad y la reproducibilidad tengan contratos explícitos.
 
-La siguiente acción, una vez aprobada esta propuesta, será inicializar el repositorio Git, conectarlo con GitHub y ejecutar la Fase 1 sin anticipar componentes que todavía no hayan sido validados por el flujo piloto.
+El contraste con TradingLab 1.0 confirma que la estructura 2.3 cubre tanto la automatización futura como el trabajo humano actual. No se replica la mezcla histórica de archivos: se preservan su expediente, sus controles y su trazabilidad mediante registros, sets, etapas, assessments, aliases y lineage explícitos.
+
+El repositorio Git ya fue inicializado y conectado con GitHub. La siguiente acción, una vez aprobada esta propuesta, será ejecutar la Fase 1 y elegir el recorte del proyecto piloto sin anticipar componentes que todavía no hayan sido validados por el flujo real.

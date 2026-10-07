@@ -1,0 +1,49 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# TradingLab local storage and exchange areas
+_storage/
+storage/
+inbox/
+quarantine/
+
+# Generated trading binaries and runtime output
+*.ex4
+*.ex5
+*.log
+logs/
+
+# Generated builds, packages and caches
+build/
+dist/
+out/
+tmp/
+temp/
+.cache/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary document-rendering files
+docs/architecture/.render-*.html
+.pdf-*-profile-*/
+.chrome-*-profile/

@@ -246,3 +246,24 @@ Después de completar la documentación se autorizó inicializar el repositorio 
 ### Próximo paso
 
 Ejecutar desde el perfil Windows propietario una secuencia controlada para configurar identidad local, añadir `origin`, revisar archivos, crear el commit inicial y autenticar el primer push mediante Git Credential Manager o navegador.
+
+## Cierre — Configuración y primer push de Git
+
+Los pasos pendientes se ejecutaron desde el perfil Windows propietario de la VPS y la inicialización del repositorio quedó completada.
+
+### Resultado verificado
+
+- Identidad local del repositorio: `Juan Pablo Bordes <juanpablo.bordes@gmail.com>`.
+- Remoto `origin`: `https://github.com/jbordes/trading-lab.git`.
+- Rama principal: `main`.
+- Commit inicial: `ddaf250` (`chore: initialize TradingLab 2.0`).
+- La referencia local `origin/main` apunta al mismo commit que `main`.
+- El commit contiene el documento original, la arquitectura 2.2, las guías de apoyo, el pipeline SQX–MT5, el workflow de TradingLab MT5 Runner y esta bitácora.
+- El árbol de trabajo quedó limpio después del primer push.
+
+### Consideraciones operativas
+
+- Se mantiene HTTPS con el administrador de credenciales del perfil Windows; no es necesario migrar a SSH mientras este mecanismo resulte adecuado.
+- Las credenciales no se almacenan en el repositorio ni se comparten con TradingLab o Codex.
+- Fuera de esta VPS, el propietario trabaja habitualmente desde macOS/Unix. Cada equipo utilizará sus propias credenciales y nunca se copiarán claves privadas entre máquinas.
+- La actualización de esta sección queda pendiente de un segundo commit para conservar en la bitácora el cierre de la inicialización.

@@ -1,8 +1,11 @@
 # TradingLab 2.0 — Guía de la estructura del repositorio
 
-**Versión:** 1.2  
-**Estado:** Documento de apoyo para validación  
-**Fecha:** 7 de octubre de 2026  
+**Versión:** 1.3
+
+**Estado:** Documento de apoyo para validación
+
+**Fecha:** 8 de octubre de 2026
+
 **Documento relacionado:** `tradinglab-architecture-v2.md`
 
 ## 1. Propósito
@@ -38,6 +41,9 @@ trading-lab/
 │       │   ├── strategy/
 │       │   ├── build/
 │       │   └── incubation/
+│       ├── records/                 # registro manual ligero durante el piloto
+│       │   ├── strategies/
+│       │   └── runs/
 │       └── platforms/
 │           ├── mt5/
 │           │   ├── src/
@@ -281,6 +287,30 @@ Subdirectorios previstos:
 - `build/`: recetas de preparación, compilación y gates aplicables al bot.
 - `incubation/`: configuración declarativa del deployment y periodo de incubación.
 
+### `projects/<project-slug>/records/` — Registro operativo ligero del piloto
+
+Mientras el catálogo todavía no esté implementado, este directorio permite que una persona ejecute el proceso manual y deje constancia durable sin guardar en Git todos los outputs de SQX y MT5. Es un expediente lógico, no un almacén de artefactos.
+
+Estructura orientativa:
+
+```text
+records/
+├── strategies/
+│   └── <strategy-id>.yaml
+└── runs/
+    └── <run-id>/
+        ├── manifest.yaml
+        ├── summary.md
+        └── artifacts.sha256
+```
+
+- `strategies/` registra identidad estable, proyecto, familia, dirección, Magic Number cuando aplique, estado y relaciones entre versiones.
+- `manifest.yaml` registra quién ejecutó la tarea, fechas, versiones de SQX/MT5, dataset, símbolo, timeframe, costes, configuración, etapas y URI de los artefactos.
+- `summary.md` conserva conteos, métricas relevantes, incidencias, interpretación, decisión y próximo paso.
+- `artifacts.sha256` relaciona cada archivo operativo con su nombre, ubicación lógica y hash, de modo que pueda comprobarse aunque se encuentre fuera de Git.
+
+Estos registros deben ser pequeños, revisables y libres de secretos. No duplican cada celda de un reporte ni cada parámetro serializado: enlazan la configuración canónica y resumen lo necesario para reconstruir y auditar el trabajo. Cuando exista el catálogo, estos archivos podrán importarse; no deben diseñarse como una segunda base de datos permanente.
+
 ### `projects/<project-slug>/platforms/`
 
 Agrupa material versionable específico de herramientas externas. La palabra “platform” indica que MT5 y SQX son adaptadores, no el modelo central del laboratorio.
@@ -296,11 +326,21 @@ Puede contener:
 - instrucciones específicas de MT5;
 - fixtures mínimas para pruebas.
 
-No debe contener `.ex5`, instalaciones de MT5, históricos completos, cachés del tester ni miles de reportes. Esos elementos se generan o almacenan fuera de Git.
+No debe contener outputs de ejecución o datos operativos. En particular, quedan fuera de `platforms/mt5/` y de Git:
+
+- ejecutables `.ex5` y `.ex4`;
+- instalaciones o copias del directorio de datos de MT5;
+- históricos completos de ticks, barras o símbolos;
+- cachés, agentes y logs del Strategy Tester;
+- reportes completos HTML, XML, CSV, XLSX, PDF o PNG de backtests e incubaciones;
+- paquetes de deployment, evidence bundles y grandes colecciones de presets generados;
+- bases de datos, copias de cuentas y cualquier archivo con credenciales o datos sensibles.
+
+Esos elementos viven en `_storage/`, en Google Drive durante el intercambio con la VPS MT5 o, más adelante, en almacenamiento de objetos y releases controlados. Git conserva el manifiesto, hash, resumen y decisión que permiten localizarlos y verificarlos.
 
 Organización interna:
 
-- `src/`: código MQL5 mantenido por el equipo; no outputs temporales.
+- `src/`: código MQL5 mantenido o promovido explícitamente por el equipo; el `.mq5` generado para un candidato todavía experimental permanece en storage.
 - `include/`: librerías y componentes compartidos versionados.
 - `presets/`: presets pequeños, seguros y sin secretos.
 - `tests/`: fixtures y comprobaciones técnicas del bot.
@@ -316,7 +356,17 @@ Puede contener:
 - adaptadores de exportación;
 - fixtures mínimas.
 
-No debe contener instalaciones de StrategyQuant X, bases de datos locales, resultados masivos ni artefactos que puedan regenerarse.
+No debe contener outputs de una minería, retest o análisis. En particular, quedan fuera de `platforms/sqx/` y de Git:
+
+- instalaciones de StrategyQuant X y su estado interno;
+- históricos completos de mercado y copias de Data Manager;
+- databanks, poblaciones, generaciones y colecciones de candidatos;
+- estrategias `.sqx` generadas por una corrida, salvo una fixture mínima o plantilla promovida y justificada;
+- reportes completos HTML, CSV, JSON, XML, XLSX, PDF, gráficos PNG y exportaciones masivas;
+- bases SQLite, cachés, logs, temporales y snapshots completos de la instalación;
+- `.mq5` exportados de candidatos y cualquier `.ex5` compilado.
+
+Sí pueden versionarse configuraciones pequeñas y canónicas como `.cfx`, `.sqb`, XML o plantillas `.sqx` cuando sean necesarias para reproducir un workflow, estén documentadas, no contengan secretos y su hash quede registrado. Que un formato sea admitido no significa que toda exportación de ese formato deba entrar en Git.
 
 Organización interna:
 
@@ -508,7 +558,7 @@ Regla de promoción:
 - si es un procedimiento de agente, puede ser script de una skill;
 - si solo sirve una vez, debe eliminarse o documentarse claramente.
 
-## 12. `_storage/` — Área local no versionada
+## 12. `_storage/` — Área local no versionada y espacio de trabajo humano
 
 Aunque no forma parte del contenido de Git, durante el piloto puede existir un directorio `_storage/` ignorado:
 
@@ -516,16 +566,71 @@ Aunque no forma parte del contenido de Git, durante el piloto puede existir un d
 _storage/
 ├── datasets/
 ├── artifacts/
+├── projects/
+│   └── <project-slug>/
+│       ├── inbox/
+│       ├── strategies/
+│       └── runs/
+│           └── <run-id>/
+│               ├── inputs/
+│               ├── sqx/
+│               ├── mt5/
+│               └── derived/
 ├── inbox/
 └── quarantine/
 ```
 
 - `datasets/`: snapshots de datos de mercado.
 - `artifacts/`: reportes y outputs registrados.
+- `projects/`: espacio de trabajo reconocible para la operación manual, separado por proyecto, estrategia y ejecución.
 - `inbox/`: archivos pendientes de validar e importar.
 - `quarantine/`: archivos rechazados, corruptos o de formato desconocido.
 
-Su contenido requiere backup separado. La base guarda URI y hash; moverlo a almacenamiento de objetos no debe exigir cambiar el modelo de dominio.
+Dentro de una ejecución, `inputs/` preserva lo recibido; `sqx/` contiene exports y reportes de SQX; `mt5/` contiene builds y reportes de MT5; y `derived/` contiene comparativas, hojas de trabajo o bases reconstruidas. Los originales no se sobrescriben. Un archivo derivado debe declarar sus fuentes.
+
+Esta estructura permite conservar el modo de trabajo manual actual: el socio puede abrir una carpeta de estrategia o ejecución y encontrar todos los insumos y resultados relacionados. La diferencia es que la identidad, los parámetros importantes, los hashes y la decisión quedan también registrados en `projects/<slug>/records/`, en vez de depender del nombre informal de la carpeta.
+
+El contenido de `_storage/` requiere backup separado: `.gitignore` evita subirlo a Git, pero **no constituye una copia de seguridad**. La base guarda URI y hash; mover el contenido a almacenamiento de objetos no debe exigir cambiar el modelo de dominio.
+
+### 12.1 Convivencia con el procedimiento manual de TradingLab 1.0
+
+El análisis del workspace `C:\TradingLab` mostró que el procedimiento real agrupa por proyecto, tanda y estrategia:
+
+- configuraciones Builder/Retester y snapshots de tareas SQX;
+- candidatos `.sqx`, fuentes `.mq5`, presets `.set` y compilados `.ex5`;
+- backtests SQX y MT5 en HTML, XML, CSV, XLSX y PNG;
+- hojas de incubación identificadas por estrategia o Magic Number;
+- scripts de consolidación, bases SQLite y resúmenes de selección;
+- documentación, decisiones, errores detectados y reportes de sesión.
+
+Este expediente autocontenido ayuda al operador y no debe eliminarse abruptamente. TradingLab 2.0 separa su **plano de control** de su **plano de artefactos**:
+
+| Elemento observado en 1.0 | Destino en 2.0 | Regla |
+| --- | --- | --- |
+| Objetivo, estado, responsables y criterios | `projects/<slug>/README.md` y `docs/` | Versionado |
+| Parámetros canónicos de estrategia, build o incubación | `projects/<slug>/configs/` | Versionado y enlazado por hash |
+| Identidad, Magic Number, versión, run, métricas y decisión | `projects/<slug>/records/` | Versionado durante el piloto |
+| Plantilla SQX o configuración reutilizable promovida | `platforms/sqx/` | Solo pieza pequeña, explicada y estable |
+| Fuente MQL5 mantenida o promovida | `platforms/mt5/src/` | Versionada; el generado experimental no entra |
+| Candidatos `.sqx`/`.mq5`, `.ex5`, reportes y gráficos | `_storage/projects/<slug>/...` | No versionado; URI y SHA-256 registrados |
+| Históricos, databanks y resultados masivos | `_storage/datasets/` o storage externo | Nunca en `platforms/` |
+| Scripts estables de ingestión o comparación | `packages/ingestion/`, `packages/reporting/` o `tools/` | Se promueven según su responsabilidad |
+| Workbook o SQLite reconstruible de incubación | `_storage/.../derived/` | Derivado; registrar fuentes y versión del proceso |
+| Lección reutilizable | `docs/knowledge/` | Promoción explícita, conservando origen |
+| Cronología de lo realizado | `docs/sessions/` | No sustituye el registro del run |
+
+Los identificadores humanos actuales pueden mantenerse como aliases, por ejemplo `11112` o `3.14.77`, pero no deben ser la única identidad. Cada estrategia y cada ejecución recibirán identificadores estables; generación, ranking, tanda y Magic Number serán metadata consultable.
+
+La migración será incremental:
+
+1. congelar TradingLab 1.0 como fuente histórica de solo lectura y crear un inventario con hashes;
+2. elegir un proyecto piloto activo, sin mover inicialmente los demás;
+3. registrar estrategias y runs activos en `records/` y copiar sus artefactos a `_storage/` preservando originales;
+4. validar que el socio pueda completar el mismo checklist manual y localizar cada evidencia;
+5. automatizar primero la generación de manifiestos, hashes e índices, no la decisión de trading;
+6. importar los registros al catálogo cuando este exista y mantener redirects o mapas hacia los IDs antiguos.
+
+No se hará una migración masiva basada solo en extensiones. Un `.mq5`, `.sqx`, `.xml` o `.csv` puede ser fuente canónica, fixture, resultado o temporal según su procedencia y función; primero se clasifica y después se mueve o promueve.
 
 ## 13. Cómo decidir dónde colocar algo
 
@@ -539,7 +644,8 @@ Su contenido requiere backup separado. La base guarda URI y hash; moverlo a alma
 8. ¿Modifica o inicializa el esquema? → `db/`.
 9. ¿Define despliegue o entorno? → `infra/`.
 10. ¿Es una utilidad interna? → `tools/`.
-11. ¿Es pesado, generado o binario? → storage, con referencia en el catálogo.
+11. ¿Es un manifiesto, resumen o inventario pequeño de una ejecución manual? → `projects/<slug>/records/` durante el piloto.
+12. ¿Es pesado, generado, binario, un histórico o un reporte completo? → `_storage/`, con URI y hash en el registro o catálogo.
 
 ## 14. Errores que la estructura intenta evitar
 
@@ -570,6 +676,7 @@ projects/
 └── <pilot-project>/
     ├── README.md
     ├── configs/
+    ├── records/
     └── platforms/
 db/
 └── migrations/

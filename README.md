@@ -15,8 +15,10 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Pipeline SQX → MT5 → Incubación](docs/architecture/sqx-mt5-incubation-pipeline.md)
 - [Workflow de TradingLab MT5 Runner](docs/architecture/tradinglab-mt5-runner-workflow.md)
 - [Análisis y diseño del Harness 0.1](docs/architecture/development-harness-0.1.md)
+- [Análisis del informe automatizado de incubación MT5](docs/architecture/mt5-incubator-report-analysis.md)
 - [Entorno de desarrollo](docs/development/environment.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
+- [Roadmap del informe automatizado de incubación MT5](docs/development/mt5-incubator-report-roadmap.md)
 - [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 

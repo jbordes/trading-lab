@@ -4,7 +4,7 @@ Laboratorio para investigar, preparar, validar e incubar estrategias de trading 
 
 ## Estado
 
-El proyecto se encuentra en fase de diseño y validación de arquitectura. La versión vigente es la Arquitectura 2.3.
+El proyecto se encuentra en fase de fundación y validación de arquitectura. La versión vigente es la Arquitectura 2.3 y el entorno de desarrollo utiliza el Harness 0.1.
 
 ## Documentación principal
 
@@ -14,6 +14,8 @@ El proyecto se encuentra en fase de diseño y validación de arquitectura. La ve
 - [Guía de decisiones de arquitectura](docs/architecture/architecture-decisions-guide.md)
 - [Pipeline SQX → MT5 → Incubación](docs/architecture/sqx-mt5-incubation-pipeline.md)
 - [Workflow de TradingLab MT5 Runner](docs/architecture/tradinglab-mt5-runner-workflow.md)
+- [Análisis y diseño del Harness 0.1](docs/architecture/development-harness-0.1.md)
+- [Entorno de desarrollo](docs/development/environment.md)
 - [Bitácora de sesiones](docs/sessions/)
 
 El documento `Trading_Lab_2_0_Arquitectura_Inicial.pdf` se conserva para comparar la propuesta inicial con la arquitectura vigente.
@@ -30,4 +32,13 @@ El documento `Trading_Lab_2_0_Arquitectura_Inicial.pdf` se conserva para compara
 
 ## Próximo hito
 
-Validar la Arquitectura 2.3 con los socios y comenzar la fase de fundación: estructura mínima, contratos iniciales y migración de una estrategia piloto SQX–MT5.
+Completar la fase de fundación con los contratos iniciales y comenzar la migración de una estrategia piloto SQX–MT5.
+
+## Validación del repositorio
+
+Con [uv](https://docs.astral.sh/uv/) instalado:
+
+```text
+uv sync --locked
+uv run python scripts/check.py full
+```

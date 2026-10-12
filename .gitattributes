@@ -4,6 +4,14 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.json text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.sh text eol=lf
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.python-version text eol=lf
 *.ps1 text eol=crlf
 *.mq5 text eol=crlf
 *.mqh text eol=crlf

@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
+
+from session import SESSION_NAME, validate_sessions
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -25,7 +28,12 @@ REQUIRED_PATHS = (
     "AGENTS.md",
     "README.md",
     "docs/architecture/development-harness-0.1.md",
+    "docs/adr/0001-portable-development-harness.md",
+    "docs/adr/README.md",
     "docs/development/environment.md",
+    "docs/sessions/README.md",
+    "docs/sessions/_template.md",
+    ".env.example",
     "pyproject.toml",
     "scripts/check.py",
     "uv.lock",
@@ -47,7 +55,8 @@ SECRET_PATTERNS = (
     (
         "assigned secret",
         re.compile(
-            r"(?im)^\s*(?:[{,]\s*)?[\"']?(?:api[_-]?key|password|secret|token)[\"']?\s*[:=]\s*"
+            r"(?im)^\s*(?:[{,]\s*)?[\"']?(?:[A-Za-z0-9]+[_-])*"
+            r"(?:api[_-]?key|password|secret|token)[\"']?\s*[:=]\s*"
             r"[\"']?(?!<|your[_-]|change[_-]?me|example|placeholder)[A-Za-z0-9_./+=-]{12,}"
         ),
     ),
@@ -55,6 +64,9 @@ SECRET_PATTERNS = (
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 CONFLICT_MARKERS = re.compile(r"^(?:<{7}|={7}|>{7})(?:\s|$)", re.MULTILINE)
+ADR_NAME = re.compile(r"^\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+ADR_STATES = {"proposed", "accepted", "superseded", "rejected"}
+ADR_SECTIONS = ("Contexto", "Alternativas consideradas", "Decisión", "Consecuencias")
 
 
 def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -95,7 +107,9 @@ def check_repository_boundaries(root: Path, files: list[Path]) -> list[str]:
 
 
 def is_text_file(path: Path) -> bool:
-    return path.name in {".editorconfig", ".gitignore", ".python-version"} or path.suffix.lower() in TEXT_SUFFIXES
+    return path.name in {
+        ".editorconfig", ".env.example", ".gitattributes", ".gitignore", ".python-version"
+    } or path.suffix.lower() in TEXT_SUFFIXES
 
 
 def check_text_safety(root: Path, files: list[Path]) -> list[str]:
@@ -136,6 +150,64 @@ def check_markdown_links(root: Path, files: list[Path]) -> list[str]:
     return errors
 
 
+def check_adrs(root: Path) -> list[str]:
+    errors: list[str] = []
+    directory = root / "docs" / "adr"
+    for path in sorted(directory.glob("*.md")):
+        if path.name in {"README.md", "_template.md"}:
+            continue
+        if not ADR_NAME.fullmatch(path.name):
+            errors.append(f"Nombre de ADR inválido: {path.name}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        status_match = re.search(r"(?m)^\*\*Estado:\*\*\s*(\w+)\s*$", text)
+        if not status_match or status_match.group(1) not in ADR_STATES:
+            errors.append(f"ADR {path.name} sin Estado admitido")
+        if not re.search(r"(?m)^\*\*Fecha:\*\*\s*\d{4}-\d{2}-\d{2}\s*$", text):
+            errors.append(f"ADR {path.name} sin Fecha ISO")
+        for section in ADR_SECTIONS:
+            if not re.search(rf"(?m)^## {re.escape(section)}\s*$", text):
+                errors.append(f"ADR {path.name} sin sección {section}")
+    return errors
+
+
+def changed_files(root: Path) -> tuple[set[Path], list[str]]:
+    base_branch = os.environ.get("GITHUB_BASE_REF")
+    if not base_branch:
+        branch_result = run_git(root, "branch", "--show-current")
+        branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
+        if branch in {"", "main", "master"}:
+            return set(), []
+        base_branch = "main"
+    base_ref = f"origin/{base_branch}"
+    verify = run_git(root, "rev-parse", "--verify", base_ref)
+    if verify.returncode != 0:
+        return set(), [f"No se pudo resolver la base de la rama: {base_ref}"]
+    paths: set[Path] = set()
+    for args in (("diff", "--name-only", "-z", f"{base_ref}...HEAD"), ("diff", "--name-only", "-z", "--cached")):
+        result = run_git(root, *args)
+        if result.returncode != 0:
+            return set(), ["No se pudo calcular el diff para validar la bitácora"]
+        paths.update(Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item)
+    return paths, []
+
+
+def check_change_traceability(root: Path) -> list[str]:
+    paths, errors = changed_files(root)
+    if errors or not paths:
+        return errors
+    session_changed = any(
+        len(path.parts) == 3
+        and path.parts[:2] == ("docs", "sessions")
+        and SESSION_NAME.fullmatch(path.name)
+        and (root / path).is_file()
+        for path in paths
+    )
+    if not session_changed:
+        errors.append("La rama debe crear o actualizar una bitácora en docs/sessions/YYYY-MM-DD-<tema>.md")
+    return errors
+
+
 def run_unit_tests(root: Path) -> list[str]:
     result = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/harness", "-p", "test_*.py", "-v"],
@@ -151,7 +223,10 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_repository_boundaries(root, files))
     errors.extend(check_text_safety(root, files))
     errors.extend(check_markdown_links(root, files))
+    errors.extend(check_adrs(root))
+    errors.extend(validate_sessions(root, require_closed=mode == "full"))
     if mode == "full":
+        errors.extend(check_change_traceability(root))
         errors.extend(run_unit_tests(root))
     return errors
 

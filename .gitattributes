@@ -9,6 +9,7 @@
 *.lock text eol=lf
 *.sh text eol=lf
 .editorconfig text eol=lf
+.env.example text eol=lf
 .gitattributes text eol=lf
 .gitignore text eol=lf
 .python-version text eol=lf

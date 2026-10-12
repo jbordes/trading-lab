@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location("tradinglab_check", ROOT / "scripts" / "check.py")
 assert SPEC and SPEC.loader
 CHECK = importlib.util.module_from_spec(SPEC)
@@ -14,6 +19,10 @@ SPEC.loader.exec_module(CHECK)
 
 
 class HarnessChecksTest(unittest.TestCase):
+    @staticmethod
+    def run_git(root: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
     def test_repository_boundaries_reject_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -60,6 +69,16 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, ["Posible assigned secret en config.json"])
 
+    def test_text_safety_detects_prefixed_environment_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = Path(".env.example")
+            (root / relative).write_text("BROKER_API_TOKEN=real-looking-token-123456\n", encoding="utf-8")
+
+            errors = CHECK.check_text_safety(root, [relative])
+
+            self.assertEqual(errors, ["Posible assigned secret en .env.example"])
+
     def test_markdown_links_accept_existing_relative_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -82,6 +101,46 @@ class HarnessChecksTest(unittest.TestCase):
             errors = CHECK.check_markdown_links(root, [Path("docs/source.md")])
 
             self.assertEqual(errors, ["Enlace Markdown roto en docs/source.md: missing.md"])
+
+    def test_adr_validation_accepts_required_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr = root / "docs" / "adr" / "0001-test-decision.md"
+            adr.parent.mkdir(parents=True)
+            adr.write_text(
+                "# ADR-0001: Test\n\n**Estado:** accepted\n\n**Fecha:** 2026-10-12\n\n"
+                "## Contexto\n\nContexto.\n\n## Alternativas consideradas\n\nUna.\n\n"
+                "## Decisión\n\nDecisión.\n\n## Consecuencias\n\nConsecuencia.\n",
+                encoding="utf-8",
+            )
+
+            errors = CHECK.check_adrs(root)
+
+            self.assertEqual(errors, [])
+
+    def test_traceability_works_in_detached_ci_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "README.md").write_text("# Test\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c", "user.name=Harness Test",
+                "-c", "user.email=harness@example.invalid",
+                "commit", "-m", "baseline",
+            )
+            self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.run_git(root, "checkout", "--detach")
+            session_path = root / "docs" / "sessions" / "2026-10-12-ci-check.md"
+            session_path.parent.mkdir(parents=True)
+            session_path.write_text("# Session\n", encoding="utf-8")
+            self.run_git(root, "add", session_path.relative_to(root).as_posix())
+
+            with patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}):
+                errors = CHECK.check_change_traceability(root)
+
+            self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

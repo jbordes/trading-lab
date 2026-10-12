@@ -13,6 +13,18 @@
 - Integrar cambios en `main` mediante pull request y merge humano.
 - Mantener los commits pequeños, coherentes y sin mezclar cambios ajenos.
 - No crear estructuras, servicios o automatizaciones antes de que el flujo piloto demuestre su necesidad.
+- Crear o actualizar una bitácora `docs/sessions/YYYY-MM-DD-<tema>.md` en cada rama y cerrarla antes del PR.
+- Registrar decisiones durables en `docs/adr/`; no reescribir ADR aceptados para cambiar su decisión.
+
+## Mapa mínimo
+
+- `docs/architecture/`: estado y dirección vigente del sistema.
+- `docs/adr/`: decisiones durables, alternativas y consecuencias.
+- `docs/sessions/`: historia cronológica y próximos pasos.
+- `docs/development/`: preparación y operación del entorno.
+- `scripts/`: mecánica determinista del harness y, en el futuro, utilidades controladas.
+- `tests/`: verificaciones automatizadas.
+- `_storage/`: artefactos locales fuera de Git.
 
 ## Seguridad
 
@@ -27,7 +39,7 @@
 - Preparar el entorno con `uv sync --locked`.
 - Durante el trabajo ejecutar `uv run python scripts/check.py fast`.
 - Antes de cerrar un cambio ejecutar `uv run python scripts/check.py full`.
-- Un cambio está terminado cuando las validaciones pasan, la documentación relevante está actualizada y no quedan secretos ni artefactos prohibidos en el diff.
+- Un cambio está terminado cuando las validaciones pasan, la bitácora está cerrada, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff.
 
 ## Diseño del harness
 

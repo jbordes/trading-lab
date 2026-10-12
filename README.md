@@ -16,6 +16,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Workflow de TradingLab MT5 Runner](docs/architecture/tradinglab-mt5-runner-workflow.md)
 - [Análisis y diseño del Harness 0.1](docs/architecture/development-harness-0.1.md)
 - [Entorno de desarrollo](docs/development/environment.md)
+- [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 
 El documento `Trading_Lab_2_0_Arquitectura_Inicial.pdf` se conserva para comparar la propuesta inicial con la arquitectura vigente.

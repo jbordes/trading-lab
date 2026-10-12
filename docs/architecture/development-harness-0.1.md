@@ -68,8 +68,28 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 - `.github/pull_request_template.md`: checklist de revisión.
 - `.editorconfig`: codificación y finales de línea coherentes.
 - `docs/development/environment.md`: preparación y operación diaria.
+- `docs/sessions/`: proceso, plantilla, generador y validación de la bitácora.
+- `docs/adr/`: convención, plantilla y validación de decisiones durables.
+- `.env.example`: contrato seguro de configuración, actualmente sin variables requeridas.
 
-## 6. Decisiones postergadas deliberadamente
+## 6. Cobertura de requisitos de la arquitectura
+
+| Requisito arquitectónico | Mecanismo del Harness 0.1 | Estado |
+|---|---|---|
+| Fuentes de verdad separadas | Reglas en `AGENTS.md` y fronteras verificadas de Git/storage | Cubierto |
+| Historia de trabajo en bitácora | `session-v1`, generador, validación y cambio obligatorio por rama | Cubierto |
+| Decisiones durables mediante ADR | Plantilla, estados y validador estructural | Cubierto |
+| Ramas, PR y revisión humana | Política, plantilla de PR y CI sin auto-merge | Cubierto; falta activar ruleset remota |
+| Secretos fuera de Git | `.gitignore`, `.env.example` y detección de patrones evidentes | Cubierto como primera barrera; requiere revisión humana |
+| Portabilidad | Python + uv y CI Windows/macOS/Linux | Cubierto |
+| Criterio de finalización | Check completo, sesión cerrada, documentación y ADR | Cubierto |
+| Schemas y fixtures de dominio | Requiere contratos y archivos reales del piloto | Postergado con disparador explícito |
+| Hashes, manifests y lineage | Requiere seleccionar el expediente piloto | Postergado con disparador explícito |
+| Backup y restauración | Requiere decidir catálogo y storage autoritativos | Postergado con disparador explícito |
+| Observabilidad y tests E2E | Requiere servicios y flujo ejecutable | Postergado con disparador explícito |
+| Skills operativas | Requiere repetir y estabilizar primero los procedimientos manuales | Postergado con disparador explícito |
+
+## 7. Decisiones postergadas deliberadamente
 
 - schemas de dominio y fixtures reales, hasta seleccionar la estrategia piloto;
 - validación masiva de hashes y manifests;
@@ -79,7 +99,7 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 - skills de importación, migración o cierre de sesión;
 - automatización de merge o deployment.
 
-## 7. Criterios de aceptación
+## 8. Criterios de aceptación
 
 El Harness 0.1 queda aceptado cuando:
 
@@ -89,3 +109,4 @@ El Harness 0.1 queda aceptado cuando:
 4. impide incorporar accidentalmente storage o ejecutables MT4/MT5;
 5. sus reglas críticas tienen tests;
 6. existe un pull request revisable y el merge queda bajo control humano.
+7. cada rama deja una sesión cerrada y las decisiones durables quedan enlazadas mediante ADR.

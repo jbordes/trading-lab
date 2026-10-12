@@ -8,49 +8,52 @@
 
 ## Principios de ejecución
 
-- Entregas verticales y verificables, sin construir la base de datos futura.
-- Captura de MT5 estrictamente de solo lectura.
+- Entregable v1: un libro por `strategy_id + magic_number`, compatible con `encubadora_3.95.48_11122.xlsx`.
+- El master anterior es referencia de validación, no entregable inicial.
+- Captura MT5 estrictamente de solo lectura.
 - Excel como proyección reemplazable, nunca como única fuente.
-- Evidencia original fuera de Git; fixtures mínimos y anonimizados dentro de Git.
+- Evidencia original fuera de Git; fixtures mínimos anonimizados dentro de Git.
 - Idempotencia, hashes y reconciliación desde el primer incremento.
-- Revisión independiente obligatoria por tratar datos de trading y reconstrucción económica.
+- Revisión independiente por tratar datos de trading y cálculos económicos.
 
-## Fase 0 — Contrato con el socio
+## Fase 0 — Congelar el contrato con el socio
 
-**Objetivo:** convertir el Excel actual en criterios de aceptación inequívocos.
-
-Tareas:
-
-1. Revisar juntos el libro por estrategia y el master.
-2. Marcar hojas y columnas obligatorias, opcionales y obsoletas.
-3. Definir métricas y fórmulas con ejemplos manuales.
-4. Elegir Strategy ID/Magic Number/comment como mapping autoritativo.
-5. Acordar corte diario, timezone, ubicación, nombres y retención.
-6. Confirmar si el alcance incluye abiertos, pendientes y master.
-
-**Salida:** contrato de informe versionado y un workbook esperado anonimizado.
-
-**Gate:** el socio puede explicar cómo usa cada campo requerido y aprueba el ejemplo esperado.
-
-## Fase 1 — Golden dataset y paridad histórica
-
-**Objetivo:** convertir las referencias existentes en una base de pruebas segura.
+**Objetivo:** convertir el workbook objetivo en criterios de aceptación inequívocos.
 
 Tareas:
 
-1. Seleccionar una cuenta, estrategias y periodo pequeños pero representativos.
-2. Anonimizar reporte, IDs personales y nombres sin romper relaciones.
-3. Extraer del prototipo las reglas de comentario, net profit, deduplicación y reconciliación.
-4. Registrar conteos y totales esperados del prototipo como golden results.
-5. Incluir casos de estrategia sin resolver, duplicado y cierre parcial.
+1. Revisar `encubadora_3.95.48_11122.xlsx` como referencia principal.
+2. Confirmar una hoja `TRADES`, sus 37 columnas, orden, tipos, filtro, congelado y anchos.
+3. Decidir si `magic_number` se agrega como columna 38 o queda en un manifest autoritativo.
+4. Confirmar nombre, ruta y unidad de salida: estrategia + Magic Number.
+5. Confirmar que v1 contiene solo trades cerrados.
+6. Acordar mapping, timezone, corte diario, correcciones y retención.
+7. Registrar expresamente que el master y hojas adicionales quedan fuera de v1.
 
-**Salida:** fixtures mínimos y tests de contrato, no reportes operativos completos.
+**Salida:** contrato versionado y workbook esperado anonimizado.
 
-**Gate:** los resultados anonimizados reproducen posiciones, costes y beneficio dentro de tolerancias acordadas.
+**Gate:** el socio aprueba el ejemplo esperado y puede explicar el uso de cada campo requerido.
+
+## Fase 1 — Golden dataset del archivo objetivo
+
+**Objetivo:** convertir la referencia existente en una base de pruebas segura.
+
+Tareas:
+
+1. Construir un fixture mínimo a partir de las siete filas del workbook y su fuente MT5.
+2. Anonimizar cuentas, personas e IDs sin romper relaciones.
+3. Preservar casos de IDs de cierre ausentes, timezone desconocido y estados explícitos.
+4. Verificar `trade_uid`, beneficio neto, duración, orden de columnas y formatos.
+5. Incorporar casos adicionales de duplicado, asignación no resuelta y cierre parcial.
+6. Usar el prototipo y el master solo como oráculos secundarios de reglas y reconciliación.
+
+**Salida:** fixtures mínimos y tests de contrato; no reportes operativos completos.
+
+**Gate:** los resultados anonimizados reproducen estructura, trades, costes y beneficio esperados.
 
 ## Fase 2 — Núcleo y contratos
 
-**Objetivo:** implementar el modelo independiente de API, Excel y base de datos.
+**Objetivo:** implementar el modelo independiente de API, Excel y futura base de datos.
 
 Estructura orientativa:
 
@@ -66,46 +69,48 @@ src/tradinglab/incubation/
 
 Tareas:
 
-1. Definir modelos tipados para órdenes, deals, ciclos y snapshots.
-2. Definir puertos de fuente, evidencia y reporting.
-3. Implementar claves estables e idempotencia.
-4. Implementar reconstrucción con entradas/salidas parciales.
-5. Implementar Strategy Assignment con evidencia y estados explícitos.
-6. Cubrir reglas puras con tests unitarios.
+1. Definir modelos tipados para órdenes, deals y ciclos de posición.
+2. Modelar el deployment y el mapping `strategy_id + magic_number + account_id`.
+3. Definir puertos de fuente, evidencia y reporting.
+4. Implementar claves estables e idempotencia.
+5. Implementar reconstrucción con entradas/salidas parciales.
+6. Implementar asignación con evidencia y estados explícitos.
+7. Cubrir reglas puras con tests unitarios.
 
 **Gate:** el núcleo procesa fixtures sin importar `MetaTrader5` ni una librería Excel.
 
 ## Fase 3 — Adaptador de reporte
 
-**Objetivo:** soportar el archivo exportado y preservar la operación manual como fallback.
+**Objetivo:** soportar el archivo exportado de MT5 como entrada inicial y fallback.
 
 Tareas:
 
-1. Detectar estructura, idioma y secciones sin depender únicamente del texto visible.
-2. Parsear posiciones cerradas, órdenes, deals, abiertos, pendientes y resumen.
-3. Conservar valores originales, fingerprint y versión del parser.
-4. Emitir incidencias ante columnas, secciones o encoding desconocidos.
-5. Comparar contra el prototipo HTML y el golden dataset.
+1. Detectar estructura, idioma y secciones sin depender solo del texto visible.
+2. Parsear posiciones cerradas, órdenes y deals necesarios para reconstruir `TRADES`.
+3. Capturar abiertos, pendientes y snapshot como evidencia, sin agregarlos al Excel v1.
+4. Conservar valores originales, fingerprint y versión del parser.
+5. Emitir incidencias ante formatos desconocidos o datos insuficientes.
+6. Comparar contra el golden dataset y, secundariamente, contra el prototipo.
 
-**Gate:** el adaptador reproduce el caso de referencia y rechaza formatos incompatibles sin generar un resultado parcial silencioso.
+**Gate:** reproduce el caso objetivo y rechaza entradas incompatibles sin publicar resultados parciales.
 
 ## Fase 4 — Spike de API MT5
 
-**Objetivo:** probar lectura real y documentar límites del terminal antes de integrarla al pipeline diario.
+**Objetivo:** probar lectura real y documentar límites del terminal.
 
 Tareas:
 
-1. Agregar `MetaTrader5` como dependencia opcional de Windows, fijada en lockfile.
-2. Conectar a un terminal de incubación autorizado mediante configuración local.
-3. Capturar `account_info`, `terminal_info`, órdenes, deals, posiciones y órdenes activas.
-4. Guardar respuesta cruda serializable y `last_error` seguro.
-5. Verificar timestamps, `magic`, `position_id`, tickets y costes.
-6. Prohibir y no exponer funciones de trading.
-7. Ejecutar siempre `shutdown()` y probar fallo de terminal, login y ventana vacía.
+1. Agregar `MetaTrader5` como dependencia opcional de Windows y fijarla en el lockfile.
+2. Conectar a un terminal autorizado mediante configuración local.
+3. Capturar cuenta, terminal, órdenes, deals, posiciones y órdenes activas.
+4. Guardar respuesta serializable y `last_error` seguro.
+5. Verificar timestamps, `magic`, `position_id`, tickets, comentarios y costes.
+6. Validar el mapping hacia `strategy_id + magic_number`.
+7. No exponer funciones de trading y ejecutar siempre `shutdown()`.
 
-**Gate:** una captura de solo lectura puede repetirse sin efectos y tiene IDs suficientes para reconstruir el golden dataset.
+**Gate:** una captura repetible y sin efectos aporta los IDs necesarios para generar el golden dataset.
 
-## Fase 5 — Evidencia e ingestión incremental
+## Fase 5 — Evidencia e ingesta incremental
 
 **Objetivo:** hacer segura la actualización diaria sin base de datos.
 
@@ -113,27 +118,30 @@ Tareas:
 
 1. Crear `CollectionRun` y manifest versionado.
 2. Guardar capturas inmutables en `_storage/` con SHA-256.
-3. Consultar ventanas solapadas y deduplicar por IDs nativos.
-4. Incorporar snapshots de cuenta, abiertos y pendientes.
-5. Implementar locking y recuperación frente a una corrida interrumpida.
+3. Registrar mappings de deployment utilizados en cada corrida.
+4. Consultar ventanas solapadas y deduplicar por IDs nativos.
+5. Implementar locking y recuperación frente a interrupciones.
 6. Mantener backfill explícito separado de la actualización diaria.
 
-**Gate:** ejecutar dos veces la misma ventana produce el mismo dataset sin duplicados.
+**Gate:** ejecutar dos veces la misma ventana produce el mismo dataset y los mismos trades, sin duplicados.
 
-## Fase 6 — Generador Excel
+## Fase 6 — Generador del workbook objetivo
 
-**Objetivo:** producir el entregable aprobado sin acoplarlo a la captura.
+**Objetivo:** reproducir el archivo por estrategia sin acoplarlo a la captura.
 
 Tareas:
 
-1. Elegir librería según el contrato de plantilla.
-2. Implementar vistas por estrategia y master si fue aprobado.
-3. Agregar filtros, formatos, congelado de cabeceras y tipos Excel correctos.
-4. Generar desde cero en un temporal y reemplazar al validar.
-5. Incluir fuente, instante de actualización e incidencias visibles.
-6. Probar el contenido por valores y estructura, no por bytes del ZIP.
+1. Elegir la librería Excel según el contrato aprobado.
+2. Generar `encubadora_<strategy_id>_<magic_number>.xlsx` por cada mapping activo.
+3. Implementar una hoja `TRADES` con el contrato exacto aprobado de 37 o 38 columnas.
+4. Reproducir nombres, orden, tipos, filtro, fila congelada y anchos.
+5. Regenerar desde el dataset canónico, validar y reemplazar atómicamente.
+6. Probar valores y estructura OOXML relevante, no bytes completos del ZIP.
+7. Verificar que una estrategia o Magic Number sin mapping no se mezcle ni se publique silenciosamente.
 
-**Gate:** el socio compara el libro automático con su proceso manual y acepta la salida.
+El master, los dashboards y las hojas adicionales quedan diferidos salvo nueva decisión funcional.
+
+**Gate:** el socio compara el libro automático con `encubadora_3.95.48_11122.xlsx` y acepta la salida.
 
 ## Fase 7 — Shadow run y reconciliación
 
@@ -142,68 +150,79 @@ Tareas:
 Tareas:
 
 1. Ejecutar API, reporte y procedimiento manual en paralelo durante un periodo acordado.
-2. Comparar trades, costes, beneficio, abiertos, pendientes y métricas.
-3. Clasificar diferencias como formato, timezone, mapping o dato faltante.
-4. Corregir reglas mediante nuevos fixtures de regresión.
-5. Someter el cambio a revisión independiente de código y datos.
+2. Comparar filas de `TRADES`, IDs, costes, beneficio, asignación y timestamps.
+3. Confirmar qué ocurre con nuevos trades y correcciones históricas.
+4. Clasificar diferencias como formato, timezone, mapping o dato faltante.
+5. Convertir cada diferencia corregida en fixture de regresión.
+6. Someter código y resultados a revisión independiente.
 
-**Gate:** cero diferencias no explicadas durante el número de jornadas acordado.
+**Gate:** cero diferencias no explicadas durante las jornadas acordadas.
 
 ## Fase 8 — Automatización diaria
 
-**Objetivo:** operar sin intervención rutinaria y con fallos visibles.
+**Objetivo:** actualizar todos los libros activos sin intervención rutinaria y con fallos visibles.
 
 Tareas:
 
 1. Crear un comando `run-daily` idempotente y un `--dry-run`.
-2. Configurar el scheduler de Windows con usuario de mínimo privilegio.
-3. Establecer timeout, reintentos limitados y bloqueo por terminal.
-4. Publicar el Excel solo después de completar captura, validación y reconciliación.
-5. Conservar última salida válida si la nueva corrida falla.
-6. Emitir un resumen operativo y alerta sin secretos.
-7. Documentar recuperación y ejecución manual.
+2. Cargar el inventario autorizado de estrategia, Magic Number, cuenta y destino.
+3. Configurar el scheduler de Windows con usuario de mínimo privilegio.
+4. Establecer timeout, reintentos limitados y bloqueo por terminal.
+5. Publicar cada Excel solo tras captura, validación y reconciliación completas.
+6. Conservar la última salida válida si una corrida falla.
+7. Emitir resumen operativo y alerta sin secretos.
+8. Documentar recuperación y ejecución manual.
 
-**Gate:** una falla de MT5 o filesystem no corrompe el último informe ni pierde la evidencia capturada.
+**Gate:** una falla de MT5 o filesystem no corrompe el último informe ni pierde evidencia.
+
+## Fuera de alcance de v1
+
+- crear o mantener un nuevo `incubator_master.xlsx`;
+- agregar dashboard, resumen u hojas de posiciones abiertas al entregable;
+- implementar la base de datos productiva;
+- ejecutar operaciones de trading;
+- depender del Excel anterior para calcular el nuevo.
 
 ## Fase futura — Persistencia en base de datos
 
-No se implementa en este roadmap. Cuando exista una decisión de catálogo:
+Cuando exista una decisión de catálogo:
 
 1. Implementar un adapter del puerto de persistencia existente.
 2. Importar manifests y capturas históricas.
-3. Ejecutar Excel desde consultas al dataset canónico.
-4. Comparar salida anterior y posterior a la migración.
-5. Retirar archivos intermedios únicamente después de validar backup y restauración.
+3. Generar Excel desde el mismo dataset canónico persistido.
+4. Comparar salidas antes y después de la migración.
+5. Retirar archivos intermedios solo tras validar backup y restauración.
 
 ## Dependencias entre entregas
 
 ```text
-Contrato con socio
-       |
-Golden dataset
-       |
-Núcleo y contratos
-      / \
-Reporte   API spike
-      \ /
-Evidencia incremental
-       |
-Generador Excel
-       |
-Shadow run
-       |
-Automatización diaria
-       |
-Base de datos futura
+Contrato del workbook objetivo
+            |
+      Golden dataset
+            |
+     Núcleo y contratos
+           / \
+    Reporte   API spike
+           \ /
+   Evidencia incremental
+            |
+   Generador por estrategia + magic
+            |
+       Shadow run
+            |
+   Automatización diaria
+            |
+   Base de datos futura
 ```
 
 ## Decisiones pendientes antes de implementar
 
-- contenido exacto del informe;
-- identidad autoritativa de estrategia;
-- API primaria o reporte primario durante el primer piloto;
-- cuenta, terminal y zona horaria piloto;
+- contrato de 37 columnas o incorporación explícita de `magic_number`;
+- mapping autoritativo Strategy ID ↔ Magic Number ↔ cuenta;
+- compatibilidad exacta de nombre, ruta, estilos y anchos;
+- tratamiento de una estrategia con múltiples deployments;
+- zona horaria, corte diario y política de correcciones;
+- API o reporte como fuente primaria durante el piloto;
 - ubicación y retención de capturas y Excel;
 - librería de escritura Excel;
-- canal de alerta y ventana diaria;
-- duración y tolerancias del shadow run.
+- canal de alerta y duración del shadow run.

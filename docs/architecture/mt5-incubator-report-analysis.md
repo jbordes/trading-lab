@@ -4,219 +4,209 @@
 
 **Estado:** Propuesto; requiere validación funcional con el socio
 
-**Alcance:** captura de datos de cuentas de incubación, reconstrucción de operaciones y generación diaria de Excel
+**Alcance:** captura, reconstrucción de operaciones y generación diaria de un Excel por estrategia y Magic Number
 
-## 1. Objetivo
+## 1. Objetivo y entregable de referencia
 
-Automatizar el informe que hoy se mantiene en Excel para los bots incubados en MetaTrader 5. La primera entrega debe producir libros utilizables por el socio, pero la captura y la lógica de negocio no pueden depender de Excel: más adelante los mismos datos deberán persistirse en un catálogo o base propia sin reescribir el núcleo.
+Automatizar el informe que hoy se mantiene en Excel para los bots incubados en MetaTrader 5. El entregable principal de la primera versión será un libro por combinación de estrategia y Magic Number, compatible con el archivo de referencia:
 
-No forman parte de esta etapa la ejecución de órdenes, el despliegue de bots, una base de datos productiva ni un dashboard.
+```text
+encubadora_<strategy_id>_<magic_number>.xlsx
+```
+
+El ejemplo concreto `encubadora_3.95.48_11122.xlsx` es el objetivo funcional y visual. `incubator_master.xlsx` es un antecedente útil para estudiar trazabilidad y reconciliación, pero no es el formato al que debe apuntar la primera versión ni un entregable obligatorio.
+
+La captura y la lógica de negocio no dependerán de Excel: más adelante los mismos datos deberán poder persistirse en una base propia sin reescribir el núcleo.
+
+No forman parte de esta etapa la ejecución de órdenes, el despliegue de bots, una base de datos productiva, un dashboard ni un consolidado master nuevo.
 
 ## 2. Evidencia analizada
 
 Se inspeccionaron localmente, sin modificarlos ni incorporarlos a Git:
 
-- un libro de una estrategia con una hoja `TRADES` y siete operaciones;
-- `incubator_master.xlsx`, consolidado de referencia;
+- el libro objetivo `encubadora_3.95.48_11122.xlsx`;
 - un `ReportHistory-<account>.xlsx` exportado por MT5;
+- `incubator_master.xlsx`, solo como antecedente;
 - el prototipo histórico `build_incubator_database.py` y su documentación.
 
-Los nombres de personas, cuentas y rutas locales observados no se reproducen en este documento. Los reportes completos y futuros outputs permanecerán fuera de Git; solo se versionarán contratos, código, fixtures mínimos anonimizados y documentación.
+Los datos sensibles y rutas locales no se reproducen aquí. Los reportes completos y futuros outputs permanecerán fuera de Git; solo se versionarán contratos, código, fixtures mínimos anonimizados y documentación.
 
-## 3. Estructura observada
+## 3. Contrato observado del libro objetivo
 
-### Libro por estrategia
+El libro es deliberadamente simple: una hoja `TRADES`, una cabecera y siete operaciones cerradas de ejemplo. No contiene fórmulas, gráficos, tablas estructuradas, vínculos externos ni macros. Tiene autofiltro sobre el rango usado, primera fila congelada, anchos de columna definidos y dos estilos.
 
-El ejemplo contiene una hoja `TRADES` con 41 columnas. Conserva identidad estable, procedencia, cuenta, IDs nativos, precios, volumen, costes, beneficio, duración, estado de asignación y validación.
+La hoja tiene exactamente 37 columnas, de `A` a `AK`, en este orden:
 
-### Consolidado maestro
+| Grupo | Columnas |
+|---|---|
+| Identidad | `trade_uid`, `data_source`, `strategy_id`, `comment_raw` |
+| Cuenta y procedencia | `account_id`, `account_name`, `broker`, `source_file`, `source_account`, `source_account_id`, `source_sha256`, `source_row` |
+| IDs MT5 | `position_id`, `opening_order_id`, `closing_order_id`, `opening_deal_id`, `closing_deal_id` |
+| Operación | `symbol`, `side`, `open_datetime`, `open_price`, `volume`, `stop_loss`, `take_profit`, `close_datetime`, `close_price` |
+| Resultado | `commission`, `swap`, `gross_profit`, `net_profit`, `holding_seconds`, `timezone` |
+| Control | `assignment_status`, `reconstruction_status`, `validation_status`, `possible_duplicate`, `notes` |
 
-El master contiene:
+Observaciones relevantes:
 
-| Hoja | Filas observadas | Función |
-|---|---:|---|
-| `TRADES_MASTER` | 155 trades + cabecera | Vista canónica de posiciones cerradas |
-| `POSITIONS_RAW` | 155 + cabecera | Filas nativas de posiciones |
-| `ORDERS_RAW` | 14.393 + cabecera | Órdenes históricas y de trabajo |
-| `DEALS_RAW` | 317 + cabecera | Transacciones atómicas |
-| `STRATEGIES` | 27 estrategias + cabecera | Resumen de identidad y cobertura |
-| `SOURCES` | 3 fuentes + cabecera | Procedencia, hashes y conteos |
-| `ISSUES` | Solo cabecera | Incidencias de parseo o reconciliación |
-| `RECONCILIATION` | 21 controles + cabecera | Comparación contra totales informados |
+- `trade_uid` sigue el patrón `INCUBATOR-<account>-<position>`.
+- Las siete filas pertenecen a `strategy_id = 3.95.48` y preservan el comentario crudo.
+- `net_profit` equivale a `gross_profit + commission + swap` en los ejemplos.
+- `closing_order_id` y `closing_deal_id` están vacíos porque la fuente histórica utilizada no los aportó; la ausencia se conserva en vez de inventar IDs.
+- `timezone` figura como `UNKNOWN`, por lo que la semántica temporal todavía debe acordarse.
+- Los estados de asignación, reconstrucción, validación y posible duplicado son explícitos.
+- El Magic Number `11122` aparece en la carpeta y el nombre del archivo, pero no dentro del workbook.
 
-No tiene fórmulas ni tablas estructuradas: es principalmente una salida de datos auditable, no todavía un informe de negocio terminado.
+Ese último punto es una brecha del contrato actual. La automatización necesita representar el Magic Number como dato confiable, no deducirlo indefinidamente de una ruta. Se recomienda agregar `magic_number` junto a `strategy_id`, lo que llevaría el contrato evolucionado a 38 columnas, o conservar las 37 columnas y registrar el mapping en un manifest versionado. La opción debe validarse con el socio para no romper una dependencia oculta de su Excel.
 
-### Reporte XLSX de MT5
+La grafía `encubadora` se mantendrá inicialmente por compatibilidad, aunque el término correcto sea “incubadora”.
 
-El ejemplo contiene una hoja con secciones localizadas:
+## 4. Referencia histórica: consolidado master
 
-- posiciones cerradas;
-- órdenes históricas;
-- transacciones o deals;
-- posiciones abiertas;
-- órdenes de trabajo;
-- snapshot de balance, equity, margen y beneficio flotante;
-- métricas agregadas y gráficos.
+El master observado contiene vistas de trades, posiciones, órdenes, deals, estrategias, fuentes, incidencias y reconciliación. Es valioso como evidencia de reglas y como oráculo de paridad del prototipo, pero no debe dirigir el diseño del Excel v1.
+
+Su información más útil para el nuevo pipeline es:
+
+- conservación de filas nativas y hashes de fuente;
+- reconciliación de conteos y resultados económicos;
+- registro explícito de incidencias;
+- separación entre evidencia cruda y trade reconstruido.
+
+Estas capacidades pertenecerán al dataset canónico, manifests, validaciones y logs. No requieren reproducir las múltiples hojas del master en cada libro entregado al socio.
+
+## 5. Reporte XLSX de MT5
+
+El ejemplo contiene secciones de posiciones cerradas, órdenes históricas, deals, posiciones abiertas, órdenes de trabajo, snapshot de cuenta y resultados agregados.
 
 Los rótulos dependen del idioma y se observaron caracteres dañados en algunos textos. Un parser basado solo en etiquetas visibles sería frágil ante idioma, versión o configuración del terminal.
 
-La posición cerrada no expone el identificador de estrategia en sus columnas visibles. En el reporte, la asociación aparece en comentarios de órdenes, deals o posiciones abiertas y debe reconciliarse mediante IDs nativos. La API ofrece además el campo `magic`, que debería ser la identidad primaria cuando el deployment permita mapearlo de forma confiable.
+La posición cerrada no expone siempre la identidad de estrategia en sus columnas visibles. La asociación aparece en comentarios de órdenes o deals y debe reconciliarse mediante IDs nativos. La API ofrece además `magic`, que debería formar parte de la identidad del deployment cuando pueda mapearse confiablemente.
 
-## 4. Prototipo histórico encontrado
+## 6. Prototipo histórico encontrado
 
-Existe un script local de 677 líneas que procesa reportes HTML de MT5 mediante biblioteca estándar. El prototipo:
+Existe un script local de 677 líneas que procesa reportes HTML de MT5. Detecta posiciones, órdenes y deals; normaliza comentarios; calcula hashes; deduplica; reconcilia; y genera master, libros por estrategia, log y SQLite.
 
-- detecta posiciones, órdenes y deals;
-- normaliza comentarios `Strategy 1.2.3` y variantes;
-- calcula hashes y conserva filas originales;
-- deduplica por cuenta e ID nativo;
-- reconcilia cantidad de posiciones, beneficio y balances;
-- genera master, libros por estrategia, log y SQLite;
-- produjo 155 trades de 27 estrategias sin diferencias de reconciliación en su corrida registrada.
+Esto demuestra que una parte importante de las reglas ya fue explorada. No debe copiarse como implementación final porque mezcla parseo, dominio, persistencia y presentación, elimina outputs obsoletos y carece de una suite de tests. Se reutilizarán sus invariantes comprobadas y sus resultados como oráculo de paridad.
 
-Esto demuestra que una parte importante de las reglas ya fue explorada. No debe copiarse como implementación final porque mezcla parseo, dominio, persistencia y presentación; escribe archivos directamente, elimina outputs obsoletos y carece de una suite de tests. Se reutilizarán sus invariantes comprobadas y los resultados como oráculo de paridad.
+La SQLite existente es un output experimental, no una autorización para diseñar ahora la base productiva.
 
-La SQLite existente es un output experimental del prototipo, no una autorización para diseñar ahora la base productiva.
-
-## 5. Integración oficial con MetaTrader 5
+## 7. Integración oficial con MetaTrader 5
 
 El paquete oficial de Python permite conectar con un terminal mediante `initialize()` y cerrar la sesión con `shutdown()`. Para una captura de solo lectura resultan relevantes:
 
-- `account_info()` y `terminal_info()` para contexto de la captura;
-- `history_orders_get()` para órdenes históricas;
-- `history_deals_get()` para deals históricos;
-- `positions_get()` para posiciones abiertas;
-- `orders_get()` para órdenes activas;
+- `account_info()` y `terminal_info()`;
+- `history_orders_get()` y `history_deals_get()`;
+- `positions_get()` y `orders_get()`;
 - `last_error()` para diagnóstico.
 
 Referencias oficiales: [integración Python de MetaTrader 5](https://www.mql5.com/en/docs/python_metatrader5), [`initialize`](https://www.mql5.com/en/docs/python_metatrader5/mt5initialize_py), [`history_orders_get`](https://www.mql5.com/en/docs/python_metatrader5/mt5historyordersget_py), [`history_deals_get`](https://www.mql5.com/en/docs/python_metatrader5/mt5historydealsget_py) y [`positions_get`](https://www.mql5.com/en/docs/python_metatrader5/mt5positionsget_py).
 
-Una resolución en seco realizada en Windows con Python 3.14.7 encontró `MetaTrader5 5.0.6231`, por lo que no aparece una incompatibilidad inmediata con el toolchain actual. La captura en vivo seguirá siendo específica de una máquina Windows con terminal MT5 disponible; normalización, pruebas y generación de Excel deben permanecer portables.
+Una resolución en seco realizada en Windows con Python 3.14.7 encontró `MetaTrader5 5.0.6231`. La captura en vivo seguirá siendo específica de una máquina Windows con terminal MT5 disponible; normalización, pruebas y generación de Excel deben permanecer portables.
 
-El adaptador será estrictamente de lectura y no expondrá `order_send()` ni operaciones equivalentes.
+El adaptador será estrictamente de lectura y no expondrá `order_send()` ni equivalentes.
 
-## 6. Fuente primaria propuesta
+## 8. Fuente primaria y arquitectura propuestas
 
 Se propone trabajar inicialmente con dos adaptadores:
 
 1. `Mt5ApiSource`: fuente diaria preferida para historial y estado vivo.
-2. `Mt5ReportSource`: importador del reporte exportado, usado para backfill, contingencia y reconciliación durante el piloto.
+2. `Mt5ReportSource`: importador para backfill, contingencia y reconciliación durante el piloto.
 
-Ambos producen el mismo modelo intermedio. El Excel de entrada no debe transformarse directamente en el Excel final, y el Excel final nunca será la única fuente de verdad.
-
-Cada captura guardará fuera de Git una evidencia inmutable —por ejemplo JSON normalizado más manifest y SHA-256— antes de generar reportes. Hasta que exista una base, esas capturas permiten regenerar el Excel, detectar correcciones del broker y evitar que una edición manual destruya el historial.
-
-## 7. Arquitectura propuesta
+Ambos producen el mismo modelo intermedio. Cada captura guardará fuera de Git evidencia inmutable —por ejemplo JSON normalizado más manifest y SHA-256— antes de generar reportes.
 
 ```text
 MT5 API -----------+
-                   +--> captura cruda --> normalización --> reconstrucción --> dataset canónico
-Reporte MT5 -------+                              |                 |
-                                                  |                 +--> incidencias/reconciliación
-                                                  |
-                                                  +--> resolución strategy_id
+                   +--> evidencia --> normalización --> reconstrucción --> dataset canónico
+Reporte MT5 -------+                         |                 |
+                                             |                 +--> validación/incidencias
+                                             +--> strategy_id + magic_number
 
-dataset canónico --> Excel por estrategia
-                 --> master opcional
+dataset canónico --> encubadora_<strategy_id>_<magic_number>.xlsx
                  --> futuro repositorio de base de datos
 ```
 
-### Componentes
+Componentes:
 
-- `sources`: adaptadores de API y reportes; no conocen Excel de salida.
-- `domain`: modelos tipados de cuenta, orden, deal, posición, snapshot y estrategia.
-- `normalization`: convierte campos MT5 a tipos y unidades canónicas sin perder el valor original.
-- `reconstruction`: agrupa deals por `account_id + position_id`, contempla entradas/salidas parciales y deriva ciclos de posición.
-- `strategy_resolution`: prioriza mapping explícito de Magic Number; usa comentario como evidencia secundaria y nunca adivina silenciosamente.
-- `evidence`: conserva captura, manifest, hash, versión del parser y ventana temporal.
-- `reporting`: transforma el dataset canónico en libros; no consulta MT5.
-- `orchestration`: coordina la ejecución diaria, locking, reintentos y publicación atómica.
+- `sources`: adaptadores de API y reportes; no conocen el Excel de salida.
+- `domain`: cuenta, orden, deal, posición, deployment y captura.
+- `normalization`: convierte campos MT5 a tipos canónicos sin perder originales.
+- `reconstruction`: agrupa deals por `account_id + position_id` y contempla cierres parciales.
+- `strategy_resolution`: resuelve `strategy_id + magic_number` mediante mapping explícito y evidencia.
+- `evidence`: conserva captura, manifest, hashes, versión y ventana temporal.
+- `reporting`: proyecta trades cerrados al contrato `TRADES`; no consulta MT5.
+- `orchestration`: coordina locking, reintentos y publicación atómica.
 
-Las fronteras serán interfaces Python pequeñas. Un futuro `DatabaseRepository` consumirá el mismo dataset que el escritor Excel; no se introducirá una base simulada ni un ORM en esta etapa.
-
-## 8. Modelo mínimo
-
-### Registros históricos
-
-- `AccountRef`: identidad de cuenta, broker, moneda y tipo, sin credenciales.
-- `RawOrder`: ticket, posición relacionada, Magic Number, comentario, tipo, estado, precios y tiempos.
-- `RawDeal`: ticket, orden, posición, entrada/salida, costes, beneficio y tiempo en milisegundos cuando esté disponible.
-- `PositionLifecycle`: posición reconstruida con colecciones de deals, no solo un opening/closing deal singular.
-- `StrategyAssignment`: estrategia, método de asignación, evidencia y confianza.
-
-### Snapshots diarios
-
-- `AccountSnapshot`: balance, equity, margen, margen libre y beneficio flotante.
-- `OpenPositionSnapshot`: estado de cada posición abierta al momento de captura.
-- `PendingOrderSnapshot`: órdenes activas al momento de captura.
-- `CollectionRun`: ID, terminal, cuenta, ventana solicitada, instante UTC, versión, estado, conteos y hashes.
-
-Historial y snapshots no deben mezclarse: un deal es un evento durable; balance, posiciones abiertas y órdenes pendientes son observaciones en un instante.
+Un futuro repositorio de base de datos consumirá el mismo dataset que el escritor Excel; no se introducirá un ORM ni una base simulada en esta etapa.
 
 ## 9. Identidad, tiempo y deduplicación
 
-- IDs nativos siempre se califican con la cuenta: `account_id + ticket`.
+- `strategy_id` y `magic_number` representan dimensiones distintas y ambas deben conservarse.
+- Una misma estrategia puede aparecer con distintos Magic Numbers, cuentas o deployments; no se fusionarán silenciosamente.
+- El mapping autorizado indicará qué combinación genera cada archivo.
+- IDs nativos siempre se califican con la cuenta.
 - La clave de posición será al menos `account_id + position_id`.
-- Deals y órdenes se deduplicarán por sus tickets nativos, preservando conflictos como incidencias.
-- La estrategia se resolverá preferentemente desde `magic`; el comentario se conservará crudo y se parseará mediante reglas versionadas.
-- Se almacenarán timestamps UTC y valores crudos de tiempo. La jornada de negocio y la zona del servidor/broker deben acordarse explícitamente.
-- No se inferirá timezone desde la computadora. El reporte inspeccionado incluso contiene eventos posteriores a su fecha visible de generación, señal de que hay que validar la semántica temporal.
-- Importes se tratarán con `Decimal` en el dominio; los `float` de la API se convertirán de forma explícita y se reconciliarán con tolerancias documentadas.
+- Deals y órdenes se deduplicarán por tickets nativos, preservando conflictos como incidencias.
+- Se almacenarán timestamps UTC y valores crudos; la zona de negocio debe acordarse explícitamente.
+- Los importes se tratarán con `Decimal` y tolerancias documentadas.
 
-## 10. Excel propuesto
+## 10. Excel v1 propuesto
 
-El formato final debe confirmarse con el socio. Como base, cada estrategia podría contener:
+La primera versión debe conservar la forma del archivo objetivo:
 
-- `SUMMARY`: métricas acumuladas y fecha de actualización;
-- `TRADES`: posiciones cerradas reconstruidas;
-- `OPEN_POSITIONS`: último snapshot;
-- `PENDING_ORDERS`: último snapshot;
-- `DAILY_SNAPSHOTS`: evolución diaria;
-- `SOURCES`: procedencia y hashes;
-- `ISSUES`: asignaciones o reconciliaciones pendientes.
+- un archivo por combinación autorizada de estrategia y Magic Number;
+- nombre `encubadora_<strategy_id>_<magic_number>.xlsx`;
+- una única hoja `TRADES` con operaciones cerradas;
+- orden de columnas, autofiltro, fila congelada, anchos y tipos compatibles con la referencia;
+- campos vacíos cuando la fuente no aporta un dato, con estado de validación explícito;
+- publicación mediante archivo temporal, validación y reemplazo atómico.
 
-Se recomienda regenerar el libro completo desde evidencia canónica y publicarlo mediante reemplazo atómico, en vez de usar el propio Excel como base incremental. Esto evita duplicados, permite backfill y prepara la migración futura a base de datos.
+El workbook se regenerará desde evidencia canónica en cada ejecución. No se usará el Excel anterior como base incremental: la idempotencia y la deduplicación ocurren antes de escribirlo.
 
-La elección entre `openpyxl`, XlsxWriter o un escritor OOXML propio se realizará después de acordar si hay que preservar una plantilla editable. Si el libro se regenera, XlsxWriter es una opción; si se deben conservar fórmulas o celdas manuales existentes, deberá evaluarse `openpyxl`.
+No se agregarán por defecto hojas de resumen, abiertos, pendientes, fuentes o incidencias. Esos datos pueden capturarse para trazabilidad y futuro uso, pero solo llegarán al workbook si el socio confirma que los necesita. El master queda diferido.
+
+La elección entre `openpyxl` y XlsxWriter se realizará después de validar si hay que preservar exactamente estilos o contenido manual. Dado que la referencia no contiene fórmulas ni celdas manuales aparentes, regenerar el archivo es la opción más robusta.
 
 ## 11. Operación diaria y seguridad
 
-- Ejecutar en la VPS o equipo Windows que contiene el terminal autorizado.
-- Configurar rutas, alias de terminal y cuentas fuera del código; credenciales solo en almacenamiento local seguro.
-- Procesar cuentas secuencialmente o en procesos aislados, cerrando siempre la conexión MT5.
-- Usar un lock por terminal/cuenta para evitar capturas simultáneas.
-- Capturar una ventana solapada y deduplicar, en vez de confiar únicamente en el último timestamp exitoso.
-- Escribir captura y reportes en temporales, validar y reemplazar al final.
-- No borrar reportes anteriores hasta definir retención y backup.
-- Registrar conteos, duración, última operación, incidencias y resultado sin exponer cuenta completa ni información personal en logs compartidos.
+- Ejecutar en el equipo Windows que contiene el terminal autorizado.
+- Configurar rutas, terminales, cuentas y mappings fuera del código.
+- Procesar cuentas secuencialmente o de forma aislada y cerrar siempre MT5.
+- Usar un lock por terminal/cuenta.
+- Capturar una ventana solapada y deduplicar.
+- Escribir evidencia y reportes en temporales, validar y reemplazar al final.
+- Conservar la última salida válida ante fallos.
+- No borrar capturas ni reportes anteriores hasta definir retención y backup.
+- Registrar conteos, duración e incidencias sin exponer secretos.
 
-## 12. Preguntas que debe responder el socio
+## 12. Decisiones a validar con el socio
 
-1. ¿El entregable normal es un libro por estrategia, un master, o ambos?
-2. ¿Qué hojas, columnas, fórmulas, filtros, colores y métricas utiliza realmente para decidir?
-3. ¿Existen celdas manuales que deban preservarse?
-4. ¿La identidad confiable de cada bot es Strategy ID, Magic Number, comentario o una tabla de mapping?
-5. ¿Qué cuentas y terminales participan y pueden mezclar estrategias?
-6. ¿Qué define el corte diario: hora Madrid, hora broker o una hora operativa específica?
-7. ¿Deben aparecer posiciones abiertas y órdenes pendientes o solo trades cerrados?
-8. ¿Cómo se corrigen reasignaciones de estrategia o datos históricos?
-9. ¿Dónde se publican los Excel y cuánto historial debe conservarse?
-10. ¿Qué alerta necesita cuando una captura, asignación o reconciliación falla?
+1. ¿La compatibilidad exige exactamente las 37 columnas o se puede agregar `magic_number` como columna explícita?
+2. Si no se agrega, ¿se aprueba un manifest versionado como fuente autoritativa del mapping?
+3. ¿Se conserva el nombre `encubadora_<strategy_id>_<magic_number>.xlsx` y la grafía actual?
+4. ¿El archivo debe contener solo trades cerrados, como la referencia?
+5. ¿Deben preservarse exactamente orden, nombres, filtro, fila congelada y anchos?
+6. ¿Dónde se publica cada archivo y qué ocurre si una estrategia usa varios Magic Numbers o cuentas?
+7. ¿Cuál es la fuente autoritativa del mapping Strategy ID ↔ Magic Number?
+8. ¿Qué zona horaria representa el reporte y cuál define el corte diario?
+9. ¿Se permite corregir o completar históricamente un trade ya publicado?
+10. ¿Qué alerta y retención se requieren ante una captura o validación fallida?
 
 ## 13. Riesgos principales
 
 | Riesgo | Mitigación propuesta |
 |---|---|
-| Comentarios inconsistentes | Magic Number + mapping versionado + estado `UNRESOLVED` |
-| Entradas/salidas parciales | Reconstrucción por deals y `position_id`, no emparejado simple |
-| Cambios de idioma/formato del reporte | API primaria y adapters versionados con fixtures |
-| Timezone ambiguo | UTC crudo + zona operativa explícita + reconciliación |
-| Duplicados por ventana solapada | Claves nativas calificadas por cuenta e idempotencia |
-| Excel corrupto o parcialmente escrito | Regeneración y reemplazo atómico |
-| Pérdida antes de implementar DB | Capturas inmutables, manifests y hashes fuera de Git |
-| Diferencia entre API y reporte | Shadow run y tablas de reconciliación antes de automatizar |
-| Dependencia del terminal Windows | Adaptador MT5 aislado; dominio y reporting portables |
+| Magic Number solo en el nombre | Columna explícita o manifest versionado aprobado |
+| Comentarios inconsistentes | Mapping autoritativo + estado `UNRESOLVED` |
+| Múltiples deployments de una estrategia | Clave y archivo por `strategy_id + magic_number` |
+| Entradas/salidas parciales | Reconstrucción por deals y `position_id` |
+| Cambios de idioma/formato | API primaria y adapters versionados con fixtures |
+| Timezone ambiguo | UTC crudo + zona operativa explícita |
+| Duplicados | Claves nativas calificadas e idempotencia |
+| Excel corrupto | Regeneración, validación y reemplazo atómico |
+| Pérdida antes de la DB | Capturas inmutables, manifests y hashes fuera de Git |
+| Diferencias API/reporte | Shadow run y reconciliación antes de automatizar |
 
 ## 14. Conclusión
 
-La tarea es viable y existe un prototipo valioso para acelerar el trabajo. La implementación correcta no es “actualizar una planilla”: es construir un pipeline de captura auditable con Excel como primera proyección. El primer gate no es técnico sino funcional: acordar con el socio el contrato del informe y la identidad de estrategia. Después debe demostrarse paridad entre reporte, API y resultados históricos antes de programar la ejecución diaria.
+La meta concreta ya no es un master genérico: es reproducir y actualizar diariamente el libro `encubadora_<strategy_id>_<magic_number>.xlsx`, empezando por el contrato observado de 37 columnas y una hoja `TRADES`. El master histórico sigue siendo útil para validar reglas internas, no como formato de salida.
+
+La implementación debe ser un pipeline auditable con Excel como proyección reemplazable. El primer gate es confirmar con el socio cuánto del contrato debe permanecer idéntico y cómo hacer explícito el Magic Number. Luego se demostrará paridad entre reporte, API y archivo objetivo antes de automatizar la ejecución diaria.

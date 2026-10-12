@@ -164,6 +164,43 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_local_feature_ignores_daily_logs_added_later_to_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "README.md").write_text("# Base\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c", "user.name=Harness Test",
+                "-c", "user.email=harness@example.invalid",
+                "commit", "-m", "baseline",
+            )
+            self.run_git(root, "checkout", "-b", "feature/test")
+            self.run_git(root, "checkout", "main")
+            session_path = root / "docs" / "sessions" / "2026-10-12.md"
+            session_path.parent.mkdir(parents=True)
+            session_path.write_text("# Bitácora en main\n", encoding="utf-8")
+            self.run_git(root, "add", session_path.relative_to(root).as_posix())
+            self.run_git(
+                root,
+                "-c", "user.name=Harness Test",
+                "-c", "user.email=harness@example.invalid",
+                "commit", "-m", "daily log",
+            )
+            self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.run_git(root, "checkout", "feature/test")
+            (root / "README.md").write_text("# Feature\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {"GITHUB_BASE_REF": "", "TRADINGLAB_BASE_SHA": ""},
+                clear=False,
+            ):
+                errors = CHECK.check_session_change_policy(root)
+
+            self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

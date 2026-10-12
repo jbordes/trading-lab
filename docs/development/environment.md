@@ -48,8 +48,9 @@ La bitácora representa la jornada en `Europe/Madrid`, no una rama ni una featur
 
 ```text
 uv run python scripts/session.py today --activity "Actividad inicial"
-uv run python scripts/session.py today --topic <tema> --activity "Actividad inicial"
 ```
+
+El nombre normal es `YYYY-MM-DD.md` y reúne todos los temas mediante bloques horarios o subtítulos. `--topic <tema>` solo se utiliza excepcionalmente cuando una jornada deba dividirse de forma deliberada; no representa una feature.
 
 Las entradas fechadas nunca se incluyen en una rama de cambio. Se publican directamente en `main` en un commit exclusivo, después de ejecutar `uv run python scripts/session.py guard-publish`. El guard solo admite archivos de `docs/sessions/` cuya fecha sea el día actual y rechaza cualquier otra ruta. Desde el día siguiente, esas entradas son inmutables; las correcciones se agregan a la bitácora corriente.
 

@@ -4,7 +4,9 @@ La bitácora conserva el contexto cronológico del trabajo cotidiano de TradingL
 
 ## Unidad y nombres
 
-La unidad es el día calendario en `Europe/Madrid`, no una feature ni una rama. Puede existir una o varias entradas del día con nombres `YYYY-MM-DD.md` o `YYYY-MM-DD-<tema>.md`.
+La unidad es el día calendario en `Europe/Madrid`, no una feature ni una rama. El nombre canónico es `YYYY-MM-DD.md`: todos los temas de la jornada se agregan allí mediante bloques horarios o subtítulos.
+
+El formato `YYYY-MM-DD-<tema>.md` queda reservado para casos excepcionales en los que una jornada necesite dividirse deliberadamente. No debe utilizarse como comportamiento normal ni para reproducir la separación por features.
 
 Las bitácoras diarias son canónicas en `main` y no deben viajar dentro de ramas de cambio. Una feature solo se menciona como iniciada, continuada o terminada cuando resulte relevante para la jornada.
 
@@ -23,10 +25,11 @@ La bitácora es la única excepción autorizada al flujo por pull request. Un co
 
 ```text
 uv run python scripts/session.py today --activity "Actividad inicial"
-uv run python scripts/session.py today --topic harness --activity "Continuar el harness"
-uv run python scripts/session.py check docs/sessions/2026-10-12-harness.md
+uv run python scripts/session.py check docs/sessions/2026-10-12.md
 uv run python scripts/session.py guard-publish
 ```
+
+Cuando exista una razón concreta para separar una entrada excepcional, se puede indicar `--topic <tema>`.
 
 Durante el día el estado puede permanecer `Abierta`. `Cerrada` indica que no se prevén más agregados ese día, pero no habilita modificarla en fechas posteriores.
 

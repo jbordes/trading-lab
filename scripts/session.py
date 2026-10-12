@@ -225,7 +225,10 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     today_parser = subparsers.add_parser("today", help="crear o localizar la bitácora de hoy")
     today_parser.add_argument("--activity", required=True, help="primera actividad de la jornada")
-    today_parser.add_argument("--topic", help="tema opcional en kebab-case")
+    today_parser.add_argument(
+        "--topic",
+        help="división excepcional de la jornada en kebab-case; normalmente se omite",
+    )
     check_parser = subparsers.add_parser("check", help="validar bitácoras")
     check_parser.add_argument("paths", nargs="*", type=Path)
     check_parser.add_argument("--closed", action="store_true")

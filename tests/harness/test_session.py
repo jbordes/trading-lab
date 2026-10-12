@@ -60,18 +60,27 @@ class SessionLogTest(unittest.TestCase):
             path.write_text("# Bitácora antigua\n\n**Fecha:** 8 de octubre de 2026\n\n## Objetivo\n\nConservar historia.\n", encoding="utf-8")
             self.assertEqual(session.validate_session(path, require_closed=True), [])
 
-    def test_create_today_is_idempotent_and_accepts_topic(self) -> None:
+    def test_create_today_uses_canonical_daily_name_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "docs" / "sessions").mkdir(parents=True)
             moment = datetime(2026, 10, 12, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
-            path, created = session.create_today(root, "Primera actividad", "harness", moment)
-            same_path, created_again = session.create_today(root, "No sobrescribir", "harness", moment)
-            self.assertEqual(path.name, "2026-10-12-harness.md")
+            path, created = session.create_today(root, "Primera actividad", moment=moment)
+            same_path, created_again = session.create_today(root, "No sobrescribir", moment=moment)
+            self.assertEqual(path.name, "2026-10-12.md")
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(path, same_path)
             self.assertIn("Primera actividad", path.read_text(encoding="utf-8"))
+
+    def test_create_today_accepts_an_exceptional_topic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs" / "sessions").mkdir(parents=True)
+            moment = datetime(2026, 10, 12, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
+            path, created = session.create_today(root, "Actividad separada", "harness", moment)
+            self.assertTrue(created)
+            self.assertEqual(path.name, "2026-10-12-harness.md")
 
     def test_guard_allows_only_today_logs_on_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

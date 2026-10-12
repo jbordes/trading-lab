@@ -184,7 +184,10 @@ def changed_files(root: Path) -> tuple[set[Path], list[str]]:
             branch_result = run_git(root, "branch", "--show-current")
             branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
             if branch not in {"", "main", "master"}:
-                base_ref = "origin/main"
+                merge_base = run_git(root, "merge-base", "HEAD", "origin/main")
+                if merge_base.returncode != 0:
+                    return set(), ["No se pudo calcular el ancestro común con origin/main"]
+                base_ref = merge_base.stdout.decode("utf-8", errors="replace").strip()
     if not base_ref:
         return set(), []
     verify = run_git(root, "rev-parse", "--verify", base_ref)

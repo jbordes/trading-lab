@@ -18,11 +18,14 @@ TradingLab comienza a incorporar scripts y código después de una fase document
 
 Adoptar Python 3.14 administrado mediante uv como núcleo del Harness 0.1. Los cambios se realizan en ramas cortas, se validan localmente y en CI sobre Windows, macOS y Linux, y llegan a `main` mediante pull request y merge humano.
 
+El código Python se formatea y analiza con Ruff. La lógica de producto se separa de las entradas operativas y aplica fronteras limpias de forma proporcional al problema, sin exigir capas, interfaces o patrones ceremoniales.
+
 La bitácora registra la jornada con independencia de las features y se mantiene directamente en `main` mediante una excepción limitada a archivos fechados el día actual. Las entradas anteriores son inmutables. Las decisiones durables se registran como ADR y las acciones sensibles continúan requiriendo aprobación humana.
 
 ## Consecuencias
 
 - Existe un único comportamiento de validación entre sistemas operativos.
+- Formato y lint forman parte del check rápido y utilizan una configuración versionada.
 - La VPS y cada equipo deben preparar uv una vez; uv puede provisionar Python.
 - CI consume tres jobs paralelos, inicialmente pequeños.
 - La bitácora conserva el trabajo diario sin contaminar ni quedar acoplada a las ramas de código.

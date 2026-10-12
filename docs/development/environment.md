@@ -38,7 +38,9 @@ Validación completa antes de solicitar revisión:
 uv run python scripts/check.py full
 ```
 
-La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos y enlaces Markdown. La completa agrega los tests del harness.
+La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos, enlaces Markdown, formato y lint de Python con Ruff. La completa agrega los tests del harness.
+
+Las reglas para estructurar, probar y proteger código nuevo se encuentran en [Estándares de desarrollo de código](coding-standards.md).
 
 Los checks inspeccionan archivos versionados. Un archivo nuevo debe agregarse al índice antes de la validación final para que forme parte del control completo.
 

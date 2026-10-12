@@ -14,7 +14,6 @@ from urllib.parse import unquote
 
 from session import madrid_now, session_date_from_name, validate_sessions
 
-
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -32,6 +31,7 @@ REQUIRED_PATHS = (
     "docs/adr/0001-portable-development-harness.md",
     "docs/adr/README.md",
     "docs/development/environment.md",
+    "docs/development/coding-standards.md",
     "docs/sessions/README.md",
     "docs/sessions/_template.md",
     ".env.example",
@@ -43,9 +43,27 @@ REQUIRED_PATHS = (
 FORBIDDEN_NAMES = {".env", "credentials.json", "settings.local.json"}
 FORBIDDEN_SUFFIXES = {".bak", ".db", ".ex4", ".ex5", ".key", ".pem", ".sqlite", ".sqlite3"}
 TEXT_SUFFIXES = {
-    ".cfg", ".css", ".csv", ".editorconfig", ".gitignore", ".html", ".ini",
-    ".js", ".json", ".md", ".mq5", ".mqh", ".ps1", ".py", ".sh",
-    ".toml", ".ts", ".txt", ".xml", ".yaml", ".yml",
+    ".cfg",
+    ".css",
+    ".csv",
+    ".editorconfig",
+    ".gitignore",
+    ".html",
+    ".ini",
+    ".js",
+    ".json",
+    ".md",
+    ".mq5",
+    ".mqh",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".toml",
+    ".ts",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
 }
 MAX_TRACKED_SIZE = 10 * 1024 * 1024
 
@@ -75,8 +93,7 @@ def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
         ["git", *args],
         cwd=root,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
@@ -90,7 +107,9 @@ def versioned_files(root: Path) -> tuple[list[Path], list[str]]:
 
 
 def check_required(root: Path) -> list[str]:
-    return [f"Falta la ruta requerida: {path}" for path in REQUIRED_PATHS if not (root / path).exists()]
+    return [
+        f"Falta la ruta requerida: {path}" for path in REQUIRED_PATHS if not (root / path).exists()
+    ]
 
 
 def check_repository_boundaries(root: Path, files: list[Path]) -> list[str]:
@@ -100,7 +119,10 @@ def check_repository_boundaries(root: Path, files: list[Path]) -> list[str]:
         root_part = relative.parts[0].lower() if relative.parts else ""
         if root_part in {"_storage", "storage"}:
             errors.append(f"Storage operativo versionado: {relative.as_posix()}")
-        if relative.name.lower() in FORBIDDEN_NAMES or relative.suffix.lower() in FORBIDDEN_SUFFIXES:
+        if (
+            relative.name.lower() in FORBIDDEN_NAMES
+            or relative.suffix.lower() in FORBIDDEN_SUFFIXES
+        ):
             errors.append(f"Archivo prohibido en Git: {relative.as_posix()}")
         if path.is_file() and path.stat().st_size > MAX_TRACKED_SIZE:
             errors.append(f"Archivo versionado mayor a 10 MiB: {relative.as_posix()}")
@@ -108,9 +130,11 @@ def check_repository_boundaries(root: Path, files: list[Path]) -> list[str]:
 
 
 def is_text_file(path: Path) -> bool:
-    return path.name in {
-        ".editorconfig", ".env.example", ".gitattributes", ".gitignore", ".python-version"
-    } or path.suffix.lower() in TEXT_SUFFIXES
+    return (
+        path.name
+        in {".editorconfig", ".env.example", ".gitattributes", ".gitignore", ".python-version"}
+        or path.suffix.lower() in TEXT_SUFFIXES
+    )
 
 
 def check_text_safety(root: Path, files: list[Path]) -> list[str]:
@@ -222,25 +246,47 @@ def check_session_change_policy(root: Path, current_date: date | None = None) ->
         return [f"Las ramas de cambio no pueden modificar bitácoras diarias: {names}"]
 
     today = current_date or madrid_now().date()
-    unauthorized = {
-        path for path in dated_sessions if session_date_from_name(path.name) != today
-    }
+    unauthorized = {path for path in dated_sessions if session_date_from_name(path.name) != today}
     unauthorized.update(paths - dated_sessions)
     if unauthorized:
         names = ", ".join(sorted(path.as_posix() for path in unauthorized))
         errors.append(
-            "Un cambio directo de bitácora en main solo puede contener archivos fechados hoy: " + names
+            "Un cambio directo de bitácora en main solo puede contener archivos fechados hoy: "
+            + names
         )
     return errors
 
 
 def run_unit_tests(root: Path) -> list[str]:
     result = subprocess.run(
-        [sys.executable, "-m", "unittest", "discover", "-s", "tests/harness", "-p", "test_*.py", "-v"],
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests/harness",
+            "-p",
+            "test_*.py",
+            "-v",
+        ],
         cwd=root,
         check=False,
     )
     return [] if result.returncode == 0 else ["Fallaron los tests del harness"]
+
+
+def run_code_quality(root: Path) -> list[str]:
+    commands = (
+        ([sys.executable, "-m", "ruff", "format", "--check", "."], "formato de Ruff"),
+        ([sys.executable, "-m", "ruff", "check", "."], "lint de Ruff"),
+    )
+    errors: list[str] = []
+    for command, label in commands:
+        result = subprocess.run(command, cwd=root, check=False)
+        if result.returncode != 0:
+            errors.append(f"Falló {label}")
+    return errors
 
 
 def validate(root: Path, mode: str) -> list[str]:
@@ -251,6 +297,7 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
     errors.extend(validate_sessions(root))
+    errors.extend(run_code_quality(root))
     if mode == "full":
         errors.extend(check_session_change_policy(root))
         errors.extend(run_unit_tests(root))
@@ -273,7 +320,7 @@ def main() -> int:
             print(f"[ERROR] {error}")
         print(f"Resultado: {len(errors)} error(es)")
         return 1
-    print("[OK] Estructura, límites del repositorio, textos, secretos y enlaces")
+    print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
     if args.mode == "full":
         print("[OK] Tests del harness")
     print("Resultado: validación correcta")

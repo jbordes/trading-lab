@@ -42,6 +42,14 @@
 - Antes de cerrar un cambio ejecutar `uv run python scripts/check.py full`.
 - Un cambio está terminado cuando las validaciones pasan, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff. La jornada se documenta por separado en la bitácora de hoy.
 
+## Calidad del código
+
+- Seguir `docs/development/coding-standards.md`; aplicar arquitectura limpia de forma pragmática, sin capas o patrones ceremoniales.
+- Mantener `scripts/` como entradas delgadas y ubicar la lógica reutilizable en `src/tradinglab/` cuando exista código de producto.
+- Validar toda entrada externa, usar errores explícitos y proteger escrituras, borrados y publicaciones con idempotencia, `--dry-run` o una guarda equivalente.
+- Todo comportamiento nuevo incluye pruebas proporcionales al riesgo. Reloj, aleatoriedad, red y procesos externos deben poder controlarse en tests.
+- El código nuevo usa tipos en interfaces públicas y pasa formato y lint de Ruff sin bypass injustificado.
+
 ## Diseño del harness
 
 - La lógica portable se implementa en Python; los wrappers de shell solo pueden facilitar el bootstrap.

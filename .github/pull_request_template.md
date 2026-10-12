@@ -10,6 +10,9 @@
 - [ ] El PR no crea ni modifica bitácoras diarias fechadas en `docs/sessions/`.
 - [ ] Creé o enlacé un ADR si cambia una decisión durable.
 - [ ] El cambio conserva la trazabilidad y las fuentes de verdad.
+- [ ] Agregué pruebas para el comportamiento nuevo o expliqué por qué no corresponde.
+- [ ] Validé entradas, errores, efectos externos e idempotencia según el riesgo del cambio.
+- [ ] No agregué capas, abstracciones o dependencias sin una necesidad concreta.
 
 ## Riesgos y reversión
 

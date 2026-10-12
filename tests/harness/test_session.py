@@ -8,7 +8,6 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import session  # noqa: E402
@@ -33,14 +32,19 @@ class SessionLogTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "2026-10-12-harness.md"
             moment = datetime(2026, 10, 12, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
-            path.write_text(self.complete(session.render_daily_log(moment, "Revisar el harness")), encoding="utf-8")
+            path.write_text(
+                self.complete(session.render_daily_log(moment, "Revisar el harness")),
+                encoding="utf-8",
+            )
             self.assertEqual(session.validate_session(path, require_closed=True), [])
 
     def test_open_log_is_only_rejected_when_closure_is_requested(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "2026-10-12.md"
             moment = datetime(2026, 10, 12, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
-            path.write_text(session.render_daily_log(moment, "Comenzar la jornada"), encoding="utf-8")
+            path.write_text(
+                session.render_daily_log(moment, "Comenzar la jornada"), encoding="utf-8"
+            )
             self.assertEqual(session.validate_session(path), [])
             errors = session.validate_session(path, require_closed=True)
             self.assertTrue(any("debe estar Cerrada" in error for error in errors))
@@ -57,7 +61,10 @@ class SessionLogTest(unittest.TestCase):
     def test_legacy_session_keeps_compatible_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "2026-10-08-legacy.md"
-            path.write_text("# Bitácora antigua\n\n**Fecha:** 8 de octubre de 2026\n\n## Objetivo\n\nConservar historia.\n", encoding="utf-8")
+            path.write_text(
+                "# Bitácora antigua\n\n**Fecha:** 8 de octubre de 2026\n\n## Objetivo\n\nConservar historia.\n",
+                encoding="utf-8",
+            )
             self.assertEqual(session.validate_session(path, require_closed=True), [])
 
     def test_create_today_uses_canonical_daily_name_and_is_idempotent(self) -> None:
@@ -89,7 +96,16 @@ class SessionLogTest(unittest.TestCase):
             (root / "docs" / "sessions").mkdir(parents=True)
             (root / "README.md").write_text("# Test\n", encoding="utf-8")
             self.run_git(root, "add", "README.md")
-            self.run_git(root, "-c", "user.name=Harness Test", "-c", "user.email=harness@example.invalid", "commit", "-m", "baseline")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
             moment = datetime(2026, 10, 12, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
             session.create_today(root, "Registrar trabajo", "harness", moment)
             self.assertEqual(session.guard_direct_main_publish(root, date(2026, 10, 12)), [])
@@ -103,7 +119,9 @@ class SessionLogTest(unittest.TestCase):
             self.run_git(root, "init", "-b", "main")
             sessions = root / "docs" / "sessions"
             sessions.mkdir(parents=True)
-            (sessions / "2026-10-11.md").write_text("# Bitácora histórica\n\n**Fecha:** 2026-10-11\n", encoding="utf-8")
+            (sessions / "2026-10-11.md").write_text(
+                "# Bitácora histórica\n\n**Fecha:** 2026-10-11\n", encoding="utf-8"
+            )
             errors = session.guard_direct_main_publish(root, date(2026, 10, 12))
             self.assertTrue(any("rutas no autorizadas" in error for error in errors))
             self.run_git(root, "checkout", "-b", "feature/test")

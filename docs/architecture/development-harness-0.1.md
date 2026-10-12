@@ -71,6 +71,8 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 - `docs/sessions/`: proceso, plantilla, generador y validación de la bitácora.
 - `docs/adr/`: convención, plantilla y validación de decisiones durables.
 - `.env.example`: contrato seguro de configuración, actualmente sin variables requeridas.
+- `docs/development/coding-standards.md`: contrato pragmático de estructura, seguridad y pruebas del código.
+- Ruff: formato y lint portable integrado en los checks habituales.
 
 ## 6. Cobertura de requisitos de la arquitectura
 
@@ -82,6 +84,7 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 | Ramas, PR y revisión humana | Política, plantilla de PR y CI sin auto-merge | Cubierto; falta activar ruleset remota |
 | Secretos fuera de Git | `.gitignore`, `.env.example` y detección de patrones evidentes | Cubierto como primera barrera; requiere revisión humana |
 | Portabilidad | Python + uv y CI Windows/macOS/Linux | Cubierto |
+| Calidad de código | Estándar versionado, Ruff y checklist de revisión | Cubierto como base incremental |
 | Criterio de finalización | Check completo, documentación y ADR; bitácora diaria por flujo independiente | Cubierto |
 | Schemas y fixtures de dominio | Requiere contratos y archivos reales del piloto | Postergado con disparador explícito |
 | Hashes, manifests y lineage | Requiere seleccionar el expediente piloto | Postergado con disparador explícito |

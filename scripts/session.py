@@ -11,7 +11,6 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -152,7 +151,9 @@ def validate_session(path: Path, require_closed: bool = False) -> list[str]:
     return errors
 
 
-def validate_sessions(root: Path, require_closed: bool = False, paths: list[Path] | None = None) -> list[str]:
+def validate_sessions(
+    root: Path, require_closed: bool = False, paths: list[Path] | None = None
+) -> list[str]:
     directory = root / "docs" / "sessions"
     candidates = paths or sorted(directory.glob("*.md"))
     errors: list[str] = []
@@ -206,7 +207,11 @@ def guard_direct_main_publish(root: Path, current_date: date | None = None) -> l
     unexpected: list[Path] = []
     for relative in changed:
         is_session_path = len(relative.parts) == 3 and relative.parts[:2] == ("docs", "sessions")
-        if is_session_path and session_date_from_name(relative.name) == today and (root / relative).is_file():
+        if (
+            is_session_path
+            and session_date_from_name(relative.name) == today
+            and (root / relative).is_file()
+        ):
             authorized.append(relative)
         else:
             unexpected.append(relative)

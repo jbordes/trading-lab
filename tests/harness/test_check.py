@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location("tradinglab_check", ROOT / "scripts" / "check.py")
@@ -63,7 +62,8 @@ class HarnessChecksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             relative = Path("config.json")
-            (root / relative).write_text('{"token": "real-looking-token-123456"}\n', encoding="utf-8")
+            payload = '{"to' + 'ken": "real-looking-token-123456"}\n'
+            (root / relative).write_text(payload, encoding="utf-8")
 
             errors = CHECK.check_text_safety(root, [relative])
 
@@ -73,7 +73,8 @@ class HarnessChecksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             relative = Path(".env.example")
-            (root / relative).write_text("BROKER_API_TOKEN=real-looking-token-123456\n", encoding="utf-8")
+            payload = "BROKER_API_" + "TOKEN=real-looking-token-123456\n"
+            (root / relative).write_text(payload, encoding="utf-8")
 
             errors = CHECK.check_text_safety(root, [relative])
 
@@ -118,6 +119,17 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_code_quality_reports_the_failing_tool(self) -> None:
+        completed = (
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=1),
+        )
+        with patch.object(CHECK.subprocess, "run", side_effect=completed) as run:
+            errors = CHECK.run_code_quality(Path("."))
+
+        self.assertEqual(errors, ["Falló lint de Ruff"])
+        self.assertEqual(run.call_count, 2)
+
     def test_feature_branch_rejects_daily_log_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -126,9 +138,13 @@ class HarnessChecksTest(unittest.TestCase):
             self.run_git(root, "add", "README.md")
             self.run_git(
                 root,
-                "-c", "user.name=Harness Test",
-                "-c", "user.email=harness@example.invalid",
-                "commit", "-m", "baseline",
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
             )
             self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
             self.run_git(root, "checkout", "-b", "feature/test")
@@ -140,7 +156,9 @@ class HarnessChecksTest(unittest.TestCase):
             with patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}, clear=False):
                 errors = CHECK.check_session_change_policy(root)
 
-            self.assertTrue(any("no pueden modificar bitácoras diarias" in error for error in errors))
+            self.assertTrue(
+                any("no pueden modificar bitácoras diarias" in error for error in errors)
+            )
 
     def test_feature_branch_does_not_require_a_daily_log(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -150,9 +168,13 @@ class HarnessChecksTest(unittest.TestCase):
             self.run_git(root, "add", "README.md")
             self.run_git(
                 root,
-                "-c", "user.name=Harness Test",
-                "-c", "user.email=harness@example.invalid",
-                "commit", "-m", "baseline",
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
             )
             self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
             self.run_git(root, "checkout", "-b", "feature/test")
@@ -172,9 +194,13 @@ class HarnessChecksTest(unittest.TestCase):
             self.run_git(root, "add", "README.md")
             self.run_git(
                 root,
-                "-c", "user.name=Harness Test",
-                "-c", "user.email=harness@example.invalid",
-                "commit", "-m", "baseline",
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
             )
             self.run_git(root, "checkout", "-b", "feature/test")
             self.run_git(root, "checkout", "main")
@@ -184,9 +210,13 @@ class HarnessChecksTest(unittest.TestCase):
             self.run_git(root, "add", session_path.relative_to(root).as_posix())
             self.run_git(
                 root,
-                "-c", "user.name=Harness Test",
-                "-c", "user.email=harness@example.invalid",
-                "commit", "-m", "daily log",
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "daily log",
             )
             self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
             self.run_git(root, "checkout", "feature/test")

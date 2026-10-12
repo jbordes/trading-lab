@@ -14,6 +14,8 @@ jobs:
   harness:
     name: Harness (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      TRADINGLAB_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     strategy:
       fail-fast: false
       matrix:

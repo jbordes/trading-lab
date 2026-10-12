@@ -1,12 +1,18 @@
-# Bitácora — [título]
+# Bitácora diaria de TradingLab — [AAAA-MM-DD]
 
 **Fecha:** [AAAA-MM-DD]
 
-**Estado:** En curso
+**Estado:** Abierta
 
-**Objetivo:** [objetivo concreto]
+**Zona horaria:** Europe/Madrid
 
-**Schema de sesión:** session-v1
+**Schema de sesión:** daily-v1
+
+## Actividades
+
+### [HH:MM] — [actividad]
+
+- [completar]
 
 ## Hechos y evidencias
 
@@ -16,17 +22,13 @@
 
 - [completar o indicar “No aplica”]
 
-## Trabajo realizado
-
-- [completar]
-
 ## Decisiones
 
-- [completar o enlazar el ADR]
+- [completar o indicar “Ninguna”]
 
-## Validación
+## Validaciones
 
-- [comandos, comprobaciones y resultado]
+- [completar o indicar “No aplica”]
 
 ## Preguntas abiertas
 
@@ -38,8 +40,5 @@
 
 ## Referencias
 
-- Rama: [completar]
-- Commits: [completar]
-- PR: [completar]
-- ADR: [completar o indicar “No aplica”]
-- Proyectos, experimentos o runs: [completar o indicar “No aplica”]
+- Git: [completar o indicar “No aplica”]
+- Estrategias, datos, experimentos, runs o artefactos: [completar o indicar “No aplica”]

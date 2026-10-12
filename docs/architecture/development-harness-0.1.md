@@ -77,12 +77,12 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 | Requisito arquitectónico | Mecanismo del Harness 0.1 | Estado |
 |---|---|---|
 | Fuentes de verdad separadas | Reglas en `AGENTS.md` y fronteras verificadas de Git/storage | Cubierto |
-| Historia de trabajo en bitácora | `session-v1`, generador, validación y cambio obligatorio por rama | Cubierto |
+| Historia de trabajo en bitácora | `daily-v1`, generador, validación, fecha Madrid e inmutabilidad histórica | Cubierto |
 | Decisiones durables mediante ADR | Plantilla, estados y validador estructural | Cubierto |
 | Ramas, PR y revisión humana | Política, plantilla de PR y CI sin auto-merge | Cubierto; falta activar ruleset remota |
 | Secretos fuera de Git | `.gitignore`, `.env.example` y detección de patrones evidentes | Cubierto como primera barrera; requiere revisión humana |
 | Portabilidad | Python + uv y CI Windows/macOS/Linux | Cubierto |
-| Criterio de finalización | Check completo, sesión cerrada, documentación y ADR | Cubierto |
+| Criterio de finalización | Check completo, documentación y ADR; bitácora diaria por flujo independiente | Cubierto |
 | Schemas y fixtures de dominio | Requiere contratos y archivos reales del piloto | Postergado con disparador explícito |
 | Hashes, manifests y lineage | Requiere seleccionar el expediente piloto | Postergado con disparador explícito |
 | Backup y restauración | Requiere decidir catálogo y storage autoritativos | Postergado con disparador explícito |
@@ -109,4 +109,4 @@ El Harness 0.1 queda aceptado cuando:
 4. impide incorporar accidentalmente storage o ejecutables MT4/MT5;
 5. sus reglas críticas tienen tests;
 6. existe un pull request revisable y el merge queda bajo control humano.
-7. cada rama deja una sesión cerrada y las decisiones durables quedan enlazadas mediante ADR.
+7. las features no modifican bitácoras diarias, solo las entradas de hoy pueden publicarse directamente en `main` y las decisiones durables quedan enlazadas mediante ADR.

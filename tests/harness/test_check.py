@@ -118,7 +118,7 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
-    def test_traceability_works_in_detached_ci_checkout(self) -> None:
+    def test_feature_branch_rejects_daily_log_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.run_git(root, "init", "-b", "main")
@@ -131,14 +131,36 @@ class HarnessChecksTest(unittest.TestCase):
                 "commit", "-m", "baseline",
             )
             self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-            self.run_git(root, "checkout", "--detach")
+            self.run_git(root, "checkout", "-b", "feature/test")
             session_path = root / "docs" / "sessions" / "2026-10-12-ci-check.md"
             session_path.parent.mkdir(parents=True)
             session_path.write_text("# Session\n", encoding="utf-8")
             self.run_git(root, "add", session_path.relative_to(root).as_posix())
 
-            with patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}):
-                errors = CHECK.check_change_traceability(root)
+            with patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}, clear=False):
+                errors = CHECK.check_session_change_policy(root)
+
+            self.assertTrue(any("no pueden modificar bitácoras diarias" in error for error in errors))
+
+    def test_feature_branch_does_not_require_a_daily_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "README.md").write_text("# Base\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c", "user.name=Harness Test",
+                "-c", "user.email=harness@example.invalid",
+                "commit", "-m", "baseline",
+            )
+            self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.run_git(root, "checkout", "-b", "feature/test")
+            (root / "README.md").write_text("# Cambio\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+
+            with patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}, clear=False):
+                errors = CHECK.check_session_change_policy(root)
 
             self.assertEqual(errors, [])
 

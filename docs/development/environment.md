@@ -44,28 +44,29 @@ Los checks inspeccionan archivos versionados. Un archivo nuevo debe agregarse al
 
 ## Bitácora y decisiones
 
-Cada rama crea o actualiza una sesión. Para iniciar una entrada:
+La bitácora representa la jornada en `Europe/Madrid`, no una rama ni una feature. Para iniciar o localizar una entrada del día:
 
 ```text
-uv run python scripts/session.py new <tema> --objective "Objetivo concreto"
+uv run python scripts/session.py today --activity "Actividad inicial"
+uv run python scripts/session.py today --topic <tema> --activity "Actividad inicial"
 ```
 
-Antes del PR se separan hechos de interpretaciones, se completan decisiones, validación, referencias y próximo paso, y se cambia el estado a `Cerrada`. El comando `uv run python scripts/session.py check --closed` permite validarlo de forma directa; `check.py full` también lo ejecuta y exige que la rama haya tocado una bitácora.
+Las entradas fechadas nunca se incluyen en una rama de cambio. Se publican directamente en `main` en un commit exclusivo, después de ejecutar `uv run python scripts/session.py guard-publish`. El guard solo admite archivos de `docs/sessions/` cuya fecha sea el día actual y rechaza cualquier otra ruta. Desde el día siguiente, esas entradas son inmutables; las correcciones se agregan a la bitácora corriente.
 
-Las decisiones durables o con alternativas relevantes se registran en `docs/adr/` usando su plantilla. Una sesión enlaza el ADR, pero no duplica todo su razonamiento.
+Las decisiones durables o con alternativas relevantes se registran en `docs/adr/` usando su plantilla. La bitácora enlaza el ADR, pero no duplica todo su razonamiento.
 
 ## Flujo de Git
 
 1. Actualizar `main` sin sobrescribir trabajo local.
 2. Crear una rama corta `feature/*`, `fix/*`, `docs/*` o `chore/*`.
 3. Implementar y ejecutar la validación rápida durante el trabajo.
-4. Mantener la bitácora y los ADR que correspondan.
-5. Cerrar la sesión, ejecutar la validación completa y revisar el diff.
+4. Actualizar los ADR que correspondan; la bitácora diaria se mantiene por el flujo separado de `main`.
+5. Ejecutar la validación completa y revisar el diff.
 6. Publicar la rama y abrir un pull request.
 7. Esperar que CI pase en Windows, macOS y Linux.
 8. Realizar el merge manualmente después de la revisión humana.
 
-El workflow de CI tiene permisos de solo lectura y no ejecuta auto-merge. Para impedir técnicamente los pushes directos se recomienda una ruleset de GitHub sobre `main` que exija pull request y el check `Quality`, bloquee force-push y no conceda excepciones a automatizaciones.
+El workflow de CI tiene permisos de solo lectura y no ejecuta auto-merge. La ruleset de GitHub deberá exigir pull request y el check `Quality` para cambios normales, bloquear force-push y contemplar únicamente la excepción estrecha de bitácoras diarias descrita arriba.
 
 ## Evolución prevista
 

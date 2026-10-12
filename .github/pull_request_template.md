@@ -7,7 +7,7 @@
 - [ ] Ejecuté `uv run python scripts/check.py full`.
 - [ ] Revisé que el diff no contenga secretos ni artefactos operativos.
 - [ ] Actualicé la documentación o indiqué por qué no corresponde.
-- [ ] Cerré la bitácora de esta rama en `docs/sessions/`.
+- [ ] El PR no crea ni modifica bitácoras diarias fechadas en `docs/sessions/`.
 - [ ] Creé o enlacé un ADR si cambia una decisión durable.
 - [ ] El cambio conserva la trazabilidad y las fuentes de verdad.
 

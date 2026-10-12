@@ -8,10 +8,11 @@ import os
 import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
-from session import SESSION_NAME, validate_sessions
+from session import madrid_now, session_date_from_name, validate_sessions
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -172,39 +173,61 @@ def check_adrs(root: Path) -> list[str]:
 
 
 def changed_files(root: Path) -> tuple[set[Path], list[str]]:
-    base_branch = os.environ.get("GITHUB_BASE_REF")
-    if not base_branch:
-        branch_result = run_git(root, "branch", "--show-current")
-        branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
-        if branch in {"", "main", "master"}:
-            return set(), []
-        base_branch = "main"
-    base_ref = f"origin/{base_branch}"
+    base_ref = os.environ.get("TRADINGLAB_BASE_SHA")
+    if base_ref and set(base_ref) == {"0"}:
+        base_ref = None
+    if not base_ref:
+        base_branch = os.environ.get("GITHUB_BASE_REF")
+        if base_branch:
+            base_ref = f"origin/{base_branch}"
+        else:
+            branch_result = run_git(root, "branch", "--show-current")
+            branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
+            if branch not in {"", "main", "master"}:
+                base_ref = "origin/main"
+    if not base_ref:
+        return set(), []
     verify = run_git(root, "rev-parse", "--verify", base_ref)
     if verify.returncode != 0:
         return set(), [f"No se pudo resolver la base de la rama: {base_ref}"]
-    paths: set[Path] = set()
-    for args in (("diff", "--name-only", "-z", f"{base_ref}...HEAD"), ("diff", "--name-only", "-z", "--cached")):
-        result = run_git(root, *args)
-        if result.returncode != 0:
-            return set(), ["No se pudo calcular el diff para validar la bitácora"]
-        paths.update(Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item)
+    result = run_git(root, "diff", "--name-only", "-z", base_ref, "--")
+    if result.returncode != 0:
+        return set(), ["No se pudo calcular el diff para validar la política de bitácora"]
+    paths = {Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item}
     return paths, []
 
 
-def check_change_traceability(root: Path) -> list[str]:
+def check_session_change_policy(root: Path, current_date: date | None = None) -> list[str]:
     paths, errors = changed_files(root)
     if errors or not paths:
         return errors
-    session_changed = any(
-        len(path.parts) == 3
-        and path.parts[:2] == ("docs", "sessions")
-        and SESSION_NAME.fullmatch(path.name)
-        and (root / path).is_file()
+    dated_sessions = {
+        path
         for path in paths
-    )
-    if not session_changed:
-        errors.append("La rama debe crear o actualizar una bitácora en docs/sessions/YYYY-MM-DD-<tema>.md")
+        if len(path.parts) == 3
+        and path.parts[:2] == ("docs", "sessions")
+        and session_date_from_name(path.name) is not None
+    }
+    if not dated_sessions:
+        return []
+
+    branch_result = run_git(root, "branch", "--show-current")
+    branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
+    is_pull_request = bool(os.environ.get("GITHUB_BASE_REF"))
+    if is_pull_request or branch not in {"main", "master"}:
+        names = ", ".join(sorted(path.as_posix() for path in dated_sessions))
+        return [f"Las ramas de cambio no pueden modificar bitácoras diarias: {names}"]
+
+    today = current_date or madrid_now().date()
+    unauthorized = {
+        path for path in dated_sessions if session_date_from_name(path.name) != today
+    }
+    unauthorized.update(paths - dated_sessions)
+    if unauthorized:
+        names = ", ".join(sorted(path.as_posix() for path in unauthorized))
+        errors.append(
+            "Un cambio directo de bitácora en main solo puede contener archivos fechados hoy: " + names
+        )
     return errors
 
 
@@ -224,9 +247,9 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_text_safety(root, files))
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
-    errors.extend(validate_sessions(root, require_closed=mode == "full"))
+    errors.extend(validate_sessions(root))
     if mode == "full":
-        errors.extend(check_change_traceability(root))
+        errors.extend(check_session_change_policy(root))
         errors.extend(run_unit_tests(root))
     return errors
 

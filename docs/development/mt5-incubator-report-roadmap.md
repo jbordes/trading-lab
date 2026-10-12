@@ -23,8 +23,8 @@
 Tareas:
 
 1. Revisar `encubadora_3.95.48_11122.xlsx` como referencia principal.
-2. Confirmar una hoja `TRADES`, sus 37 columnas, orden, tipos, filtro, congelado y anchos.
-3. Decidir si `magic_number` se agrega como columna 38 o queda en un manifest autoritativo.
+2. Confirmar una hoja `TRADES` con las 37 columnas observadas más `magic_number` después de `strategy_id`.
+3. Confirmar que el autofiltro cubra las 38 columnas y permita filtrar por bot.
 4. Confirmar nombre, ruta y unidad de salida: estrategia + Magic Number.
 5. Confirmar que v1 contiene solo trades cerrados.
 6. Acordar mapping, timezone, corte diario, correcciones y retención.
@@ -43,9 +43,10 @@ Tareas:
 1. Construir un fixture mínimo a partir de las siete filas del workbook y su fuente MT5.
 2. Anonimizar cuentas, personas e IDs sin romper relaciones.
 3. Preservar casos de IDs de cierre ausentes, timezone desconocido y estados explícitos.
-4. Verificar `trade_uid`, beneficio neto, duración, orden de columnas y formatos.
-5. Incorporar casos adicionales de duplicado, asignación no resuelta y cierre parcial.
-6. Usar el prototipo y el master solo como oráculos secundarios de reglas y reconciliación.
+4. Incorporar Magic Numbers anonimizados que mantengan el mapping entre bot, estrategia y cuenta.
+5. Verificar `trade_uid`, `magic_number`, beneficio neto, duración, orden de columnas y formatos.
+6. Incorporar casos adicionales de duplicado, asignación no resuelta y cierre parcial.
+7. Usar el prototipo y el master solo como oráculos secundarios de reglas y reconciliación.
 
 **Salida:** fixtures mínimos y tests de contrato; no reportes operativos completos.
 
@@ -70,7 +71,7 @@ src/tradinglab/incubation/
 Tareas:
 
 1. Definir modelos tipados para órdenes, deals y ciclos de posición.
-2. Modelar el deployment y el mapping `strategy_id + magic_number + account_id`.
+2. Modelar `magic_number` como ID operativo del bot y el deployment como `account_id + magic_number`, mapeado a `strategy_id`.
 3. Definir puertos de fuente, evidencia y reporting.
 4. Implementar claves estables e idempotencia.
 5. Implementar reconstrucción con entradas/salidas parciales.
@@ -133,8 +134,8 @@ Tareas:
 
 1. Elegir la librería Excel según el contrato aprobado.
 2. Generar `encubadora_<strategy_id>_<magic_number>.xlsx` por cada mapping activo.
-3. Implementar una hoja `TRADES` con el contrato exacto aprobado de 37 o 38 columnas.
-4. Reproducir nombres, orden, tipos, filtro, fila congelada y anchos.
+3. Implementar una hoja `TRADES` de 38 columnas, agregando `magic_number` después de `strategy_id`.
+4. Reproducir nombres, orden, tipos, filtro sobre todas las columnas, fila congelada y anchos.
 5. Regenerar desde el dataset canónico, validar y reemplazar atómicamente.
 6. Probar valores y estructura OOXML relevante, no bytes completos del ZIP.
 7. Verificar que una estrategia o Magic Number sin mapping no se mezcle ni se publique silenciosamente.
@@ -217,8 +218,8 @@ Contrato del workbook objetivo
 
 ## Decisiones pendientes antes de implementar
 
-- contrato de 37 columnas o incorporación explícita de `magic_number`;
 - mapping autoritativo Strategy ID ↔ Magic Number ↔ cuenta;
+- alcance de unicidad del Magic Number entre cuentas, terminales y entornos;
 - compatibilidad exacta de nombre, ruta, estilos y anchos;
 - tratamiento de una estrategia con múltiples deployments;
 - zona horaria, corte diario y política de correcciones;

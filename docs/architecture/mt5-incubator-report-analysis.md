@@ -56,7 +56,9 @@ Observaciones relevantes:
 - Los estados de asignación, reconstrucción, validación y posible duplicado son explícitos.
 - El Magic Number `11122` aparece en la carpeta y el nombre del archivo, pero no dentro del workbook.
 
-Ese último punto es una brecha del contrato actual. La automatización necesita representar el Magic Number como dato confiable, no deducirlo indefinidamente de una ruta. Se recomienda agregar `magic_number` junto a `strategy_id`, lo que llevaría el contrato evolucionado a 38 columnas, o conservar las 37 columnas y registrar el mapping en un manifest versionado. La opción debe validarse con el socio para no romper una dependencia oculta de su Excel.
+Ese último punto es una brecha del contrato actual. El Magic Number es el identificador operativo del bot y debe poder utilizarse para filtrar el listado. Por lo tanto, el contrato v1 agregará `magic_number` inmediatamente después de `strategy_id`, llevando la hoja a 38 columnas. También se conservará en el nombre del archivo y en el manifest de captura, pero ninguno de esos dos lugares sustituye la columna filtrable.
+
+La aplicación no asumirá que el número es globalmente único sin contexto: la identidad técnica del deployment conservará al menos `account_id + magic_number`, además del mapping hacia `strategy_id`. Esto evita mezclar bots si un mismo número se reutiliza en otra cuenta o entorno.
 
 La grafía `encubadora` se mantendrá inicialmente por compatibilidad, aunque el término correcto sea “incubadora”.
 
@@ -139,7 +141,7 @@ Un futuro repositorio de base de datos consumirá el mismo dataset que el escrit
 
 ## 9. Identidad, tiempo y deduplicación
 
-- `strategy_id` y `magic_number` representan dimensiones distintas y ambas deben conservarse.
+- `magic_number` es el identificador operativo y filtrable del bot; `strategy_id` identifica la estrategia asociada. Ambas dimensiones deben conservarse.
 - Una misma estrategia puede aparecer con distintos Magic Numbers, cuentas o deployments; no se fusionarán silenciosamente.
 - El mapping autorizado indicará qué combinación genera cada archivo.
 - IDs nativos siempre se califican con la cuenta.
@@ -155,7 +157,8 @@ La primera versión debe conservar la forma del archivo objetivo:
 - un archivo por combinación autorizada de estrategia y Magic Number;
 - nombre `encubadora_<strategy_id>_<magic_number>.xlsx`;
 - una única hoja `TRADES` con operaciones cerradas;
-- orden de columnas, autofiltro, fila congelada, anchos y tipos compatibles con la referencia;
+- las 37 columnas de referencia más `magic_number` inmediatamente después de `strategy_id`;
+- autofiltro sobre las 38 columnas, fila congelada, anchos y tipos compatibles con la referencia;
 - campos vacíos cuando la fuente no aporta un dato, con estado de validación explícito;
 - publicación mediante archivo temporal, validación y reemplazo atómico.
 
@@ -179,22 +182,21 @@ La elección entre `openpyxl` y XlsxWriter se realizará después de validar si 
 
 ## 12. Decisiones a validar con el socio
 
-1. ¿La compatibilidad exige exactamente las 37 columnas o se puede agregar `magic_number` como columna explícita?
-2. Si no se agrega, ¿se aprueba un manifest versionado como fuente autoritativa del mapping?
-3. ¿Se conserva el nombre `encubadora_<strategy_id>_<magic_number>.xlsx` y la grafía actual?
-4. ¿El archivo debe contener solo trades cerrados, como la referencia?
-5. ¿Deben preservarse exactamente orden, nombres, filtro, fila congelada y anchos?
-6. ¿Dónde se publica cada archivo y qué ocurre si una estrategia usa varios Magic Numbers o cuentas?
-7. ¿Cuál es la fuente autoritativa del mapping Strategy ID ↔ Magic Number?
-8. ¿Qué zona horaria representa el reporte y cuál define el corte diario?
-9. ¿Se permite corregir o completar históricamente un trade ya publicado?
-10. ¿Qué alerta y retención se requieren ante una captura o validación fallida?
+1. ¿Se conserva el nombre `encubadora_<strategy_id>_<magic_number>.xlsx` y la grafía actual?
+2. ¿El archivo debe contener solo trades cerrados, como la referencia?
+3. ¿Deben preservarse exactamente orden, nombres, filtro, fila congelada y anchos, incorporando `magic_number` después de `strategy_id`?
+4. ¿Dónde se publica cada archivo y qué ocurre si una estrategia usa varios Magic Numbers o cuentas?
+5. ¿Cuál es la fuente autoritativa del mapping Strategy ID ↔ Magic Number?
+6. ¿El Magic Number puede repetirse entre cuentas, terminales o entornos?
+7. ¿Qué zona horaria representa el reporte y cuál define el corte diario?
+8. ¿Se permite corregir o completar históricamente un trade ya publicado?
+9. ¿Qué alerta y retención se requieren ante una captura o validación fallida?
 
 ## 13. Riesgos principales
 
 | Riesgo | Mitigación propuesta |
 |---|---|
-| Magic Number solo en el nombre | Columna explícita o manifest versionado aprobado |
+| Magic Number solo en el nombre | Columna `magic_number` obligatoria y filtrable, más manifest |
 | Comentarios inconsistentes | Mapping autoritativo + estado `UNRESOLVED` |
 | Múltiples deployments de una estrategia | Clave y archivo por `strategy_id + magic_number` |
 | Entradas/salidas parciales | Reconstrucción por deals y `position_id` |
@@ -207,6 +209,6 @@ La elección entre `openpyxl` y XlsxWriter se realizará después de validar si 
 
 ## 14. Conclusión
 
-La meta concreta ya no es un master genérico: es reproducir y actualizar diariamente el libro `encubadora_<strategy_id>_<magic_number>.xlsx`, empezando por el contrato observado de 37 columnas y una hoja `TRADES`. El master histórico sigue siendo útil para validar reglas internas, no como formato de salida.
+La meta concreta ya no es un master genérico: es reproducir y actualizar diariamente el libro `encubadora_<strategy_id>_<magic_number>.xlsx`, evolucionando el contrato observado a 38 columnas para incluir el identificador filtrable del bot en `TRADES`. El master histórico sigue siendo útil para validar reglas internas, no como formato de salida.
 
-La implementación debe ser un pipeline auditable con Excel como proyección reemplazable. El primer gate es confirmar con el socio cuánto del contrato debe permanecer idéntico y cómo hacer explícito el Magic Number. Luego se demostrará paridad entre reporte, API y archivo objetivo antes de automatizar la ejecución diaria.
+La implementación debe ser un pipeline auditable con Excel como proyección reemplazable. El primer gate es confirmar con el socio los restantes detalles de compatibilidad y el alcance de unicidad del Magic Number. Luego se demostrará paridad entre reporte, API y archivo objetivo antes de automatizar la ejecución diaria.

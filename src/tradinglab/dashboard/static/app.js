@@ -439,7 +439,7 @@ function activityRow(activity) {
   row.appendChild(detailCell(decimal(activity.volume), price(activity.price), "numeric"));
 
   const netResult = netOf(activity);
-  const breakdown = components.length
+  const breakdown = netResult !== null
     ? `P&L ${money(activity.profit || 0, latestCurrency)} · costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
     : "Sin resultado monetario";
   row.appendChild(detailCell(
@@ -647,7 +647,10 @@ function renderChart(history, intervalSeconds) {
   chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
   chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";
   chartEnd.textContent = endAt ? timeFormatter.format(endAt) : "";
-  const span = elapsed(history.length * intervalSeconds);
+  const spanSeconds = startAt && endAt
+    ? Math.max(0, (endAt.getTime() - startAt.getTime()) / 1000)
+    : Math.max(0, (history.length - 1) * intervalSeconds);
+  const span = elapsed(spanSeconds);
   chartSpan.textContent = `Ventana ${span}`;
   chart.setAttribute("aria-label", `Evolución de balance y equity, ventana ${span}`);
 }

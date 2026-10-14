@@ -301,9 +301,14 @@ class LiveDashboardTest(unittest.TestCase):
                 urllib.request.urlopen(second, timeout=2)
                 self.fail("Se esperaba un 304 Not Modified")
             except urllib.error.HTTPError as error:
-                self.assertEqual(error.code, 304)
+                try:
+                    self.assertEqual(error.code, 304)
+                    self.assertEqual(error.headers["Vary"], "Accept-Encoding")
+                finally:
+                    error.close()
         finally:
             server.shutdown()
+            server.server_close()
             thread.join(timeout=5)
 
     def test_head_and_gzip_on_statics(self) -> None:
@@ -323,11 +328,21 @@ class LiveDashboardTest(unittest.TestCase):
             )
             with urllib.request.urlopen(gzipped, timeout=2) as response:
                 self.assertEqual(response.headers["Content-Encoding"], "gzip")
+                self.assertEqual(response.headers["Vary"], "Accept-Encoding")
                 payload = gzip.decompress(response.read())
                 self.assertTrue(payload.startswith(b'"use strict"'))
         finally:
             server.shutdown()
+            server.server_close()
             thread.join(timeout=5)
+
+    def test_activity_renderer_uses_the_net_result_as_its_breakdown_guard(self) -> None:
+        script = (Path(__file__).parents[2] / "src/tradinglab/dashboard/static/app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("const breakdown = netResult !== null", script)
+        self.assertNotIn("const breakdown = components.length", script)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

@@ -97,6 +97,7 @@ def create_server(
             self.send_response(HTTPStatus.NOT_MODIFIED)
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
+            self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
 
         def _send_bytes(
@@ -118,6 +119,7 @@ def create_server(
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", cache_control)
+            self.send_header("Vary", "Accept-Encoding")
             if etag:
                 self.send_header("ETag", etag)
             self.send_header("X-Content-Type-Options", "nosniff")

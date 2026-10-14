@@ -1,14 +1,14 @@
 # Informe automatizado de incubación MT5 — Análisis
 
-**Fecha:** 2026-10-12
+**Fecha:** 2026-10-14
 
-**Estado:** Propuesto; requiere validación funcional con el socio
+**Estado:** Validación funcional parcial; respuestas del socio incorporadas
 
-**Alcance:** captura, reconstrucción de operaciones y generación diaria de un Excel por estrategia y Magic Number
+**Alcance:** captura completa del ciclo operativo y generación diaria de un Excel por estrategia
 
 ## 1. Objetivo y entregable de referencia
 
-Automatizar el informe que hoy se mantiene en Excel para los bots incubados en MetaTrader 5. El entregable principal de la primera versión será un libro por combinación de estrategia y Magic Number, compatible con el archivo de referencia:
+Automatizar el informe que hoy se mantiene en Excel para los bots incubados en MetaTrader 5. El entregable principal de la primera versión será un libro por estrategia, compatible con el archivo de referencia y con ambos identificadores en el nombre:
 
 ```text
 encubadora_<strategy_id>_<magic_number>.xlsx
@@ -16,7 +16,7 @@ encubadora_<strategy_id>_<magic_number>.xlsx
 
 El ejemplo concreto `encubadora_3.95.48_11122.xlsx` es el objetivo funcional y visual. `incubator_master.xlsx` es un antecedente útil para estudiar trazabilidad y reconciliación, pero no es el formato al que debe apuntar la primera versión ni un entregable obligatorio.
 
-La captura y la lógica de negocio no dependerán de Excel: más adelante los mismos datos deberán poder persistirse en una base propia sin reescribir el núcleo.
+El socio confirmó que el Magic Number se asigna manualmente al entrar en incubación, identifica al bot y se conserva si el mismo bot corre en varias cuentas. El otro identificador lo asigna SQX durante el minado y puede repetirse. La captura y la lógica de negocio no dependerán de Excel: deben conservar toda la información disponible aunque el workbook inicial muestre una selección, y más adelante los mismos datos deberán poder persistirse en una base propia sin reescribir el núcleo.
 
 No forman parte de esta etapa la ejecución de órdenes, el despliegue de bots, una base de datos productiva, un dashboard ni un consolidado master nuevo.
 
@@ -28,6 +28,7 @@ Se inspeccionaron localmente, sin modificarlos ni incorporarlos a Git:
 - un `ReportHistory-<account>.xlsx` exportado por MT5;
 - `incubator_master.xlsx`, solo como antecedente;
 - el prototipo histórico `build_incubator_database.py` y su documentación.
+- las respuestas funcionales del socio sobre identidad, contenido, horario, correcciones, fallos y retención.
 
 Los datos sensibles y rutas locales no se reproducen aquí. Los reportes completos y futuros outputs permanecerán fuera de Git; solo se versionarán contratos, código, fixtures mínimos anonimizados y documentación.
 
@@ -58,7 +59,7 @@ Observaciones relevantes:
 
 Ese último punto es una brecha del contrato actual. El Magic Number es el identificador operativo del bot y debe poder utilizarse para filtrar el listado. Por lo tanto, el contrato v1 agregará `magic_number` inmediatamente después de `strategy_id`, llevando la hoja a 38 columnas. También se conservará en el nombre del archivo y en el manifest de captura, pero ninguno de esos dos lugares sustituye la columna filtrable.
 
-La aplicación no asumirá que el número es globalmente único sin contexto: la identidad técnica del deployment conservará al menos `account_id + magic_number`, además del mapping hacia `strategy_id`. Esto evita mezclar bots si un mismo número se reutiliza en otra cuenta o entorno.
+Como regla de negocio de TradingLab, un Magic Number corresponde a un único bot y puede aparecer en varias cuentas cuando ese mismo bot está desplegado en ellas. El registro de bots deberá detectar colisiones en vez de reasignarlas silenciosamente. Las órdenes, deals y posiciones seguirán calificándose con la cuenta porque sus IDs técnicos y su ejecución pertenecen a una cuenta concreta.
 
 La grafía `encubadora` se mantendrá inicialmente por compatibilidad, aunque el término correcto sea “incubadora”.
 
@@ -106,6 +107,8 @@ Una resolución en seco realizada en Windows con Python 3.14.7 encontró `MetaTr
 
 El adaptador será estrictamente de lectura y no expondrá `order_send()` ni equivalentes.
 
+La API Python permite consultar el estado actual de posiciones y órdenes, y el historial de órdenes y deals. Esto no garantiza reconstruir después todos los estados intermedios de una posición. MT5 expone cambios en tiempo real mediante [`OnTradeTransaction`](https://www.mql5.com/en/docs/event_handlers/ontradetransaction), pero capturarlos exhaustivamente requeriría un componente MQL5 activo en el terminal. La v1 comenzará con historial más snapshots diarios; el spike determinará si esa evidencia alcanza o si se justifica un colector de eventos posterior.
+
 ## 8. Fuente primaria y arquitectura propuestas
 
 Se propone trabajar inicialmente con dos adaptadores:
@@ -130,39 +133,44 @@ Componentes:
 
 - `sources`: adaptadores de API y reportes; no conocen el Excel de salida.
 - `domain`: cuenta, orden, deal, posición, deployment y captura.
+- `bot_registry`: relación versionada entre Magic Number, bot, identificador SQX, estrategia y cuentas observadas.
 - `normalization`: convierte campos MT5 a tipos canónicos sin perder originales.
 - `reconstruction`: agrupa deals por `account_id + position_id` y contempla cierres parciales.
 - `strategy_resolution`: resuelve `strategy_id + magic_number` mediante mapping explícito y evidencia.
 - `evidence`: conserva captura, manifest, hashes, versión y ventana temporal.
-- `reporting`: proyecta trades cerrados al contrato `TRADES`; no consulta MT5.
+- `reporting`: proyecta una vista seleccionada del dataset al contrato `TRADES`; no consulta MT5.
 - `orchestration`: coordina locking, reintentos y publicación atómica.
 
 Un futuro repositorio de base de datos consumirá el mismo dataset que el escritor Excel; no se introducirá un ORM ni una base simulada en esta etapa.
 
 ## 9. Identidad, tiempo y deduplicación
 
-- `magic_number` es el identificador operativo y filtrable del bot; `strategy_id` identifica la estrategia asociada. Ambas dimensiones deben conservarse.
-- Una misma estrategia puede aparecer con distintos Magic Numbers, cuentas o deployments; no se fusionarán silenciosamente.
-- El mapping autorizado indicará qué combinación genera cada archivo.
+- `magic_number` es el identificador manual, estable y filtrable del bot en incubación; `strategy_id` conserva el identificador asociado a la estrategia/SQX.
+- El mismo Magic Number puede aparecer en varias cuentas únicamente cuando representa al mismo bot.
+- El registro autoritativo indicará la relación entre bot, Magic Number, identificador SQX, estrategia, cuentas y vigencia.
+- El archivo se agrupa por estrategia; la regla para una estrategia que tenga más de un Magic Number a lo largo del tiempo todavía debe acordarse.
 - IDs nativos siempre se califican con la cuenta.
 - La clave de posición será al menos `account_id + position_id`.
 - Deals y órdenes se deduplicarán por tickets nativos, preservando conflictos como incidencias.
-- Se almacenarán timestamps UTC y valores crudos; la zona de negocio debe acordarse explícitamente.
+- Se almacenarán timestamps UTC y valores crudos; la ejecución diaria se programará a las 20:00 de `Europe/Madrid`, aplicando automáticamente el horario de verano.
 - Los importes se tratarán con `Decimal` y tolerancias documentadas.
+- Las capturas y observaciones serán inmutables. Una corrección descubierta después se registrará como una nueva revisión enlazada con la anterior, sin borrar evidencia publicada.
 
 ## 10. Excel v1 propuesto
 
 La primera versión debe conservar la forma del archivo objetivo:
 
-- un archivo por combinación autorizada de estrategia y Magic Number;
+- un archivo por estrategia;
 - nombre `encubadora_<strategy_id>_<magic_number>.xlsx`;
-- una única hoja `TRADES` con operaciones cerradas;
+- inicialmente una hoja `TRADES` con el mismo formato de la referencia;
 - las 37 columnas de referencia más `magic_number` inmediatamente después de `strategy_id`;
 - autofiltro sobre las 38 columnas, fila congelada, anchos y tipos compatibles con la referencia;
 - campos vacíos cuando la fuente no aporta un dato, con estado de validación explícito;
 - publicación mediante archivo temporal, validación y reemplazo atómico.
 
-El workbook se regenerará desde evidencia canónica en cada ejecución. No se usará el Excel anterior como base incremental: la idempotencia y la deduplicación ocurren antes de escribirlo.
+El pipeline capturará órdenes, deals, posiciones cerradas, posiciones abiertas, órdenes activas y snapshots disponibles, aunque el Excel inicial no los exponga todos. El workbook se generará desde evidencia canónica; no será la fuente utilizada para reconstruir operaciones ni detectar cambios.
+
+Las filas ya publicadas no se editarán silenciosamente. Si se detecta una corrección, se conservará la observación anterior y se agregará una revisión con fecha de detección actual. Antes de implementar falta acordar cómo se enlazan y muestran esas revisiones para que no parezcan trades duplicados.
 
 No se agregarán por defecto hojas de resumen, abiertos, pendientes, fuentes o incidencias. Esos datos pueden capturarse para trazabilidad y futuro uso, pero solo llegarán al workbook si el socio confirma que los necesita. El master queda diferido.
 
@@ -170,27 +178,37 @@ La elección entre `openpyxl` y XlsxWriter se realizará después de validar si 
 
 ## 11. Operación diaria y seguridad
 
-- Ejecutar en el equipo Windows que contiene el terminal autorizado.
+- Ejecutar diariamente a las 20:00 de `Europe/Madrid` en el equipo Windows que contiene el terminal autorizado.
 - Configurar rutas, terminales, cuentas y mappings fuera del código.
 - Procesar cuentas secuencialmente o de forma aislada y cerrar siempre MT5.
 - Usar un lock por terminal/cuenta.
 - Capturar una ventana solapada y deduplicar.
 - Escribir evidencia y reportes en temporales, validar y reemplazar al final.
 - Conservar la última salida válida ante fallos.
-- No borrar capturas ni reportes anteriores hasta definir retención y backup.
-- Registrar conteos, duración e incidencias sin exponer secretos.
+- No borrar capturas ni reportes: se conservarán indefinidamente y dejarán de producirse cuando el proceso migre a la base, salvo que se decida mantenerlos como vista.
+- Registrar conteos, duración e incidencias sin exponer secretos. En la primera etapa, los fallos se consultarán en los logs; las alertas para usuarios no técnicos quedan diferidas.
 
-## 12. Decisiones a validar con el socio
+## 12. Decisiones confirmadas y aclaraciones pendientes
 
-1. ¿Se conserva el nombre `encubadora_<strategy_id>_<magic_number>.xlsx` y la grafía actual?
-2. ¿El archivo debe contener solo trades cerrados, como la referencia?
-3. ¿Deben preservarse exactamente orden, nombres, filtro, fila congelada y anchos, incorporando `magic_number` después de `strategy_id`?
-4. ¿Dónde se publica cada archivo y qué ocurre si una estrategia usa varios Magic Numbers o cuentas?
-5. ¿Cuál es la fuente autoritativa del mapping Strategy ID ↔ Magic Number?
-6. ¿El Magic Number puede repetirse entre cuentas, terminales o entornos?
-7. ¿Qué zona horaria representa el reporte y cuál define el corte diario?
-8. ¿Se permite corregir o completar históricamente un trade ya publicado?
-9. ¿Qué alerta y retención se requieren ante una captura o validación fallida?
+Confirmado por el socio:
+
+- conservar `encubadora_<strategy_id>_<magic_number>.xlsx`;
+- generar un archivo por estrategia;
+- tratar el Magic Number manual como ID estable del bot, compartido por sus despliegues en distintas cuentas;
+- mantener inicialmente el formato del workbook y disponer internamente de toda la información recuperable;
+- ejecutar a las 20:00 hora de Madrid con ajuste estacional;
+- conservar lo publicado y registrar posteriormente cualquier corrección detectada;
+- usar logs como mecanismo inicial de diagnóstico y no eliminar reportes.
+
+Aclaraciones todavía necesarias:
+
+1. ¿Dónde se mantendrá el registro autoritativo Magic Number ↔ bot ↔ ID SQX ↔ estrategia, y quién lo actualiza?
+2. ¿Puede una estrategia recibir más de un Magic Number a lo largo del tiempo y, en ese caso, cómo se nombra y agrupa su único archivo?
+3. ¿La primera versión del Excel seguirá mostrando solo cerradas o también incorporará abiertas y pendientes? La captura interna conservará todas en cualquier caso.
+4. ¿Cómo debe verse una corrección en el Excel y qué campos identificarán la revisión y la fila reemplazada?
+5. ¿El archivo por estrategia es acumulativo y se reemplaza diariamente, o además se conserva una copia fechada de cada publicación?
+6. ¿La ejecución se realiza todos los días, incluidos fines de semana, y qué debe ocurrir si el equipo o MT5 no están disponibles exactamente a las 20:00?
+7. ¿En qué ruta se publican los Excel y las copias históricas?
 
 ## 13. Riesgos principales
 
@@ -198,7 +216,9 @@ La elección entre `openpyxl` y XlsxWriter se realizará después de validar si 
 |---|---|
 | Magic Number solo en el nombre | Columna `magic_number` obligatoria y filtrable, más manifest |
 | Comentarios inconsistentes | Mapping autoritativo + estado `UNRESOLVED` |
-| Múltiples deployments de una estrategia | Clave y archivo por `strategy_id + magic_number` |
+| Un bot desplegado en varias cuentas | Magic Number estable para el bot; operaciones calificadas por cuenta |
+| Corrección confundida con duplicado | Revisiones enlazadas e historial inmutable |
+| Cambios intradiarios no recuperables | Spike de API; evaluar colector `OnTradeTransaction` solo si es necesario |
 | Entradas/salidas parciales | Reconstrucción por deals y `position_id` |
 | Cambios de idioma/formato | API primaria y adapters versionados con fixtures |
 | Timezone ambiguo | UTC crudo + zona operativa explícita |
@@ -209,6 +229,6 @@ La elección entre `openpyxl` y XlsxWriter se realizará después de validar si 
 
 ## 14. Conclusión
 
-La meta concreta ya no es un master genérico: es reproducir y actualizar diariamente el libro `encubadora_<strategy_id>_<magic_number>.xlsx`, evolucionando el contrato observado a 38 columnas para incluir el identificador filtrable del bot en `TRADES`. El master histórico sigue siendo útil para validar reglas internas, no como formato de salida.
+La meta concreta es actualizar diariamente un libro por estrategia con nombre `encubadora_<strategy_id>_<magic_number>.xlsx`, evolucionando el contrato observado a 38 columnas para incluir el identificador filtrable del bot. El master histórico sigue siendo útil para validar reglas internas, no como formato de salida.
 
-La implementación debe ser un pipeline auditable con Excel como proyección reemplazable. El primer gate es confirmar con el socio los restantes detalles de compatibilidad y el alcance de unicidad del Magic Number. Luego se demostrará paridad entre reporte, API y archivo objetivo antes de automatizar la ejecución diaria.
+La implementación debe capturar más información de la que inicialmente presenta Excel, preservar cada observación y permitir una futura base sin reescribir el dominio. Antes de programar deben resolverse las siete aclaraciones operativas de la sección 12 y comprobar en un spike qué historia de cambios entrega realmente MT5.

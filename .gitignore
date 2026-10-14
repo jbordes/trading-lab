@@ -29,6 +29,13 @@ __pycache__/
 .venv/
 venv/
 node_modules/
+.claude/
+.codex/
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+.coverage
+*.egg-info/
 
 # Local databases and backups
 *.db

@@ -1,10 +1,10 @@
 # TradingLab 2.0 — Arquitectura propuesta
 
-**Versión:** 2.3
+**Versión:** 2.4
 
 **Estado:** Propuesta para validación de socios
 
-**Fecha:** 8 de octubre de 2026
+**Fecha:** 14 de octubre de 2026
 
 **Documento precedente:** `Trading_Lab_2_0_Arquitectura_Inicial.pdf`
 
@@ -22,6 +22,8 @@ La arquitectura se apoya en cuatro sistemas con responsabilidades distintas:
 La unidad fundamental de reproducibilidad será el **run manifest**: un registro inmutable que identifica el código, datos, configuración, motor, condiciones de mercado y artefactos utilizados en cada ejecución. Para estrategias generadas en SQX se incorpora además un pipeline formal de preparación, compilación, validación, despliegue e incubación en MT5. La ejecución MT5 ocurre en una VPS externa sin acceso remoto desde TradingLab y se coordina mediante paquetes verificables intercambiados inicialmente por Google Drive.
 
 La versión 2.3 incorpora las capacidades operativas comprobadas en TradingLab 1.0: ejecución manual asistida, embudos SQX por etapas, cohortes y portfolios de estrategias, aliases externos como IDs SQX y Magic Numbers, procedencia de artefactos derivados, evidencia incremental de incubación y promoción controlada de conocimiento y activos reutilizables.
+
+La versión 2.4 cambia el primer producto de observabilidad: en lugar de automatizar un workbook de incubación, valida un dashboard local de datos vivos con fuentes MT5 y StocksTrader de solo lectura. El piloto usa un contrato mínimo, memoria acotada y métricas definidas por los socios antes de introducir persistencia productiva.
 
 ## 2. Decisiones principales
 
@@ -81,6 +83,14 @@ Se incorporan formalmente:
 - reglas de promoción desde proyectos hacia conocimiento, plantillas, componentes y estrategias reutilizables.
 
 Estas extensiones no obligan a crear todas sus tablas en la primera migración. Primero se validarán mediante archivos y un caso piloto; el catálogo se ampliará cuando el flujo demuestre la necesidad.
+
+### 2.6 Modificación 2.4 — Dashboard local de riesgo
+
+El workbook deja de ser el entregable prioritario de incubación. El primer corte visible será una aplicación local, enlazada exclusivamente a loopback, que muestre observaciones de MT5 con pocos segundos de demora y sin ejecutar operaciones. La interfaz incluye una muestra de posiciones abiertas y órdenes pendientes con Magic Number filtrable, actividad histórica reciente y estado técnico de captura, sin convertir todavía esos datos en un modelo histórico amplio.
+
+El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza un snapshot mínimo, un buffer acotado y adaptadores separados. MT5 se valida primero; StocksTrader REST se incorpora después para cuentas propias de esa plataforma. Las métricas se implementan únicamente desde contratos aprobados por los socios.
+
+La decisión y el diseño se detallan en [ADR-0002](../adr/0002-local-live-risk-dashboard.md) y [Dashboard local de riesgo](live-risk-dashboard.md).
 
 ## 3. Principios de diseño
 
@@ -788,7 +798,7 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 - Elegir runtime y herramientas de migración.
 - Crear esquema mínimo del catálogo.
 
-### Fase 2 — Flujo piloto SQX a MT5
+### Fase 2 — Flujos piloto MT5 y observabilidad local
 
 - Seleccionar un proyecto y una estrategia candidata real de SQX.
 - Modelar al menos un embudo SQX real con sus cohortes y una selección/portfolio versionada.
@@ -799,6 +809,10 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 - Ingerir resultados, conservar artefactos y normalizar métricas.
 - Demostrar trazabilidad desde la métrica hasta evidence bundle, job, deployment, `.ex5`, build, código preparado, exportación SQX, configuración y datos.
 - Demostrar que el socio puede ejecutar el checklist manual y localizar los mismos datos que en el expediente 1.0.
+- Validar un dashboard local read-only con una cuenta MT5 demo y pocos segundos de demora.
+- Comparar la muestra de operaciones activas y su filtro por Magic Number contra el terminal demo.
+- Validar la ventana incremental de actividad y la estabilidad de la captura durante una sesión prolongada.
+- Aprobar las fórmulas iniciales de riesgo antes de persistir o publicar métricas derivadas.
 
 ### Fase 3 — Operación repetible
 
@@ -813,7 +827,7 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 - PostgreSQL multiusuario si no se adoptó antes.
 - Storage de objetos.
 - Workers, colas y ejecución concurrente.
-- MCP, dashboards y análisis transversales.
+- MCP, dashboards multiusuario y análisis transversales avanzados.
 - Releases inmutables y attestations de GitHub para el runner, si resultan compatibles con la política de seguridad.
 
 ## 18. Criterios de aceptación del piloto

@@ -1,0 +1,110 @@
+{
+  "account": {
+    "balance": 10000.0,
+    "currency": "USD",
+    "equity": 10012.5,
+    "login": 90000001,
+    "name": "ANONYMIZED ACCOUNT",
+    "server": "DEMO-SERVER"
+  },
+  "active_orders": [
+    {
+      "comment": "Strategy demo.1.0",
+      "magic": 900001,
+      "position_id": 0,
+      "price_open": 1.075,
+      "symbol": "EURUSD",
+      "ticket": 70000003,
+      "type": 2,
+      "volume_initial": 0.1
+    }
+  ],
+  "captured_at": "2026-10-14T18:00:00Z",
+  "history_deals": [
+    {
+      "commission": -0.35,
+      "entry": 0,
+      "magic": 900001,
+      "order": 70000001,
+      "position_id": 80000001,
+      "price": 1.08,
+      "profit": 0.0,
+      "swap": 0.0,
+      "symbol": "EURUSD",
+      "ticket": 71000001,
+      "time_msc": 1791986400000,
+      "volume": 0.1
+    },
+    {
+      "commission": -0.35,
+      "entry": 1,
+      "magic": 900001,
+      "order": 70000002,
+      "position_id": 80000001,
+      "price": 1.082,
+      "profit": 20.0,
+      "swap": -0.1,
+      "symbol": "EURUSD",
+      "ticket": 71000002,
+      "time_msc": 1791990000000,
+      "volume": 0.1
+    }
+  ],
+  "history_orders": [
+    {
+      "comment": "Strategy demo.1.0",
+      "magic": 900001,
+      "position_id": 80000001,
+      "price_open": 1.08,
+      "state": 4,
+      "symbol": "EURUSD",
+      "ticket": 70000001,
+      "time_done_msc": 1791986400000,
+      "time_setup_msc": 1791986400000,
+      "type": 0,
+      "volume_initial": 0.1
+    },
+    {
+      "comment": "Strategy demo.1.0",
+      "magic": 900001,
+      "position_id": 80000001,
+      "price_open": 1.082,
+      "state": 4,
+      "symbol": "EURUSD",
+      "ticket": 70000002,
+      "time_done_msc": 1791990000000,
+      "time_setup_msc": 1791990000000,
+      "type": 1,
+      "volume_initial": 0.1
+    }
+  ],
+  "open_positions": [
+    {
+      "comment": "Strategy demo.1.0",
+      "magic": 900001,
+      "position_id": 80000002,
+      "price_current": 1.085,
+      "price_open": 1.08375,
+      "profit": 12.5,
+      "sl": 1.08,
+      "swap": 0.0,
+      "symbol": "EURUSD",
+      "ticket": 80000002,
+      "time_msc": 1791991800000,
+      "time_update_msc": 1791992700000,
+      "tp": 1.09,
+      "type": 0,
+      "volume": 0.1
+    }
+  ],
+  "schema_version": "mt5-diagnostic-v1",
+  "terminal": {
+    "build": 5000,
+    "connected": true,
+    "trade_allowed": true
+  },
+  "window": {
+    "date_from": "2026-10-13T18:00:00Z",
+    "date_to": "2026-10-14T18:00:00Z"
+  }
+}

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>TradingLab Live</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">TRADINGLAB 2.0</p>
+          <h1>Monitor MT5</h1>
+          <p class="subtitle">Observación local · Solo lectura</p>
+        </div>
+        <div class="connection" aria-live="polite">
+          <span id="status-dot" class="status-dot"></span>
+          <div>
+            <strong id="status">Conectando</strong>
+            <small id="freshness">Esperando primera captura</small>
+          </div>
+        </div>
+      </header>
+
+      <nav class="view-tabs" aria-label="Secciones del dashboard">
+        <button class="view-tab active" type="button" data-view="overview" aria-current="page">Resumen</button>
+        <button class="view-tab" type="button" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
+        <button class="view-tab" type="button" data-view="activity">Actividad <span id="activity-badge">0</span></button>
+      </nav>
+
+      <section id="overview-view" class="dashboard-view">
+      <section class="identity panel">
+        <div><span>Fuente</span><strong id="source">—</strong></div>
+        <div><span>Cuenta</span><strong id="account">—</strong></div>
+        <div><span>Servidor</span><strong id="server">—</strong></div>
+        <div><span>Moneda</span><strong id="currency">—</strong></div>
+      </section>
+
+      <section class="metrics" aria-label="Estado de cuenta">
+        <article class="metric-card accent-blue">
+          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
+        </article>
+        <article class="metric-card accent-cyan">
+          <span>Equity</span><strong id="equity">—</strong><small>Valor actual</small>
+        </article>
+        <article class="metric-card" id="profit-card">
+          <span>P&amp;L flotante</span><strong id="profit">—</strong><small>Posiciones abiertas</small>
+        </article>
+        <article class="metric-card">
+          <span>Margen libre</span><strong id="margin-free">—</strong><small id="margin-level">Nivel —</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">VENTANA LOCAL</p><h2>Balance y equity</h2></div>
+            <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="chart" viewBox="0 0 1000 320" role="img" aria-label="Evolución reciente de balance y equity">
+              <g id="grid"></g>
+              <polyline id="balance-line" class="line balance-line" points=""></polyline>
+              <polyline id="equity-line" class="line equity-line" points=""></polyline>
+            </svg>
+            <p id="chart-empty" class="chart-empty">Recolectando observaciones…</p>
+          </div>
+        </article>
+
+        <aside class="side-stack">
+          <article class="panel compact-panel">
+            <p class="eyebrow">ACTIVIDAD</p>
+            <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
+            <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
+            <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
+          </article>
+          <article class="panel pending-panel">
+            <p class="eyebrow">CONTROL DE RIESGO</p>
+            <h2>DDD y Max DD</h2>
+            <p>Captura preparada. Las fórmulas y límites quedan pendientes de validación con el socio.</p>
+            <span class="pending-badge">Contrato pendiente</span>
+          </article>
+        </aside>
+      </section>
+      </section>
+
+      <section id="operations-view" class="dashboard-view" hidden>
+        <article class="panel operations-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">MUESTREO ACTUAL</p>
+              <h2>Operaciones activas</h2>
+              <p class="operations-copy">Posiciones abiertas y Ã³rdenes pendientes informadas por MT5.</p>
+            </div>
+            <label class="filter-field" for="magic-filter">
+              <span>Filtrar por magic number</span>
+              <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
+              <datalist id="magic-options"></datalist>
+            </label>
+          </div>
+
+          <div class="operation-stats" aria-live="polite">
+            <div><span>Mostradas</span><strong id="visible-operations">0</strong></div>
+            <div><span>Posiciones</span><strong id="visible-positions">0</strong></div>
+            <div><span>Ã“rdenes</span><strong id="visible-orders">0</strong></div>
+            <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table">
+              <thead>
+                <tr>
+                  <th>Estado</th>
+                  <th>Ticket / Magic</th>
+                  <th>SÃ­mbolo</th>
+                  <th>Tipo</th>
+                  <th class="numeric">Volumen</th>
+                  <th class="numeric">Apertura / Actual</th>
+                  <th class="numeric">SL / TP</th>
+                  <th class="numeric">P&amp;L</th>
+                  <th>Hora</th>
+                </tr>
+              </thead>
+              <tbody id="operations-body"></tbody>
+            </table>
+            <p id="operations-empty" class="operations-empty">Esperando operacionesâ€¦</p>
+          </div>
+        </article>
+      </section>
+
+      <section id="activity-view" class="dashboard-view" hidden>
+        <section class="capture-grid" aria-label="Estado de captura">
+          <article class="panel capture-card">
+            <span>Captura</span><strong id="capture-health">Iniciando</strong><small id="capture-streak">Sin lecturas</small>
+          </article>
+          <article class="panel capture-card">
+            <span>Ãšltimo Ã©xito</span><strong id="capture-last-success">â€”</strong><small id="capture-age">Edad â€”</small>
+          </article>
+          <article class="panel capture-card">
+            <span>DuraciÃ³n</span><strong id="capture-duration">â€”</strong><small id="capture-max-duration">MÃ¡ximo â€”</small>
+          </article>
+          <article class="panel capture-card">
+            <span>Intentos</span><strong id="capture-attempts">0</strong><small id="capture-results">0 correctos Â· 0 fallidos</small>
+          </article>
+        </section>
+
+        <article class="panel operations-panel activity-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">HISTORIAL MÃ“VIL</p>
+              <h2>Actividad reciente</h2>
+              <p id="activity-copy" class="operations-copy">Deals y Ã³rdenes histÃ³ricas de las Ãºltimas 24 horas.</p>
+            </div>
+            <div class="activity-filters">
+              <label class="filter-field" for="activity-magic-filter">
+                <span>Magic number</span>
+                <input id="activity-magic-filter" type="search" list="activity-magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
+                <datalist id="activity-magic-options"></datalist>
+              </label>
+              <label class="filter-field" for="activity-kind-filter">
+                <span>Tipo de evento</span>
+                <select id="activity-kind-filter">
+                  <option value="">Todos</option>
+                  <option value="deal">Deals</option>
+                  <option value="order">Ã“rdenes histÃ³ricas</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="operation-stats" aria-live="polite">
+            <div><span>Mostrados</span><strong id="visible-activity">0</strong></div>
+            <div><span>Deals</span><strong id="visible-deals">0</strong></div>
+            <div><span>Ã“rdenes</span><strong id="visible-history-orders">0</strong></div>
+            <button id="clear-activity-filter" class="clear-filter" type="button">Limpiar filtros</button>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table activity-table">
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Evento</th>
+                  <th>Ticket / Magic</th>
+                  <th>SÃ­mbolo</th>
+                  <th class="numeric">Volumen / Precio</th>
+                  <th class="numeric">Resultado neto</th>
+                  <th>Referencia</th>
+                </tr>
+              </thead>
+              <tbody id="activity-body"></tbody>
+            </table>
+            <p id="activity-empty" class="operations-empty">Recuperando actividad recienteâ€¦</p>
+          </div>
+        </article>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+      <footer>Los datos permanecen en memoria y no se ejecutan operaciones de trading.</footer>
+    </main>
+  </body>
+</html>

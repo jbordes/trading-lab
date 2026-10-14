@@ -8,6 +8,21 @@ const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById
 const statusDot = document.getElementById("status-dot");
 const identityPanel = document.querySelector(".identity");
 const metricsPanel = document.querySelector(".metrics");
+const sourcePill = document.getElementById("source-pill");
+const groupByBotInput = document.getElementById("group-by-bot");
+const errorHuman = document.getElementById("error-human");
+const errorTechnical = document.getElementById("error-technical");
+const errorTechnicalDetails = document.getElementById("error-technical-details");
+const plainSummary = document.getElementById("plain-summary");
+const riskBadge = document.getElementById("risk-badge");
+const dddMeter = document.getElementById("ddd-meter");
+const dddValue = document.getElementById("ddd-value");
+const dddFill = document.getElementById("ddd-fill");
+const dddCaption = document.getElementById("ddd-caption");
+const maxddMeter = document.getElementById("maxdd-meter");
+const maxddValue = document.getElementById("maxdd-value");
+const maxddFill = document.getElementById("maxdd-fill");
+const maxddCaption = document.getElementById("maxdd-caption");
 const errorBox = document.getElementById("error");
 const profitCard = document.getElementById("profit-card");
 const chartEmpty = document.getElementById("chart-empty");
@@ -19,6 +34,7 @@ const chartEnd = document.getElementById("chart-end");
 const chartSpan = document.getElementById("chart-span");
 const balanceLine = document.getElementById("balance-line");
 const equityLine = document.getElementById("equity-line");
+const balanceReference = document.getElementById("balance-reference");
 const grid = document.getElementById("grid");
 const magicFilter = document.getElementById("magic-filter");
 const magicOptions = document.getElementById("magic-options");
@@ -43,6 +59,7 @@ let latestActivityMagicKey = "";
 let activeView = "overview";
 let lastHistory = [];
 let latestSource = "MT5";
+let lastPollSince = null;
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
@@ -51,6 +68,8 @@ const activityElements = {
   magicFilter: document.getElementById("activity-magic-filter"),
   magicOptions: document.getElementById("activity-magic-options"),
   kindFilter: document.getElementById("activity-kind-filter"),
+  resultFilter: document.getElementById("activity-result-filter"),
+  windowPnl: document.getElementById("window-pnl-value"),
   clearFilter: document.getElementById("clear-activity-filter"),
   visible: document.getElementById("visible-activity"),
   deals: document.getElementById("visible-deals"),
@@ -72,13 +91,13 @@ const captureElements = {
 const operationTypes = {
   buy: "Compra",
   sell: "Venta",
-  buy_limit: "Buy limit",
-  sell_limit: "Sell limit",
-  buy_stop: "Buy stop",
-  sell_stop: "Sell stop",
-  buy_stop_limit: "Buy stop limit",
-  sell_stop_limit: "Sell stop limit",
-  close_by: "Close by",
+  buy_limit: "Compra limit",
+  sell_limit: "Venta limit",
+  buy_stop: "Compra stop",
+  sell_stop: "Venta stop",
+  buy_stop_limit: "Compra stop limit",
+  sell_stop_limit: "Venta stop limit",
+  close_by: "Cierre por otra",
 };
 
 const activityTypes = {
@@ -139,13 +158,14 @@ const moneyFormatters = new Map();
 
 function money(value, currency, signed = false) {
   if (!Number.isFinite(value)) return "—";
-  const key = `${currency}|${signed}`;
+  const safeCurrency = /^[A-Za-z]{3}$/.test(currency) ? currency : "USD";
+  const key = `${safeCurrency}|${signed}`;
   let formatter = moneyFormatters.get(key);
   if (formatter === undefined) {
     try {
       formatter = new Intl.NumberFormat(LOCALE, {
         style: "currency",
-        currency,
+        currency: safeCurrency,
         useGrouping: "always",
         signDisplay: signed ? "exceptZero" : "auto",
       });
@@ -155,7 +175,7 @@ function money(value, currency, signed = false) {
     moneyFormatters.set(key, formatter);
   }
   if (formatter) return formatter.format(value);
-  return `${value.toFixed(2)} ${currency}`;
+  return `${value.toFixed(2)} ${safeCurrency}`;
 }
 
 function number(value) {
@@ -183,11 +203,77 @@ function toDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// PROTOTIPO incremento 1: el panel de riesgo muestra la estructura final con
+// valores ilustrativos SOLO para la fuente demo. Los números reales llegarán
+// desde el snapshot cuando el contrato DDD/Max DD se apruebe con el socio.
+const DEMO_RISK = {
+  ddd: { usedPercent: 19, value: -0.95, limit: 5, caption: "reset a medianoche (Madrid)" },
+  maxdd: { usedPercent: 62, value: -12.3, limit: 20, caption: "acumulado desde el inicio de la incubación" },
+};
+
+const madridPartsFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+
+function madridResetLabel() {
+  const parts = madridPartsFormatter.formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour").value);
+  const minute = Number(parts.find((part) => part.type === "minute").value);
+  const second = Number(parts.find((part) => part.type === "second").value);
+  const remaining = (24 * 3600 - (hour * 3600 + minute * 60 + second)) % (24 * 3600);
+  return `faltan ${elapsed(remaining)}`;
+}
+
+function setRiskMeter(meter, valueEl, fillEl, captionEl, metric) {
+  setText(valueEl, `${decimal(metric.value)} %`);
+  const percent = Math.min(100, metric.usedPercent);
+  fillEl.style.width = `${percent}%`;
+  meter.classList.toggle("warn", percent >= 50 && percent < 80);
+  meter.classList.toggle("critical", percent >= 80);
+  setText(captionEl, `Usado el ${Math.round(percent)} % del límite (${decimal(metric.limit)} %) · ${metric.caption}`);
+}
+
+function clearRiskMeter(meter, valueEl, fillEl, captionEl) {
+  setText(valueEl, "—");
+  fillEl.style.width = "0%";
+  meter.classList.remove("warn", "critical");
+  setText(captionEl, "Fórmula y límites pendientes de validación con el socio.");
+}
+
+function renderRisk(source) {
+  if (source === "demo") {
+    setText(riskBadge, "Contrato pendiente · valores ilustrativos");
+    const ddd = { ...DEMO_RISK.ddd, caption: `${DEMO_RISK.ddd.caption} · ${madridResetLabel()}` };
+    setRiskMeter(dddMeter, dddValue, dddFill, dddCaption, ddd);
+    setRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption, DEMO_RISK.maxdd);
+  } else {
+    setText(riskBadge, "Contrato pendiente");
+    clearRiskMeter(dddMeter, dddValue, dddFill, dddCaption);
+    clearRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption);
+  }
+}
+
+function renderSummary(value, currency, status) {
+  const plural = (count, singular, pluralForm) => `${count} ${count === 1 ? singular : pluralForm}`;
+  const positions = plural(value.open_positions || 0, "posición abierta", "posiciones abiertas");
+  const orders = plural(value.active_orders || 0, "orden activa", "órdenes activas");
+  const profit = money(value.floating_profit || 0, currency, true);
+  const riskPhrase = value.source === "demo"
+    ? "riesgo dentro del límite (valores ilustrativos)"
+    : "métricas de riesgo pendientes de contrato";
+  const capturePhrase = status === "connected" ? "" : " · captura degradada, los datos pueden estar atrasados";
+  setText(plainSummary, `Cuenta ${latestSource} · ${positions} · ${orders} · resultado abierto ${profit} · ${riskPhrase}${capturePhrase}`);
+}
+
 function renderState(state) {
   setText(elements.status, statusLabels[state.status] || "Lectura degradada");
   statusDot.className = `status-dot ${state.status}`;
   const errorText = state.error || "";
-  if (errorText) setText(errorBox, errorText);
+  if (errorText) {
+    setText(errorHuman, "No pudimos leer el terminal. Se conserva la última muestra válida.");
+    setText(errorTechnical, errorText);
+    errorTechnicalDetails.hidden = false;
+  }
   errorBox.hidden = !errorText;
   renderCapture(state);
   if (!state.latest) return;
@@ -210,9 +296,11 @@ function renderState(state) {
   metricsPanel.classList.toggle("stale", staleData);
   if (value.observed_at === lastObservedAt) return;
   lastObservedAt = value.observed_at;
+  lastPollSince = value.observed_at;
   const currency = value.currency || "USD";
   latestCurrency = currency;
   latestSource = value.source.toUpperCase();
+  setText(sourcePill, latestSource);
   elements.source.textContent = latestSource;
   elements.account.textContent = value.account_reference;
   elements.server.textContent = value.server;
@@ -222,11 +310,13 @@ function renderState(state) {
   elements.profit.textContent = money(value.floating_profit, currency, true);
   elements["margin-free"].textContent = money(value.margin_free, currency);
   elements["margin-level"].textContent = value.margin_level === null
-    ? "Nivel —"
-    : `Nivel ${number(value.margin_level)}%`;
+    ? "—"
+    : `${number(value.margin_level)} %`;
   elements.positions.textContent = number(value.open_positions);
   elements.orders.textContent = number(value.active_orders);
   elements.margin.textContent = money(value.margin, currency);
+  renderRisk(value.source);
+  renderSummary(value, currency, state.status);
   profitCard.classList.toggle("positive", value.floating_profit > 0);
   profitCard.classList.toggle("negative", value.floating_profit < 0);
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
@@ -241,8 +331,14 @@ function renderState(state) {
   }
   activityElements.badge.textContent = number(latestActivity.length);
   if (activeView === "activity") renderActivity();
-  lastHistory = state.history;
-  if (activeView === "overview") renderChart(state.history, latestIntervalSeconds);
+  if (state.history_truncated) {
+    const known = new Set(lastHistory.map((item) => item.observed_at));
+    const fresh = state.history.filter((item) => !known.has(item.observed_at));
+    lastHistory = [...lastHistory, ...fresh].slice(-720);
+  } else {
+    lastHistory = state.history;
+  }
+  if (activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
 }
 
 function renderCapture(state) {
@@ -274,12 +370,20 @@ function renderCapture(state) {
 function renderActivity() {
   const magic = activityElements.magicFilter.value.trim();
   const kind = activityElements.kindFilter.value;
-  const signature = `${magic}|${kind}|${latestActivityWindowHours}|${latestActivityDataKey}`;
+  const result = activityElements.resultFilter.value;
+  const signature = `${magic}|${kind}|${result}|${latestActivityWindowHours}|${latestCurrency}|${latestSource}|${latestActivityDataKey}`;
   if (signature === latestActivitySignature) return;
   latestActivitySignature = signature;
-  const filtered = latestActivity.filter((item) => (
-    (!magic || String(item.magic_number) === magic) && (!kind || item.category === kind)
-  ));
+  const filtered = latestActivity.filter((item) => {
+    if (magic && String(item.magic_number) !== magic) return false;
+    if (kind && item.category !== kind) return false;
+    if (result) {
+      const net = netOf(item) || 0;
+      if (result === "profit" && net <= 0) return false;
+      if (result === "loss" && net >= 0) return false;
+    }
+    return true;
+  });
   const magicNumbers = [...new Set(latestActivity.map((item) => String(item.magic_number)))];
   magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
   const magicKey = magicNumbers.join(",");
@@ -296,11 +400,22 @@ function renderActivity() {
   activityElements.empty.textContent = latestActivity.length === 0
     ? `${latestSource} no informa actividad dentro de la ventana actual.`
     : "Ningún evento coincide con los filtros.";
-  activityElements.visible.textContent = number(filtered.length);
+  activityElements.visible.textContent = (magic || kind || result)
+    ? `${number(filtered.length)} de ${number(latestActivity.length)}`
+    : number(filtered.length);
   activityElements.deals.textContent = number(filtered.filter((item) => item.category === "deal").length);
   activityElements.orders.textContent = number(filtered.filter((item) => item.category === "order").length);
   activityElements.copy.textContent = `Operaciones cerradas (deals) y órdenes de las últimas ${number(latestActivityWindowHours)} horas.`;
-  activityElements.clearFilter.disabled = !magic && !kind;
+  const windowNet = latestActivity.reduce((total, item) => total + (netOf(item) || 0), 0);
+  setText(activityElements.windowPnl, money(windowNet, latestCurrency, true));
+  activityElements.windowPnl.className = windowNet > 0 ? "positive" : windowNet < 0 ? "negative" : "";
+  activityElements.clearFilter.disabled = !magic && !kind && !result;
+}
+
+function netOf(activity) {
+  const components = [activity.profit, activity.commission, activity.swap, activity.fee]
+    .filter((value) => Number.isFinite(value));
+  return components.length ? components.reduce((total, value) => total + value, 0) : null;
 }
 
 function activityRow(activity) {
@@ -323,9 +438,7 @@ function activityRow(activity) {
   row.appendChild(detailCell(activity.symbol, activity.comment || "Sin comentario"));
   row.appendChild(detailCell(decimal(activity.volume), price(activity.price), "numeric"));
 
-  const components = [activity.profit, activity.commission, activity.swap, activity.fee]
-    .filter((value) => Number.isFinite(value));
-  const netResult = components.length ? components.reduce((total, value) => total + value, 0) : null;
+  const netResult = netOf(activity);
   const breakdown = components.length
     ? `P&L ${money(activity.profit || 0, latestCurrency)} · costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
     : "Sin resultado monetario";
@@ -348,7 +461,8 @@ function elapsed(seconds) {
 
 function renderOperations() {
   const filter = magicFilter.value.trim();
-  const signature = `${filter}|${JSON.stringify(latestOperations)}`;
+  const grouped = groupByBotInput.checked;
+  const signature = `${latestCurrency}|${filter}|${grouped}|${JSON.stringify(latestOperations)}`;
   if (signature === latestOperationsSignature) return;
   latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
@@ -366,15 +480,64 @@ function renderOperations() {
     }));
   }
 
-  operationsBody.replaceChildren(...filtered.map(operationRow));
+  operationsBody.replaceChildren(...operationRows(filtered, grouped));
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
     ? `${latestSource} no informa operaciones activas.`
     : "Ninguna operación coincide con ese magic number.";
-  visibleOperations.textContent = number(filtered.length);
+  visibleOperations.textContent = filter
+    ? `${number(filtered.length)} de ${number(latestOperations.length)}`
+    : number(filtered.length);
   visiblePositions.textContent = number(filtered.filter((item) => item.kind === "position").length);
   visibleOrders.textContent = number(filtered.filter((item) => item.kind === "order").length);
   clearFilter.disabled = !filter;
+}
+
+function operationRows(operations, grouped) {
+  if (!grouped) return operations.map(operationRow);
+  const groups = new Map();
+  for (const operation of operations) {
+    const magic = String(operation.magic_number);
+    if (!groups.has(magic)) groups.set(magic, []);
+    groups.get(magic).push(operation);
+  }
+  const magics = [...groups.keys()].sort(
+    (left, right) => left.localeCompare(right, undefined, { numeric: true }),
+  );
+  const rows = [];
+  for (const magic of magics) {
+    const list = groups.get(magic);
+    rows.push(groupRow(magic, list));
+    rows.push(...list.map(operationRow));
+  }
+  return rows;
+}
+
+function groupRow(magic, operations) {
+  const row = document.createElement("tr");
+  row.className = "group-row";
+  const labelCell = document.createElement("td");
+  labelCell.colSpan = 7;
+  const label = document.createElement("strong");
+  label.className = "group-magic";
+  label.textContent = `Bot · Magic ${magic}`;
+  const count = document.createElement("span");
+  count.className = "group-count";
+  count.textContent = `${operations.length} operación${operations.length === 1 ? "" : "es"}`;
+  labelCell.append(label, count);
+  const profitSum = operations.reduce(
+    (total, operation) => total + (Number.isFinite(operation.floating_profit) ? operation.floating_profit : 0),
+    0,
+  );
+  row.setAttribute("aria-label", `Bot Magic ${magic}: ${operations.length} operación${operations.length === 1 ? "" : "es"}, P&L ${money(profitSum, latestCurrency, true)}`);
+  const profitCell = document.createElement("td");
+  profitCell.className = "numeric operation-profit";
+  if (profitSum > 0) profitCell.classList.add("positive");
+  else if (profitSum < 0) profitCell.classList.add("negative");
+  profitCell.textContent = money(profitSum, latestCurrency, true);
+  const timeCell = document.createElement("td");
+  row.append(labelCell, profitCell, timeCell);
+  return row;
 }
 
 function operationRow(operation) {
@@ -404,7 +567,12 @@ function operationRow(operation) {
   }
   row.appendChild(profit);
   const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
-  row.appendChild(textCell(openedAt ? dateTimeFormatter.format(openedAt) : "—"));
+  if (openedAt) {
+    const ageSeconds = Math.max(0, (Date.now() - openedAt.getTime()) / 1000);
+    row.appendChild(detailCell(dateTimeFormatter.format(openedAt), `hace ${elapsed(ageSeconds)}`));
+  } else {
+    row.appendChild(textCell("—"));
+  }
   return row;
 }
 
@@ -447,6 +615,7 @@ function renderChart(history, intervalSeconds) {
     chartEmpty.hidden = false;
     balanceLine.setAttribute("points", "");
     equityLine.setAttribute("points", "");
+    balanceReference.hidden = true;
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
     clearLabels();
     return;
@@ -470,6 +639,10 @@ function renderChart(history, intervalSeconds) {
   equityLine.setAttribute("points", toPoints("equity"));
   const startAt = toDate(history[0].observed_at);
   const endAt = toDate(history[history.length - 1].observed_at);
+  const referenceY = 295 - ((history[0].balance - low) / (high - low)) * 270;
+  balanceReference.setAttribute("y1", String(referenceY));
+  balanceReference.setAttribute("y2", String(referenceY));
+  balanceReference.hidden = false;
   chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
   chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
   chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";
@@ -493,6 +666,8 @@ function drawGrid() {
   }
 }
 
+let retryMultiplier = 1;
+
 async function refresh() {
   if (document.hidden) return;
   const controller = new AbortController();
@@ -501,15 +676,19 @@ async function refresh() {
     2 * latestIntervalSeconds * 1000,
   );
   try {
-    const response = await fetch("/api/state", { cache: "no-store", signal: controller.signal });
+    const query = lastPollSince ? `?since=${encodeURIComponent(lastPollSince)}` : "";
+    const response = await fetch(`/api/state${query}`, { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderState(await response.json());
+    retryMultiplier = 1;
   } catch (_) {
     setText(elements.status, "Sin conexión local");
     statusDot.className = "status-dot degraded";
     elements.freshness.classList.add("stale");
-    setText(errorBox, "No se pudo consultar el servicio local.");
+    setText(errorHuman, "No se pudo consultar el servicio local.");
+    errorTechnicalDetails.hidden = true;
     errorBox.hidden = false;
+    retryMultiplier = Math.min(retryMultiplier * 2, 6);
   } finally {
     window.clearTimeout(timeout);
   }
@@ -520,41 +699,101 @@ document.addEventListener("visibilitychange", () => {
 });
 
 drawGrid();
+function activateView(view) {
+  document.querySelectorAll(".view-tab").forEach((tab) => {
+    const active = tab.dataset.view === view;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll(".dashboard-view").forEach((panel) => {
+    panel.hidden = panel.id !== `${view}-view`;
+  });
+  activeView = view;
+  if (activeView === "operations") renderOperations();
+  else if (activeView === "activity") renderActivity();
+  else renderChart(lastHistory, latestIntervalSeconds);
+}
+
 document.querySelectorAll(".view-tab").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".view-tab").forEach((tab) => {
-      const active = tab === button;
-      tab.classList.toggle("active", active);
-      if (active) tab.setAttribute("aria-current", "page");
-      else tab.removeAttribute("aria-current");
-    });
-    document.querySelectorAll(".dashboard-view").forEach((view) => {
-      view.hidden = view.id !== `${button.dataset.view}-view`;
-    });
-    activeView = button.dataset.view;
-    if (activeView === "operations") renderOperations();
-    else if (activeView === "activity") renderActivity();
-    else renderChart(lastHistory, latestIntervalSeconds);
+    activateView(button.dataset.view);
+    history.replaceState(null, "", `#${button.dataset.view}`);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const tabs = [...document.querySelectorAll(".view-tab")];
+    const index = tabs.indexOf(button);
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(index + direction + tabs.length) % tabs.length];
+    next.focus();
+    next.click();
   });
 });
-magicFilter.addEventListener("input", renderOperations);
+
+window.addEventListener("hashchange", () => {
+  const view = location.hash.slice(1);
+  if (["overview", "operations", "activity"].includes(view)) activateView(view);
+});
+const FILTER_STORE = "tradinglab-dashboard-filters";
+
+function loadStoredFilters() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
+    magicFilter.value = stored.magic || "";
+    activityElements.magicFilter.value = stored.activityMagic || "";
+    activityElements.kindFilter.value = stored.activityKind || "";
+    activityElements.resultFilter.value = stored.activityResult || "";
+    groupByBotInput.checked = Boolean(stored.groupByBot);
+  } catch (_) {
+    // almacenamiento no disponible
+  }
+}
+
+function saveStoredFilters() {
+  try {
+    localStorage.setItem(FILTER_STORE, JSON.stringify({
+      magic: magicFilter.value,
+      activityMagic: activityElements.magicFilter.value,
+      activityKind: activityElements.kindFilter.value,
+      activityResult: activityElements.resultFilter.value,
+      groupByBot: groupByBotInput.checked,
+    }));
+  } catch (_) {
+    // almacenamiento no disponible
+  }
+}
+
+magicFilter.addEventListener("input", () => { renderOperations(); saveStoredFilters(); });
+groupByBotInput.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
   magicFilter.focus();
   renderOperations();
+  saveStoredFilters();
 });
-activityElements.magicFilter.addEventListener("input", () => renderActivity());
-activityElements.kindFilter.addEventListener("change", () => renderActivity());
+activityElements.magicFilter.addEventListener("input", () => { renderActivity(); saveStoredFilters(); });
+activityElements.kindFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
+activityElements.resultFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
 activityElements.clearFilter.addEventListener("click", () => {
   activityElements.magicFilter.value = "";
   activityElements.kindFilter.value = "";
+  activityElements.resultFilter.value = "";
   activityElements.magicFilter.focus();
   renderActivity();
+  saveStoredFilters();
 });
 function scheduleRefresh() {
   window.setTimeout(() => {
     refresh().finally(scheduleRefresh);
-  }, latestIntervalSeconds * 1000);
+  }, latestIntervalSeconds * 1000 * retryMultiplier);
 }
 
+loadStoredFilters();
+const initialView = location.hash.slice(1);
+if (["overview", "operations", "activity"].includes(initialView)) {
+  history.replaceState(null, "", `#${initialView}`);
+  activateView(initialView);
+}
 refresh().finally(scheduleRefresh);

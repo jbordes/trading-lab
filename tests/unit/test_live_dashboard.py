@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import sys
 import threading
@@ -256,6 +257,78 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(state["capture"]["last_duration_ms"], 19.0)
         self.assertEqual(state["capture"]["consecutive_failures"], 0)
 
+    def test_state_filters_history_since_observed_at(self) -> None:
+        instants = iter(
+            [
+                self.observed_at,
+                self.observed_at + timedelta(seconds=5),
+                self.observed_at + timedelta(seconds=10),
+            ]
+        )
+        timer_values = iter([10.0, 10.012, 20.0, 20.019, 30.0, 30.023])
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: next(instants),
+            timer=lambda: next(timer_values),
+        )
+        service.poll_once()
+        service.poll_once()
+        service.poll_once()
+
+        state = service.state(history_since="2026-10-14T19:30:00Z")
+
+        self.assertTrue(state["history_truncated"])
+        self.assertEqual(len(state["history"]), 2)
+        self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:05Z")
+
+    def test_statics_serve_etag_and_304(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/assets/app.js", timeout=2) as response:
+                body = response.read()
+                etag = response.headers["ETag"]
+                self.assertTrue(body.startswith(b'"use strict"'))
+                self.assertIn("no-cache", response.headers["Cache-Control"])
+            second = urllib.request.Request(
+                f"{base_url}/assets/app.js", headers={"If-None-Match": etag}
+            )
+            try:
+                urllib.request.urlopen(second, timeout=2)
+                self.fail("Se esperaba un 304 Not Modified")
+            except urllib.error.HTTPError as error:
+                self.assertEqual(error.code, 304)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+    def test_head_and_gzip_on_statics(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            head = urllib.request.Request(f"{base_url}/assets/app.js", method="HEAD")
+            with urllib.request.urlopen(head, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.read(), b"")
+                self.assertIn("ETag", response.headers)
+            gzipped = urllib.request.Request(
+                f"{base_url}/assets/app.js", headers={"Accept-Encoding": "gzip"}
+            )
+            with urllib.request.urlopen(gzipped, timeout=2) as response:
+                self.assertEqual(response.headers["Content-Encoding"], "gzip")
+                payload = gzip.decompress(response.read())
+                self.assertTrue(payload.startswith(b'"use strict"'))
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
             DemoSnapshotSource(),
@@ -272,7 +345,7 @@ class LiveDashboardTest(unittest.TestCase):
                 payload = json.loads(response.read())
                 self.assertEqual(payload["status"], "connected")
                 self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
-                self.assertEqual(len(payload["latest"]["operations"]), 3)
+                self.assertEqual(len(payload["latest"]["operations"]), 6)
                 self.assertEqual(len(payload["latest"]["recent_activity"]), 2)
                 self.assertNotIn("operations", payload["history"][0])
                 self.assertEqual(payload["capture"]["success_count"], 1)

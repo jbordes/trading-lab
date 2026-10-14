@@ -69,18 +69,34 @@ class LiveDashboardService:
             self._error = None
             self._record_attempt(attempted_at, duration_ms, succeeded=True)
 
-    def state(self) -> dict[str, object]:
-        """Return an immutable JSON-ready copy of the current dashboard state."""
+    def state(self, history_since: str | None = None) -> dict[str, object]:
+        """Return an immutable JSON-ready copy of the current dashboard state.
+
+        When ``history_since`` is an ISO instant the client already knows, the
+        history only includes samples observed strictly after it, and
+        ``history_truncated`` is True when at least one older sample was
+        omitted.
+        """
 
         with self._lock:
             history = [dict(sample) for sample in self._history]
             latest = self._latest.as_dict() if self._latest else None
+            truncated = False
+            if history_since is not None:
+                filtered = [
+                    sample
+                    for sample in history
+                    if str(sample.get("observed_at", "")) > history_since
+                ]
+                truncated = len(filtered) < len(history)
+                history = filtered
             return {
                 "schema_version": "live-dashboard-state-v3",
                 "status": self._status,
                 "error": self._error,
                 "latest": latest,
                 "history": history,
+                "history_truncated": truncated,
                 "interval_seconds": self._interval_seconds,
                 "capture": {
                     "attempt_count": self._attempt_count,

@@ -83,6 +83,11 @@ SECRET_PATTERNS = (
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 CONFLICT_MARKERS = re.compile(r"^(?:<{7}|={7}|>{7})(?:\s|$)", re.MULTILINE)
+# Secuencias típicas de doble encoding UTF-8: "Ã" o "Â" seguidos de un
+# carácter no ASCII (caso de 2 bytes) o la secuencia de 3 bytes que produce
+# guiones largos y puntos suspensivos rotos. Escritas con escapes unicode
+# para que este mismo archivo no se auto-detecte como mojibake.
+MOJIBAKE = re.compile("[\\u00c3\\u00c2][^\\u0000-\\u007f]|\\u00e2\\u20ac")
 ADR_NAME = re.compile(r"^\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 ADR_STATES = {"proposed", "accepted", "superseded", "rejected"}
 ADR_SECTIONS = ("Contexto", "Alternativas consideradas", "Decisión", "Consecuencias")
@@ -150,6 +155,8 @@ def check_text_safety(root: Path, files: list[Path]) -> list[str]:
             continue
         if CONFLICT_MARKERS.search(text):
             errors.append(f"Marcadores de conflicto Git: {relative.as_posix()}")
+        if MOJIBAKE.search(text):
+            errors.append(f"Posible mojibake (doble encoding UTF-8): {relative.as_posix()}")
         for label, pattern in SECRET_PATTERNS:
             if pattern.search(text):
                 errors.append(f"Posible {label} en {relative.as_posix()}")

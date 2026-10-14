@@ -66,7 +66,7 @@ def create_server(
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; connect-src 'self'; img-src 'self'; "
+                "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
                 "script-src 'self'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             )
             self.end_headers()

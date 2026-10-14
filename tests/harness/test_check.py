@@ -80,6 +80,29 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, ["Posible assigned secret en .env.example"])
 
+    def test_text_safety_detects_mojibake(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = Path("broken.html")
+            # UTF-8 válido que contiene una secuencia doble-encodificada:
+            # "Ã" (C3 83) seguido de "³" (C2 B3), mojibake de "ó".
+            (root / relative).write_bytes(b"<span>\xc3\x83\xc2\xb3rdenes</span>")
+
+            errors = CHECK.check_text_safety(root, [relative])
+
+            self.assertTrue(any("mojibake" in error for error in errors))
+
+    def test_text_safety_ignores_plain_accented_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = Path("clean.html")
+            # "Ã" seguido de ASCII (como en "SÃO PAULO") no es mojibake.
+            (root / relative).write_text("<span>SÃO PAULO y órdenes</span>", encoding="utf-8")
+
+            errors = CHECK.check_text_safety(root, [relative])
+
+            self.assertEqual(errors, [])
+
     def test_markdown_links_accept_existing_relative_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

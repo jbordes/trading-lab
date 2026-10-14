@@ -492,13 +492,13 @@ def _order_snapshot(order: object) -> OperationSnapshot:
 
 def _identifier(value: object, name: str) -> str:
     if isinstance(value, bool):
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido") from exc
+        raise DashboardReadError(f"MT5 devolvió {name} inválido") from exc
     if number < 0 or str(value).strip() not in {str(number), f"{number}.0"}:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     return str(number)
 
 
@@ -515,7 +515,7 @@ def _type_name(value: object, names: Mapping[int, str], name: str) -> str:
 def _symbol(value: object) -> str:
     text = str(value).strip()
     if not text or len(text) > 64 or any(character in text for character in "\r\n\0"):
-        raise DashboardReadError("MT5 devolviÃ³ symbol invÃ¡lido")
+        raise DashboardReadError("MT5 devolvió symbol inválido")
     return text
 
 
@@ -536,11 +536,11 @@ def _timestamp(value: object, name: str) -> str | None:
         return None
     seconds = _number(value, name)
     if seconds < 0:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     try:
         return _utc_iso(datetime.fromtimestamp(seconds, tz=UTC))
     except (OSError, OverflowError, ValueError) as exc:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido") from exc
+        raise DashboardReadError(f"MT5 devolvió {name} inválido") from exc
 
 
 def _record_timestamp(record: object, milliseconds_name: str, seconds_name: str, label: str) -> str:
@@ -550,7 +550,7 @@ def _record_timestamp(record: object, milliseconds_name: str, seconds_name: str,
     else:
         timestamp = _timestamp(_field(record, seconds_name, None), label)
     if timestamp is None:
-        raise DashboardReadError(f"MT5 devolviÃ³ {label} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {label} inválido")
     return timestamp
 
 

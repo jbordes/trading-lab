@@ -6,9 +6,17 @@ const ids = [
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const statusDot = document.getElementById("status-dot");
+const identityPanel = document.querySelector(".identity");
+const metricsPanel = document.querySelector(".metrics");
 const errorBox = document.getElementById("error");
 const profitCard = document.getElementById("profit-card");
 const chartEmpty = document.getElementById("chart-empty");
+const chart = document.getElementById("chart");
+const chartHigh = document.getElementById("chart-high");
+const chartLow = document.getElementById("chart-low");
+const chartStart = document.getElementById("chart-start");
+const chartEnd = document.getElementById("chart-end");
+const chartSpan = document.getElementById("chart-span");
 const balanceLine = document.getElementById("balance-line");
 const equityLine = document.getElementById("equity-line");
 const grid = document.getElementById("grid");
@@ -24,8 +32,17 @@ const clearFilter = document.getElementById("clear-filter");
 let latestOperations = [];
 let latestCurrency = "USD";
 let latestActivity = [];
+let latestActivityDataKey = "";
 let latestActivitySignature = "";
 let latestActivityWindowHours = 24;
+let latestIntervalSeconds = 5;
+let lastObservedAt = null;
+let latestOperationsSignature = "";
+let latestMagicKey = "";
+let latestActivityMagicKey = "";
+let activeView = "overview";
+let lastHistory = [];
+let latestSource = "MT5";
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
@@ -65,23 +82,23 @@ const operationTypes = {
 };
 
 const activityTypes = {
-  buy_in: "Compra Â· entrada",
-  buy_out: "Compra Â· salida",
-  buy_inout: "Compra Â· reversiÃ³n",
-  buy_out_by: "Compra Â· cierre por",
-  sell_in: "Venta Â· entrada",
-  sell_out: "Venta Â· salida",
-  sell_inout: "Venta Â· reversiÃ³n",
-  sell_out_by: "Venta Â· cierre por",
+  buy_in: "Compra · entrada",
+  buy_out: "Compra · salida",
+  buy_inout: "Compra · reversión",
+  buy_out_by: "Compra · cierre por",
+  sell_in: "Venta · entrada",
+  sell_out: "Venta · salida",
+  sell_inout: "Venta · reversión",
+  sell_out_by: "Venta · cierre por",
   balance: "Balance",
-  credit: "CrÃ©dito",
+  credit: "Crédito",
   charge: "Cargo",
-  correction: "CorrecciÃ³n",
+  correction: "Corrección",
   bonus: "Bonus",
-  commission: "ComisiÃ³n",
-  commission_daily: "ComisiÃ³n diaria",
-  commission_monthly: "ComisiÃ³n mensual",
-  interest: "InterÃ©s",
+  commission: "Comisión",
+  commission_daily: "Comisión diaria",
+  commission_monthly: "Comisión mensual",
+  interest: "Interés",
   dividend: "Dividendo",
   tax: "Impuesto",
   ...operationTypes,
@@ -97,119 +114,199 @@ const activityStates = {
   expired: "Expirada",
   request_add: "Solicitud de alta",
   request_modify: "Solicitud de cambio",
-  request_cancel: "Solicitud de cancelaciÃ³n",
+  request_cancel: "Solicitud de cancelación",
 };
 
-function money(value, currency) {
+const LOCALE = "es-AR";
+const numberFormatter = new Intl.NumberFormat(LOCALE, { useGrouping: "always" });
+const decimalFormatter = new Intl.NumberFormat(LOCALE, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+  useGrouping: "always",
+});
+const priceFormatter = new Intl.NumberFormat(LOCALE, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+  useGrouping: "always",
+});
+const timeFormatter = new Intl.DateTimeFormat(LOCALE, {
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+const dateTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
+  dateStyle: "short", timeStyle: "medium", hour12: false,
+});
+const moneyFormatters = new Map();
+
+function money(value, currency, signed = false) {
   if (!Number.isFinite(value)) return "—";
-  try {
-    return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(value);
-  } catch (_) {
-    return `${value.toFixed(2)} ${currency}`;
+  const key = `${currency}|${signed}`;
+  let formatter = moneyFormatters.get(key);
+  if (formatter === undefined) {
+    try {
+      formatter = new Intl.NumberFormat(LOCALE, {
+        style: "currency",
+        currency,
+        useGrouping: "always",
+        signDisplay: signed ? "exceptZero" : "auto",
+      });
+    } catch (_) {
+      formatter = null;
+    }
+    moneyFormatters.set(key, formatter);
   }
+  if (formatter) return formatter.format(value);
+  return `${value.toFixed(2)} ${currency}`;
 }
 
 function number(value) {
-  return Number.isFinite(value) ? new Intl.NumberFormat("es-ES").format(value) : "—";
+  return Number.isFinite(value) ? numberFormatter.format(value) : "—";
+}
+
+const statusLabels = {
+  connected: "Conectado",
+  degraded: "Lectura degradada",
+  starting: "Iniciando",
+};
+
+const captureHealthLabels = {
+  connected: "Normal",
+  degraded: "Degradada",
+  starting: "Iniciando",
+};
+
+function setText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+function toDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function renderState(state) {
-  elements.status.textContent = state.status === "connected" ? "Conectado" : "Lectura degradada";
+  setText(elements.status, statusLabels[state.status] || "Lectura degradada");
   statusDot.className = `status-dot ${state.status}`;
-  errorBox.hidden = !state.error;
-  errorBox.textContent = state.error || "";
+  const errorText = state.error || "";
+  if (errorText) setText(errorBox, errorText);
+  errorBox.hidden = !errorText;
   renderCapture(state);
   if (!state.latest) return;
 
   const value = state.latest;
-  elements.source.textContent = value.source.toUpperCase();
+  latestIntervalSeconds = state.interval_seconds || 5;
+  const observedAt = toDate(value.observed_at);
+  const ageSeconds = observedAt
+    ? Math.max(0, (Date.now() - observedAt.getTime()) / 1000)
+    : Infinity;
+  const staleData = ageSeconds > 2 * latestIntervalSeconds;
+  const criticalAge = ageSeconds > 10 * latestIntervalSeconds;
+  setText(elements.freshness, observedAt
+    ? `hace ${elapsed(ageSeconds)} · cada ${elapsed(latestIntervalSeconds)}`
+    : "sin lectura válida");
+  elements.freshness.title = observedAt ? `Última lectura ${timeFormatter.format(observedAt)}` : "";
+  elements.freshness.classList.toggle("aged", staleData && !criticalAge);
+  elements.freshness.classList.toggle("stale", criticalAge);
+  identityPanel.classList.toggle("stale", staleData);
+  metricsPanel.classList.toggle("stale", staleData);
+  if (value.observed_at === lastObservedAt) return;
+  lastObservedAt = value.observed_at;
+  const currency = value.currency || "USD";
+  latestCurrency = currency;
+  latestSource = value.source.toUpperCase();
+  elements.source.textContent = latestSource;
   elements.account.textContent = value.account_reference;
   elements.server.textContent = value.server;
   elements.currency.textContent = value.currency || "—";
-  elements.balance.textContent = money(value.balance, value.currency);
-  elements.equity.textContent = money(value.equity, value.currency);
-  elements.profit.textContent = money(value.floating_profit, value.currency);
-  elements["margin-free"].textContent = money(value.margin_free, value.currency);
+  elements.balance.textContent = money(value.balance, currency);
+  elements.equity.textContent = money(value.equity, currency);
+  elements.profit.textContent = money(value.floating_profit, currency, true);
+  elements["margin-free"].textContent = money(value.margin_free, currency);
   elements["margin-level"].textContent = value.margin_level === null
     ? "Nivel —"
     : `Nivel ${number(value.margin_level)}%`;
   elements.positions.textContent = number(value.open_positions);
   elements.orders.textContent = number(value.active_orders);
-  elements.margin.textContent = money(value.margin, value.currency);
-  elements.freshness.textContent = `Última lectura ${new Date(value.observed_at).toLocaleTimeString("es-ES")}`;
-  profitCard.classList.toggle("positive", value.floating_profit >= 0);
+  elements.margin.textContent = money(value.margin, currency);
+  profitCard.classList.toggle("positive", value.floating_profit > 0);
   profitCard.classList.toggle("negative", value.floating_profit < 0);
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
-  latestCurrency = value.currency || "USD";
-  renderOperations();
+  operationsBadge.textContent = number(latestOperations.length);
+  if (activeView === "operations") renderOperations();
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
-  const nextActivitySignature = JSON.stringify(nextActivity);
   latestActivityWindowHours = value.activity_window_hours || 24;
-  if (nextActivitySignature !== latestActivitySignature) {
+  const nextActivityKey = JSON.stringify(nextActivity);
+  if (nextActivityKey !== latestActivityDataKey) {
     latestActivity = nextActivity;
-    latestActivitySignature = nextActivitySignature;
-    renderActivity();
+    latestActivityDataKey = nextActivityKey;
   }
-  renderChart(state.history);
+  activityElements.badge.textContent = number(latestActivity.length);
+  if (activeView === "activity") renderActivity();
+  lastHistory = state.history;
+  if (activeView === "overview") renderChart(state.history, latestIntervalSeconds);
 }
 
 function renderCapture(state) {
   const capture = state.capture || {};
   const failures = capture.consecutive_failures || 0;
-  captureElements.health.textContent = state.status === "connected" ? "Normal" : "Degradada";
-  captureElements.health.className = state.status === "connected" ? "positive-text" : "negative-text";
-  captureElements.streak.textContent = failures === 0
+  setText(captureElements.health, captureHealthLabels[state.status] || "Degradada");
+  captureElements.health.className = state.status === "connected"
+    ? "positive-text"
+    : state.status === "starting" ? "" : "negative-text";
+  setText(captureElements.streak, failures === 0
     ? "Sin fallos consecutivos"
-    : `${number(failures)} fallo${failures === 1 ? "" : "s"} consecutivo${failures === 1 ? "" : "s"}`;
-  captureElements.lastSuccess.textContent = capture.last_success_at
-    ? new Date(capture.last_success_at).toLocaleTimeString("es-ES")
-    : "—";
-  const ageSeconds = capture.last_success_at
-    ? Math.max(0, (Date.now() - new Date(capture.last_success_at).getTime()) / 1000)
+    : `${number(failures)} fallo${failures === 1 ? "" : "s"} consecutivo${failures === 1 ? "" : "s"}`);
+  const lastSuccessAt = capture.last_success_at ? toDate(capture.last_success_at) : null;
+  setText(captureElements.lastSuccess, lastSuccessAt ? timeFormatter.format(lastSuccessAt) : "—");
+  const ageSeconds = lastSuccessAt
+    ? Math.max(0, (Date.now() - lastSuccessAt.getTime()) / 1000)
     : null;
-  captureElements.age.textContent = ageSeconds === null ? "Edad —" : `Edad ${elapsed(ageSeconds)}`;
-  captureElements.duration.textContent = Number.isFinite(capture.last_duration_ms)
+  setText(captureElements.age, ageSeconds === null ? "Edad —" : `Edad ${elapsed(ageSeconds)}`);
+  setText(captureElements.duration, Number.isFinite(capture.last_duration_ms)
     ? `${number(capture.last_duration_ms)} ms`
-    : "—";
-  captureElements.maxDuration.textContent = Number.isFinite(capture.max_duration_ms)
-    ? `MÃ¡ximo ${number(capture.max_duration_ms)} ms`
-    : "MÃ¡ximo —";
-  captureElements.attempts.textContent = number(capture.attempt_count || 0);
-  captureElements.results.textContent = `${number(capture.success_count || 0)} correctos Â· ${number(capture.failure_count || 0)} fallidos`;
+    : "—");
+  setText(captureElements.maxDuration, Number.isFinite(capture.max_duration_ms)
+    ? `Máximo ${number(capture.max_duration_ms)} ms`
+    : "Máximo —");
+  setText(captureElements.attempts, number(capture.attempt_count || 0));
+  setText(captureElements.results, `${number(capture.success_count || 0)} correctos · ${number(capture.failure_count || 0)} fallidos`);
 }
 
 function renderActivity() {
   const magic = activityElements.magicFilter.value.trim();
   const kind = activityElements.kindFilter.value;
+  const signature = `${magic}|${kind}|${latestActivityWindowHours}|${latestActivityDataKey}`;
+  if (signature === latestActivitySignature) return;
+  latestActivitySignature = signature;
   const filtered = latestActivity.filter((item) => (
-    (!magic || String(item.magic_number).includes(magic)) && (!kind || item.category === kind)
+    (!magic || String(item.magic_number) === magic) && (!kind || item.category === kind)
   ));
   const magicNumbers = [...new Set(latestActivity.map((item) => String(item.magic_number)))];
   magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  activityElements.magicOptions.replaceChildren(...magicNumbers.map((value) => {
-    const option = document.createElement("option");
-    option.value = value;
-    return option;
-  }));
+  const magicKey = magicNumbers.join(",");
+  if (magicKey !== latestActivityMagicKey) {
+    latestActivityMagicKey = magicKey;
+    activityElements.magicOptions.replaceChildren(...magicNumbers.map((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      return option;
+    }));
+  }
   activityElements.body.replaceChildren(...filtered.map(activityRow));
   activityElements.empty.hidden = filtered.length > 0;
   activityElements.empty.textContent = latestActivity.length === 0
-    ? "MT5 no informa actividad dentro de la ventana actual."
-    : "NingÃºn evento coincide con los filtros.";
-  activityElements.badge.textContent = number(latestActivity.length);
+    ? `${latestSource} no informa actividad dentro de la ventana actual.`
+    : "Ningún evento coincide con los filtros.";
   activityElements.visible.textContent = number(filtered.length);
   activityElements.deals.textContent = number(filtered.filter((item) => item.category === "deal").length);
   activityElements.orders.textContent = number(filtered.filter((item) => item.category === "order").length);
-  activityElements.copy.textContent = `Deals y Ã³rdenes histÃ³ricas de las Ãºltimas ${number(latestActivityWindowHours)} horas.`;
+  activityElements.copy.textContent = `Operaciones cerradas (deals) y órdenes de las últimas ${number(latestActivityWindowHours)} horas.`;
   activityElements.clearFilter.disabled = !magic && !kind;
 }
 
 function activityRow(activity) {
   const row = document.createElement("tr");
-  row.appendChild(textCell(new Date(activity.occurred_at).toLocaleString("es-ES", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  })));
+  const occurredAt = toDate(activity.occurred_at);
+  row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—"));
   const eventCell = document.createElement("td");
   const badge = document.createElement("span");
   badge.className = `operation-kind ${activity.category}`;
@@ -219,7 +316,7 @@ function activityRow(activity) {
   eventText.className = "activity-event";
   const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
   const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
-  eventText.textContent = stateName ? `${eventName} Â· ${stateName}` : eventName;
+  eventText.textContent = stateName ? `${eventName} · ${stateName}` : eventName;
   eventCell.appendChild(eventText);
   row.appendChild(eventCell);
   row.appendChild(detailCell(`#${activity.ticket}`, `Magic ${activity.magic_number}`, "mono"));
@@ -230,14 +327,14 @@ function activityRow(activity) {
     .filter((value) => Number.isFinite(value));
   const netResult = components.length ? components.reduce((total, value) => total + value, 0) : null;
   const breakdown = components.length
-    ? `P&L ${money(activity.profit || 0, latestCurrency)} Â· costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
+    ? `P&L ${money(activity.profit || 0, latestCurrency)} · costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
     : "Sin resultado monetario";
   row.appendChild(detailCell(
-    netResult === null ? "—" : money(netResult, latestCurrency),
+    netResult === null ? "—" : money(netResult, latestCurrency, true),
     breakdown,
-    `numeric ${netResult === null ? "" : netResult >= 0 ? "positive-text" : "negative-text"}`,
+    `numeric ${netResult === null ? "" : netResult > 0 ? "positive-text" : netResult < 0 ? "negative-text" : ""}`,
   ));
-  const reference = activity.position_id ? `PosiciÃ³n ${activity.position_id}` : "Sin posiciÃ³n";
+  const reference = activity.position_id ? `Posición ${activity.position_id}` : "Sin posición";
   const order = activity.order_ticket ? `Orden ${activity.order_ticket}` : "";
   row.appendChild(detailCell(reference, order));
   return row;
@@ -251,23 +348,29 @@ function elapsed(seconds) {
 
 function renderOperations() {
   const filter = magicFilter.value.trim();
+  const signature = `${filter}|${JSON.stringify(latestOperations)}`;
+  if (signature === latestOperationsSignature) return;
+  latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
-    !filter || String(operation.magic_number).includes(filter)
+    !filter || String(operation.magic_number) === filter
   ));
   const magicNumbers = [...new Set(latestOperations.map((item) => String(item.magic_number)))];
   magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  magicOptions.replaceChildren(...magicNumbers.map((magic) => {
-    const option = document.createElement("option");
-    option.value = magic;
-    return option;
-  }));
+  const magicKey = magicNumbers.join(",");
+  if (magicKey !== latestMagicKey) {
+    latestMagicKey = magicKey;
+    magicOptions.replaceChildren(...magicNumbers.map((magic) => {
+      const option = document.createElement("option");
+      option.value = magic;
+      return option;
+    }));
+  }
 
   operationsBody.replaceChildren(...filtered.map(operationRow));
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
-    ? "MT5 no informa operaciones activas."
-    : "Ninguna operaciÃ³n coincide con ese magic number.";
-  operationsBadge.textContent = number(latestOperations.length);
+    ? `${latestSource} no informa operaciones activas.`
+    : "Ninguna operación coincide con ese magic number.";
   visibleOperations.textContent = number(filtered.length);
   visiblePositions.textContent = number(filtered.filter((item) => item.kind === "position").length);
   visibleOrders.textContent = number(filtered.filter((item) => item.kind === "order").length);
@@ -276,7 +379,7 @@ function renderOperations() {
 
 function operationRow(operation) {
   const row = document.createElement("tr");
-  const kind = operation.kind === "position" ? "PosiciÃ³n" : "Orden";
+  const kind = operation.kind === "position" ? "Posición" : "Orden";
   const kindCell = document.createElement("td");
   const badge = document.createElement("span");
   badge.className = `operation-kind ${operation.kind}`;
@@ -293,15 +396,15 @@ function operationRow(operation) {
   const profit = document.createElement("td");
   profit.className = "numeric operation-profit";
   if (Number.isFinite(operation.floating_profit)) {
-    profit.textContent = money(operation.floating_profit, latestCurrency);
-    profit.classList.add(operation.floating_profit >= 0 ? "positive" : "negative");
+    profit.textContent = money(operation.floating_profit, latestCurrency, true);
+    if (operation.floating_profit > 0) profit.classList.add("positive");
+    else if (operation.floating_profit < 0) profit.classList.add("negative");
   } else {
     profit.textContent = "—";
   }
   row.appendChild(profit);
-  row.appendChild(textCell(operation.opened_at
-    ? new Date(operation.opened_at).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" })
-    : "—"));
+  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
+  row.appendChild(textCell(openedAt ? dateTimeFormatter.format(openedAt) : "—"));
   return row;
 }
 
@@ -319,33 +422,42 @@ function detailCell(primary, secondary, className = "") {
   strong.textContent = primary;
   const small = document.createElement("small");
   small.textContent = secondary;
+  if (secondary) small.title = secondary;
   cell.append(strong, small);
   return cell;
 }
 
 function decimal(value) {
-  return Number.isFinite(value)
-    ? new Intl.NumberFormat("es-ES", { maximumFractionDigits: 4 }).format(value)
-    : "—";
+  return Number.isFinite(value) ? decimalFormatter.format(value) : "—";
 }
 
 function price(value) {
-  return Number.isFinite(value)
-    ? new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(value)
-    : "—";
+  return Number.isFinite(value) ? priceFormatter.format(value) : "—";
 }
 
-function renderChart(history) {
+function renderChart(history, intervalSeconds) {
+  const clearLabels = () => {
+    chartHigh.textContent = "";
+    chartLow.textContent = "";
+    chartStart.textContent = "";
+    chartEnd.textContent = "";
+    chartSpan.textContent = "";
+  };
   if (history.length < 2) {
     chartEmpty.hidden = false;
     balanceLine.setAttribute("points", "");
     equityLine.setAttribute("points", "");
+    chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
+    clearLabels();
     return;
   }
   chartEmpty.hidden = true;
-  const values = history.flatMap((item) => [item.balance, item.equity]);
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  for (const item of history) {
+    minimum = Math.min(minimum, item.balance, item.equity);
+    maximum = Math.max(maximum, item.balance, item.equity);
+  }
   const padding = Math.max((maximum - minimum) * 0.15, Math.abs(maximum) * 0.0001, 1);
   const low = minimum - padding;
   const high = maximum + padding;
@@ -356,6 +468,15 @@ function renderChart(history) {
   }).join(" ");
   balanceLine.setAttribute("points", toPoints("balance"));
   equityLine.setAttribute("points", toPoints("equity"));
+  const startAt = toDate(history[0].observed_at);
+  const endAt = toDate(history[history.length - 1].observed_at);
+  chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
+  chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
+  chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";
+  chartEnd.textContent = endAt ? timeFormatter.format(endAt) : "";
+  const span = elapsed(history.length * intervalSeconds);
+  chartSpan.textContent = `Ventana ${span}`;
+  chart.setAttribute("aria-label", `Evolución de balance y equity, ventana ${span}`);
 }
 
 function drawGrid() {
@@ -373,17 +494,30 @@ function drawGrid() {
 }
 
 async function refresh() {
+  if (document.hidden) return;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    2 * latestIntervalSeconds * 1000,
+  );
   try {
-    const response = await fetch("/api/state", { cache: "no-store" });
+    const response = await fetch("/api/state", { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderState(await response.json());
   } catch (_) {
-    elements.status.textContent = "Sin conexión local";
+    setText(elements.status, "Sin conexión local");
     statusDot.className = "status-dot degraded";
+    elements.freshness.classList.add("stale");
+    setText(errorBox, "No se pudo consultar el servicio local.");
     errorBox.hidden = false;
-    errorBox.textContent = "No se pudo consultar el servicio local.";
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refresh();
+});
 
 drawGrid();
 document.querySelectorAll(".view-tab").forEach((button) => {
@@ -397,6 +531,10 @@ document.querySelectorAll(".view-tab").forEach((button) => {
     document.querySelectorAll(".dashboard-view").forEach((view) => {
       view.hidden = view.id !== `${button.dataset.view}-view`;
     });
+    activeView = button.dataset.view;
+    if (activeView === "operations") renderOperations();
+    else if (activeView === "activity") renderActivity();
+    else renderChart(lastHistory, latestIntervalSeconds);
   });
 });
 magicFilter.addEventListener("input", renderOperations);
@@ -413,5 +551,10 @@ activityElements.clearFilter.addEventListener("click", () => {
   activityElements.magicFilter.focus();
   renderActivity();
 });
-refresh();
-window.setInterval(refresh, 2000);
+function scheduleRefresh() {
+  window.setTimeout(() => {
+    refresh().finally(scheduleRefresh);
+  }, latestIntervalSeconds * 1000);
+}
+
+refresh().finally(scheduleRefresh);

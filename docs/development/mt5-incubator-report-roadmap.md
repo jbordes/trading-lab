@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-14
 
-**Estado:** Ajustado con respuestas del socio; Fase 0 parcialmente abierta
+**Estado:** superseded por el [roadmap del dashboard local](live-risk-dashboard-roadmap.md)
 
 **Documento base:** [Análisis del informe automatizado de incubación MT5](../architecture/mt5-incubator-report-analysis.md)
 

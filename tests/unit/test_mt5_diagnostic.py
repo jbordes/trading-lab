@@ -21,7 +21,6 @@ assert CLI_SPEC and CLI_SPEC.loader
 CLI = importlib.util.module_from_spec(CLI_SPEC)
 CLI_SPEC.loader.exec_module(CLI)
 
-from tradinglab.incubation.contracts import TRADE_COLUMNS_V1  # noqa: E402
 from tradinglab.incubation.diagnostic import (  # noqa: E402
     CaptureValidationError,
     CaptureWindow,
@@ -161,18 +160,6 @@ class Mt5DiagnosticTest(unittest.TestCase):
         self.assertEqual(payload["history_deals"][0]["magic"], 900001)
         self.assertEqual(len(payload["open_positions"]), 1)
         self.assertEqual(len(payload["active_orders"]), 1)
-
-    def test_expected_trade_fixture_matches_versioned_columns(self) -> None:
-        fixture = ROOT / "tests" / "fixtures" / "incubation" / "expected_trades_golden_v1.json"
-
-        payload = json.loads(fixture.read_text(encoding="utf-8"))
-        row = payload["rows"][0]
-
-        self.assertEqual(tuple(payload["columns"]), TRADE_COLUMNS_V1)
-        self.assertEqual(set(row), set(TRADE_COLUMNS_V1))
-        self.assertEqual(len(row), len(TRADE_COLUMNS_V1))
-        self.assertEqual(row["magic_number"], 900001)
-        self.assertAlmostEqual(row["net_profit"], 19.2)
 
     def test_invalid_fixture_root_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

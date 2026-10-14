@@ -6,7 +6,7 @@
 
 ## Objetivo
 
-Determinar qué información entrega realmente el terminal MT5 antes de diseñar la reconstrucción final o el Excel. El spike produce evidencia JSON local, inmutable y con hash; no ejecuta operaciones ni transforma los datos en trades canónicos.
+Determinar qué información entrega realmente el terminal MT5 antes de diseñar reconstrucciones, métricas o vistas derivadas. El spike produce evidencia JSON local, inmutable y con hash; no ejecuta operaciones ni transforma los datos en trades canónicos.
 
 ## Conjuntos capturados
 
@@ -46,7 +46,7 @@ La evidencia puede contener cuenta, broker, saldos y actividad operativa. Por es
 
 No representa resultados reales ni pretende fijar todavía el modelo final de trades. Su función es estabilizar la frontera de captura y permitir que la reconstrucción futura tenga un caso reproducible.
 
-`tests/fixtures/incubation/expected_trades_golden_v1.json` fija la salida cerrada esperada para ese caso: las 37 columnas del workbook de referencia más `magic_number`. La prueba de contrato exige exactamente esas 38 columnas, pero todavía no implementa la transformación entre ambos fixtures.
+El contrato específico de las 38 columnas del workbook fue retirado al dejar de ser Excel el entregable v1. Un futuro contrato de métricas se construirá desde definiciones aprobadas por el socio y podrá reutilizar esta captura.
 
 ## Uso
 
@@ -83,9 +83,9 @@ El comando no recibe login ni contraseña y no importa ni expone funciones de en
 ## Límites deliberados
 
 - No reconstruye todavía el ciclo de vida de una posición.
-- No genera el Excel de incubación.
+- No genera Excel ni calcula métricas de riesgo.
 - No implementa scheduler, alertas ni base de datos.
 - No instala un EA ni un colector `OnTradeTransaction`.
-- No decide cómo mostrar abiertas, pendientes o correcciones en el workbook.
+- No decide todavía cómo persistir o agrupar observaciones por bot.
 
 Esos pasos se habilitan únicamente después de ejecutar el spike con datos reales anonimizables y resolver las aclaraciones funcionales pendientes.

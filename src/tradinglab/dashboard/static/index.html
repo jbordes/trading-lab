@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>TradingLab Live</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">TRADINGLAB 2.0</p>
+          <h1>Monitor MT5</h1>
+          <p class="subtitle">Observación local · Solo lectura</p>
+        </div>
+        <div class="connection" aria-live="polite">
+          <span id="status-dot" class="status-dot"></span>
+          <div>
+            <strong id="status">Conectando</strong>
+            <small id="freshness">Esperando primera captura</small>
+          </div>
+        </div>
+      </header>
+
+      <section class="identity panel">
+        <div><span>Fuente</span><strong id="source">—</strong></div>
+        <div><span>Cuenta</span><strong id="account">—</strong></div>
+        <div><span>Servidor</span><strong id="server">—</strong></div>
+        <div><span>Moneda</span><strong id="currency">—</strong></div>
+      </section>
+
+      <section class="metrics" aria-label="Estado de cuenta">
+        <article class="metric-card accent-blue">
+          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
+        </article>
+        <article class="metric-card accent-cyan">
+          <span>Equity</span><strong id="equity">—</strong><small>Valor actual</small>
+        </article>
+        <article class="metric-card" id="profit-card">
+          <span>P&amp;L flotante</span><strong id="profit">—</strong><small>Posiciones abiertas</small>
+        </article>
+        <article class="metric-card">
+          <span>Margen libre</span><strong id="margin-free">—</strong><small id="margin-level">Nivel —</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">VENTANA LOCAL</p><h2>Balance y equity</h2></div>
+            <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="chart" viewBox="0 0 1000 320" role="img" aria-label="Evolución reciente de balance y equity">
+              <g id="grid"></g>
+              <polyline id="balance-line" class="line balance-line" points=""></polyline>
+              <polyline id="equity-line" class="line equity-line" points=""></polyline>
+            </svg>
+            <p id="chart-empty" class="chart-empty">Recolectando observaciones…</p>
+          </div>
+        </article>
+
+        <aside class="side-stack">
+          <article class="panel compact-panel">
+            <p class="eyebrow">ACTIVIDAD</p>
+            <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
+            <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
+            <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
+          </article>
+          <article class="panel pending-panel">
+            <p class="eyebrow">CONTROL DE RIESGO</p>
+            <h2>DDD y Max DD</h2>
+            <p>Captura preparada. Las fórmulas y límites quedan pendientes de validación con el socio.</p>
+            <span class="pending-badge">Contrato pendiente</span>
+          </article>
+        </aside>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+      <footer>Los datos permanecen en memoria y no se ejecutan operaciones de trading.</footer>
+    </main>
+  </body>
+</html>

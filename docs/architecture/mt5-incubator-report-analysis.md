@@ -2,7 +2,9 @@
 
 **Fecha:** 2026-10-14
 
-**Estado:** Validación funcional parcial; respuestas del socio incorporadas
+**Estado:** superseded como entregable; se conserva como análisis histórico
+
+> La decisión de generar Excel como producto v1 fue reemplazada por el dashboard local definido en [ADR-0002](../adr/0002-local-live-risk-dashboard.md). La investigación y el diagnóstico MT5 de solo lectura siguen siendo reutilizables.
 
 **Alcance:** captura completa del ciclo operativo y generación diaria de un Excel por estrategia
 

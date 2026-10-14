@@ -25,6 +25,12 @@
         </div>
       </header>
 
+      <nav class="view-tabs" aria-label="Secciones del dashboard">
+        <button class="view-tab active" type="button" data-view="overview" aria-current="page">Resumen</button>
+        <button class="view-tab" type="button" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
+      </nav>
+
+      <section id="overview-view" class="dashboard-view">
       <section class="identity panel">
         <div><span>Fuente</span><strong id="source">—</strong></div>
         <div><span>Cuenta</span><strong id="account">—</strong></div>
@@ -77,6 +83,51 @@
             <span class="pending-badge">Contrato pendiente</span>
           </article>
         </aside>
+      </section>
+      </section>
+
+      <section id="operations-view" class="dashboard-view" hidden>
+        <article class="panel operations-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">MUESTREO ACTUAL</p>
+              <h2>Operaciones activas</h2>
+              <p class="operations-copy">Posiciones abiertas y Ã³rdenes pendientes informadas por MT5.</p>
+            </div>
+            <label class="filter-field" for="magic-filter">
+              <span>Filtrar por magic number</span>
+              <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
+              <datalist id="magic-options"></datalist>
+            </label>
+          </div>
+
+          <div class="operation-stats" aria-live="polite">
+            <div><span>Mostradas</span><strong id="visible-operations">0</strong></div>
+            <div><span>Posiciones</span><strong id="visible-positions">0</strong></div>
+            <div><span>Ã“rdenes</span><strong id="visible-orders">0</strong></div>
+            <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table">
+              <thead>
+                <tr>
+                  <th>Estado</th>
+                  <th>Ticket / Magic</th>
+                  <th>SÃ­mbolo</th>
+                  <th>Tipo</th>
+                  <th class="numeric">Volumen</th>
+                  <th class="numeric">Apertura / Actual</th>
+                  <th class="numeric">SL / TP</th>
+                  <th class="numeric">P&amp;L</th>
+                  <th>Hora</th>
+                </tr>
+              </thead>
+              <tbody id="operations-body"></tbody>
+            </table>
+            <p id="operations-empty" class="operations-empty">Esperando operacionesâ€¦</p>
+          </div>
+        </article>
       </section>
 
       <p id="error" class="error" role="alert" hidden></p>

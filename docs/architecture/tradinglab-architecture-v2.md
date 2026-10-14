@@ -86,7 +86,7 @@ Estas extensiones no obligan a crear todas sus tablas en la primera migración. 
 
 ### 2.6 Modificación 2.4 — Dashboard local de riesgo
 
-El workbook deja de ser el entregable prioritario de incubación. El primer corte visible será una aplicación local, enlazada exclusivamente a loopback, que muestre observaciones de MT5 con pocos segundos de demora y sin ejecutar operaciones.
+El workbook deja de ser el entregable prioritario de incubación. El primer corte visible será una aplicación local, enlazada exclusivamente a loopback, que muestre observaciones de MT5 con pocos segundos de demora y sin ejecutar operaciones. La interfaz incluye una muestra de posiciones abiertas y órdenes pendientes con Magic Number filtrable, sin convertir todavía esos datos en un modelo histórico amplio.
 
 El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza un snapshot mínimo, un buffer acotado y adaptadores separados. MT5 se valida primero; StocksTrader REST se incorpora después para cuentas propias de esa plataforma. Las métricas se implementan únicamente desde contratos aprobados por los socios.
 
@@ -810,6 +810,7 @@ La calidad mínima incluirá tests unitarios del dominio, fixtures representativ
 - Demostrar trazabilidad desde la métrica hasta evidence bundle, job, deployment, `.ex5`, build, código preparado, exportación SQX, configuración y datos.
 - Demostrar que el socio puede ejecutar el checklist manual y localizar los mismos datos que en el expediente 1.0.
 - Validar un dashboard local read-only con una cuenta MT5 demo y pocos segundos de demora.
+- Comparar la muestra de operaciones activas y su filtro por Magic Number contra el terminal demo.
 - Aprobar las fórmulas iniciales de riesgo antes de persistir o publicar métricas derivadas.
 
 ### Fase 3 — Operación repetible

@@ -28,7 +28,8 @@ class LiveDashboardService:
         self._source = source
         self._interval_seconds = interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._history: deque[LiveSnapshot] = deque(maxlen=history_limit)
+        self._history: deque[dict[str, object]] = deque(maxlen=history_limit)
+        self._latest: LiveSnapshot | None = None
         self._status = "starting"
         self._error: str | None = None
         self._lock = threading.Lock()
@@ -46,7 +47,8 @@ class LiveDashboardService:
                 self._error = _safe_message(exc)
             return
         with self._lock:
-            self._history.append(snapshot)
+            self._history.append(snapshot.as_history_dict())
+            self._latest = snapshot
             self._status = "connected"
             self._error = None
 
@@ -54,12 +56,13 @@ class LiveDashboardService:
         """Return an immutable JSON-ready copy of the current dashboard state."""
 
         with self._lock:
-            history = [sample.as_dict() for sample in self._history]
+            history = [dict(sample) for sample in self._history]
+            latest = self._latest.as_dict() if self._latest else None
             return {
-                "schema_version": "live-dashboard-state-v1",
+                "schema_version": "live-dashboard-state-v2",
                 "status": self._status,
                 "error": self._error,
-                "latest": history[-1] if history else None,
+                "latest": latest,
                 "history": history,
                 "interval_seconds": self._interval_seconds,
             }

@@ -38,9 +38,16 @@ La primera frontera compartida contiene únicamente:
 - referencia de cuenta enmascarada, servidor y moneda;
 - balance, equity y beneficio flotante;
 - margen, margen libre y nivel de margen;
-- cantidad de posiciones abiertas y órdenes activas.
+- cantidad de posiciones abiertas y órdenes activas;
+- muestra operativa actual de posiciones y órdenes, con ticket y Magic Number
+  representados como texto para conservar identificadores de 64 bits;
+- símbolo, tipo, volumen, precios, SL/TP, resultado flotante, hora y comentario de
+  cada operación disponible.
 
-Esto no constituye un modelo canónico completo. Evita que la pantalla dependa de estructuras específicas de MT5 y ofrece el mínimo punto de extensión para StocksTrader. Los payloads operativos completos y la identidad por bot se incorporarán solo cuando una métrica aprobada los necesite.
+Esto no constituye un modelo canónico completo. Es una proyección de lectura para
+la pantalla, no una copia del payload completo de MT5. El detalle operativo vive
+solo en la última muestra; el historial acotado conserva valores de cuenta sin
+repetir todas las operaciones en cada punto.
 
 ## Fuentes
 
@@ -77,7 +84,11 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 ## Presentación
 
-La primera pantalla usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar de Python. No descarga scripts de terceros ni necesita Node. Muestra valores directos y una curva reciente de balance/equity.
+La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
+de Python. No descarga scripts de terceros ni necesita Node. La vista Resumen
+muestra valores directos y una curva reciente de balance/equity. La vista
+Operaciones lista posiciones abiertas y órdenes pendientes y permite filtrar por
+Magic Number sin recargar la página.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 
@@ -99,3 +110,7 @@ Apache ECharts queda seleccionado como candidato para la etapa que incluya histo
 4. Balance, equity, flotante, margen y conteos se actualizan sin recargar la página.
 5. Un fallo conserva la última muestra válida y se muestra como estado degradado.
 6. Las validaciones automatizadas cubren fuente, servicio y frontera HTTP.
+7. La muestra actual distingue posiciones y órdenes y preserva tickets y Magic
+   Numbers sin pérdida de precisión.
+8. El filtro por Magic Number funciona en el navegador y no envía consultas ni
+   acciones al terminal.

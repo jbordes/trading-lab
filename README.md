@@ -37,7 +37,7 @@ El documento `Trading_Lab_2_0_Arquitectura_Inicial.pdf` se conserva para compara
 
 ## Próximo hito
 
-Validar el dashboard local de solo lectura contra una cuenta MT5 demo y cerrar con el socio las fórmulas de DDD y Max DD.
+Comparar la muestra de posiciones y órdenes del dashboard con el terminal MT5 demo y cerrar con el socio las fórmulas de DDD y Max DD.
 
 ## Dashboard local
 
@@ -47,7 +47,7 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
-Con el extra MT5 instalado y un terminal autenticado mediante acceso de inversor:
+Con el extra MT5 instalado y un terminal demo autenticado:
 
 ```text
 uv sync --locked --extra mt5
@@ -55,6 +55,7 @@ uv run python scripts/live_dashboard.py
 ```
 
 La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
+La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una instancia separada con acceso de inversor.
 
 ## Validación del repositorio
 

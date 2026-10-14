@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-14
 
-**Estado:** incremento 0B en implementación
+**Estado:** incremento 0C en implementación
 
 **Arquitectura:** [Dashboard local de riesgo](../architecture/live-risk-dashboard.md)
 
@@ -32,16 +32,21 @@ Gate:
 
 - validación completa del harness;
 - vista demo comprobada en localhost;
-- ejecución real pendiente hasta disponer de terminal y cuenta demo autorizados.
+- ejecución real habilitada con terminal y cuenta demo autorizados.
 
 ## Incremento 0C — Validación MT5 real
 
-1. Conectar mediante contraseña de inversor.
-2. Verificar campos y frecuencia segura con el broker piloto.
-3. Comparar vista viva con el terminal durante una sesión controlada.
+1. Validar la captura contra el terminal MT5 demo ya autorizado.
+2. Mostrar posiciones abiertas y órdenes pendientes como operaciones
+   individuales, con filtro por Magic Number.
+3. Comparar precios, volumen, SL/TP, resultado y timestamps con el terminal
+   durante una sesión controlada.
 4. Medir latencia, fallos y coste de inicializar/cerrar en cada lectura.
 5. Determinar si conviene mantener la sesión IPC abierta.
-6. Incorporar Magic Number y agrupación por bot solo con evidencia real.
+6. Incorporar una instancia separada con contraseña de inversor antes de usar
+   cuentas reales.
+7. Evaluar agrupación por bot después de validar el muestreo operativo, sin
+   reemplazar el detalle por operación.
 
 ## Incremento 1 — Contrato de control operativo
 

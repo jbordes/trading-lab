@@ -18,6 +18,7 @@ El Excel deja de ser el producto prioritario. Podrá reaparecer como exportació
 Terminal MT5
     |
     | account_info / positions_get / orders_get
+    | history_deals_get / history_orders_get
     v
 Mt5SnapshotSource -- snapshot mínimo --> buffer acotado en memoria
                                             |
@@ -42,12 +43,30 @@ La primera frontera compartida contiene únicamente:
 - muestra operativa actual de posiciones y órdenes, con ticket y Magic Number
   representados como texto para conservar identificadores de 64 bits;
 - símbolo, tipo, volumen, precios, SL/TP, resultado flotante, hora y comentario de
-  cada operación disponible.
+  cada operación disponible;
+- actividad reciente normalizada desde deals y órdenes históricas;
+- estado de captura con intentos, éxitos, fallos consecutivos, duración y último
+  instante correcto.
 
 Esto no constituye un modelo canónico completo. Es una proyección de lectura para
 la pantalla, no una copia del payload completo de MT5. El detalle operativo vive
 solo en la última muestra; el historial acotado conserva valores de cuenta sin
 repetir todas las operaciones en cada punto.
+
+## Actividad reciente y estado de captura
+
+Al iniciar, la fuente recupera hasta 24 horas de deals y órdenes históricas. Las
+lecturas posteriores parten dos minutos antes del último cursor observado para
+tolerar llegadas tardías y deduplican por tipo de registro y ticket. Se retienen
+como máximo 200 eventos en memoria. Cada cinco minutos se reconcilia nuevamente
+la ventana completa para no depender de semánticas temporales no documentadas de
+las órdenes históricas. Un reinicio también reconstruye la ventana desde MT5; no
+se crea todavía una base histórica propia.
+
+El servicio mide cada intento con un reloj monotónico y publica conteos de éxito
+y fallo, fallos consecutivos, duración de la última captura, máximo observado y
+último instante correcto. Estas medidas describen la salud técnica de la captura;
+no son métricas de trading.
 
 ## Fuentes
 
@@ -88,7 +107,9 @@ La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca están
 de Python. No descarga scripts de terceros ni necesita Node. La vista Resumen
 muestra valores directos y una curva reciente de balance/equity. La vista
 Operaciones lista posiciones abiertas y órdenes pendientes y permite filtrar por
-Magic Number sin recargar la página.
+Magic Number sin recargar la página. La vista Actividad muestra la salud de la
+captura y la ventana móvil de deals y órdenes históricas con filtros por tipo y
+Magic Number.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 
@@ -114,3 +135,7 @@ Apache ECharts queda seleccionado como candidato para la etapa que incluya histo
    Numbers sin pérdida de precisión.
 8. El filtro por Magic Number funciona en el navegador y no envía consultas ni
    acciones al terminal.
+9. La actividad reciente se actualiza mediante una ventana incremental solapada,
+   se reconcilia periódicamente, se deduplica y permanece acotada en memoria.
+10. El estado de captura hace visibles duración, último éxito y fallos sin ocultar
+    la última muestra válida.

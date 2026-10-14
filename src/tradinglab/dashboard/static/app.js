@@ -23,6 +23,34 @@ const visibleOrders = document.getElementById("visible-orders");
 const clearFilter = document.getElementById("clear-filter");
 let latestOperations = [];
 let latestCurrency = "USD";
+let latestActivity = [];
+let latestActivitySignature = "";
+let latestActivityWindowHours = 24;
+
+const activityElements = {
+  badge: document.getElementById("activity-badge"),
+  body: document.getElementById("activity-body"),
+  empty: document.getElementById("activity-empty"),
+  magicFilter: document.getElementById("activity-magic-filter"),
+  magicOptions: document.getElementById("activity-magic-options"),
+  kindFilter: document.getElementById("activity-kind-filter"),
+  clearFilter: document.getElementById("clear-activity-filter"),
+  visible: document.getElementById("visible-activity"),
+  deals: document.getElementById("visible-deals"),
+  orders: document.getElementById("visible-history-orders"),
+  copy: document.getElementById("activity-copy"),
+};
+
+const captureElements = {
+  health: document.getElementById("capture-health"),
+  streak: document.getElementById("capture-streak"),
+  lastSuccess: document.getElementById("capture-last-success"),
+  age: document.getElementById("capture-age"),
+  duration: document.getElementById("capture-duration"),
+  maxDuration: document.getElementById("capture-max-duration"),
+  attempts: document.getElementById("capture-attempts"),
+  results: document.getElementById("capture-results"),
+};
 
 const operationTypes = {
   buy: "Compra",
@@ -34,6 +62,42 @@ const operationTypes = {
   buy_stop_limit: "Buy stop limit",
   sell_stop_limit: "Sell stop limit",
   close_by: "Close by",
+};
+
+const activityTypes = {
+  buy_in: "Compra Â· entrada",
+  buy_out: "Compra Â· salida",
+  buy_inout: "Compra Â· reversiÃ³n",
+  buy_out_by: "Compra Â· cierre por",
+  sell_in: "Venta Â· entrada",
+  sell_out: "Venta Â· salida",
+  sell_inout: "Venta Â· reversiÃ³n",
+  sell_out_by: "Venta Â· cierre por",
+  balance: "Balance",
+  credit: "CrÃ©dito",
+  charge: "Cargo",
+  correction: "CorrecciÃ³n",
+  bonus: "Bonus",
+  commission: "ComisiÃ³n",
+  commission_daily: "ComisiÃ³n diaria",
+  commission_monthly: "ComisiÃ³n mensual",
+  interest: "InterÃ©s",
+  dividend: "Dividendo",
+  tax: "Impuesto",
+  ...operationTypes,
+};
+
+const activityStates = {
+  started: "Iniciada",
+  placed: "Colocada",
+  canceled: "Cancelada",
+  partial: "Parcial",
+  filled: "Completada",
+  rejected: "Rechazada",
+  expired: "Expirada",
+  request_add: "Solicitud de alta",
+  request_modify: "Solicitud de cambio",
+  request_cancel: "Solicitud de cancelaciÃ³n",
 };
 
 function money(value, currency) {
@@ -54,6 +118,7 @@ function renderState(state) {
   statusDot.className = `status-dot ${state.status}`;
   errorBox.hidden = !state.error;
   errorBox.textContent = state.error || "";
+  renderCapture(state);
   if (!state.latest) return;
 
   const value = state.latest;
@@ -77,7 +142,111 @@ function renderState(state) {
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
   latestCurrency = value.currency || "USD";
   renderOperations();
+  const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
+  const nextActivitySignature = JSON.stringify(nextActivity);
+  latestActivityWindowHours = value.activity_window_hours || 24;
+  if (nextActivitySignature !== latestActivitySignature) {
+    latestActivity = nextActivity;
+    latestActivitySignature = nextActivitySignature;
+    renderActivity();
+  }
   renderChart(state.history);
+}
+
+function renderCapture(state) {
+  const capture = state.capture || {};
+  const failures = capture.consecutive_failures || 0;
+  captureElements.health.textContent = state.status === "connected" ? "Normal" : "Degradada";
+  captureElements.health.className = state.status === "connected" ? "positive-text" : "negative-text";
+  captureElements.streak.textContent = failures === 0
+    ? "Sin fallos consecutivos"
+    : `${number(failures)} fallo${failures === 1 ? "" : "s"} consecutivo${failures === 1 ? "" : "s"}`;
+  captureElements.lastSuccess.textContent = capture.last_success_at
+    ? new Date(capture.last_success_at).toLocaleTimeString("es-ES")
+    : "—";
+  const ageSeconds = capture.last_success_at
+    ? Math.max(0, (Date.now() - new Date(capture.last_success_at).getTime()) / 1000)
+    : null;
+  captureElements.age.textContent = ageSeconds === null ? "Edad —" : `Edad ${elapsed(ageSeconds)}`;
+  captureElements.duration.textContent = Number.isFinite(capture.last_duration_ms)
+    ? `${number(capture.last_duration_ms)} ms`
+    : "—";
+  captureElements.maxDuration.textContent = Number.isFinite(capture.max_duration_ms)
+    ? `MÃ¡ximo ${number(capture.max_duration_ms)} ms`
+    : "MÃ¡ximo —";
+  captureElements.attempts.textContent = number(capture.attempt_count || 0);
+  captureElements.results.textContent = `${number(capture.success_count || 0)} correctos Â· ${number(capture.failure_count || 0)} fallidos`;
+}
+
+function renderActivity() {
+  const magic = activityElements.magicFilter.value.trim();
+  const kind = activityElements.kindFilter.value;
+  const filtered = latestActivity.filter((item) => (
+    (!magic || String(item.magic_number).includes(magic)) && (!kind || item.category === kind)
+  ));
+  const magicNumbers = [...new Set(latestActivity.map((item) => String(item.magic_number)))];
+  magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  activityElements.magicOptions.replaceChildren(...magicNumbers.map((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    return option;
+  }));
+  activityElements.body.replaceChildren(...filtered.map(activityRow));
+  activityElements.empty.hidden = filtered.length > 0;
+  activityElements.empty.textContent = latestActivity.length === 0
+    ? "MT5 no informa actividad dentro de la ventana actual."
+    : "NingÃºn evento coincide con los filtros.";
+  activityElements.badge.textContent = number(latestActivity.length);
+  activityElements.visible.textContent = number(filtered.length);
+  activityElements.deals.textContent = number(filtered.filter((item) => item.category === "deal").length);
+  activityElements.orders.textContent = number(filtered.filter((item) => item.category === "order").length);
+  activityElements.copy.textContent = `Deals y Ã³rdenes histÃ³ricas de las Ãºltimas ${number(latestActivityWindowHours)} horas.`;
+  activityElements.clearFilter.disabled = !magic && !kind;
+}
+
+function activityRow(activity) {
+  const row = document.createElement("tr");
+  row.appendChild(textCell(new Date(activity.occurred_at).toLocaleString("es-ES", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  })));
+  const eventCell = document.createElement("td");
+  const badge = document.createElement("span");
+  badge.className = `operation-kind ${activity.category}`;
+  badge.textContent = activity.category === "deal" ? "Deal" : "Orden";
+  eventCell.appendChild(badge);
+  const eventText = document.createElement("small");
+  eventText.className = "activity-event";
+  const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
+  const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
+  eventText.textContent = stateName ? `${eventName} Â· ${stateName}` : eventName;
+  eventCell.appendChild(eventText);
+  row.appendChild(eventCell);
+  row.appendChild(detailCell(`#${activity.ticket}`, `Magic ${activity.magic_number}`, "mono"));
+  row.appendChild(detailCell(activity.symbol, activity.comment || "Sin comentario"));
+  row.appendChild(detailCell(decimal(activity.volume), price(activity.price), "numeric"));
+
+  const components = [activity.profit, activity.commission, activity.swap, activity.fee]
+    .filter((value) => Number.isFinite(value));
+  const netResult = components.length ? components.reduce((total, value) => total + value, 0) : null;
+  const breakdown = components.length
+    ? `P&L ${money(activity.profit || 0, latestCurrency)} Â· costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
+    : "Sin resultado monetario";
+  row.appendChild(detailCell(
+    netResult === null ? "—" : money(netResult, latestCurrency),
+    breakdown,
+    `numeric ${netResult === null ? "" : netResult >= 0 ? "positive-text" : "negative-text"}`,
+  ));
+  const reference = activity.position_id ? `PosiciÃ³n ${activity.position_id}` : "Sin posiciÃ³n";
+  const order = activity.order_ticket ? `Orden ${activity.order_ticket}` : "";
+  row.appendChild(detailCell(reference, order));
+  return row;
+}
+
+function elapsed(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  return `${Math.round(seconds / 3600)} h`;
 }
 
 function renderOperations() {
@@ -235,6 +404,14 @@ clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
   magicFilter.focus();
   renderOperations();
+});
+activityElements.magicFilter.addEventListener("input", () => renderActivity());
+activityElements.kindFilter.addEventListener("change", () => renderActivity());
+activityElements.clearFilter.addEventListener("click", () => {
+  activityElements.magicFilter.value = "";
+  activityElements.kindFilter.value = "";
+  activityElements.magicFilter.focus();
+  renderActivity();
 });
 refresh();
 window.setInterval(refresh, 2000);

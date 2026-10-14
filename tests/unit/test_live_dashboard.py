@@ -32,6 +32,14 @@ Order = namedtuple(
     "Order",
     "ticket magic symbol type volume_current price_open price_current sl tp time_setup comment",
 )
+Deal = namedtuple(
+    "Deal",
+    "ticket order position_id magic symbol type entry volume price profit commission swap fee time_msc time comment",
+)
+HistoricalOrder = namedtuple(
+    "HistoricalOrder",
+    "ticket position_id magic symbol type state volume_initial price_open time_done_msc time_done time_setup_msc time_setup comment",
+)
 
 
 class FakeMt5:
@@ -39,6 +47,8 @@ class FakeMt5:
         self.shutdown_called = False
         self.fail_positions = False
         self.invalid_magic = False
+        self.fail_history = False
+        self.history_ranges: list[tuple[datetime, datetime]] = []
 
     def initialize(self) -> bool:
         return True
@@ -80,6 +90,56 @@ class FakeMt5:
             ),
         )
 
+    def history_deals_get(self, date_from: datetime, date_to: datetime) -> tuple[Deal, ...] | None:
+        self.history_ranges.append((date_from, date_to))
+        if self.fail_history:
+            return None
+        occurred_at = datetime(2026, 10, 14, 19, 29, tzinfo=UTC)
+        return (
+            Deal(
+                20,
+                10,
+                30,
+                987654321012345678,
+                "XAUUSD",
+                1,
+                1,
+                0.05,
+                2670,
+                12.5,
+                -0.7,
+                -0.2,
+                0.0,
+                int(occurred_at.timestamp() * 1000),
+                int(occurred_at.timestamp()),
+                "close",
+            ),
+        )
+
+    def history_orders_get(
+        self, date_from: datetime, date_to: datetime
+    ) -> tuple[HistoricalOrder, ...]:
+        self.history_ranges.append((date_from, date_to))
+        occurred_at = datetime(2026, 10, 14, 19, 28, tzinfo=UTC)
+        timestamp = int(occurred_at.timestamp())
+        return (
+            HistoricalOrder(
+                10,
+                30,
+                987654321012345678,
+                "XAUUSD",
+                1,
+                4,
+                0.05,
+                2670,
+                timestamp * 1000,
+                timestamp,
+                timestamp * 1000,
+                timestamp,
+                "filled",
+            ),
+        )
+
 
 class LiveDashboardTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -104,6 +164,31 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(snapshot.operations[2].ticket, "3")
         self.assertEqual(snapshot.operations[2].magic_number, "987654321012345678")
         self.assertEqual(snapshot.operations[2].operation_type, "buy_limit")
+        self.assertEqual(len(snapshot.recent_activity), 2)
+        self.assertEqual(snapshot.recent_activity[0].category, "deal")
+        self.assertEqual(snapshot.recent_activity[0].event_type, "sell_out")
+        self.assertEqual(snapshot.recent_activity[0].profit, 12.5)
+        self.assertEqual(snapshot.recent_activity[1].event_state, "filled")
+
+    def test_activity_uses_incremental_overlap_and_periodic_reconciliation(self) -> None:
+        client = FakeMt5()
+        source = Mt5SnapshotSource(client)
+
+        source.collect(self.observed_at)
+        source.collect(self.observed_at + timedelta(seconds=5))
+        source.collect(self.observed_at + timedelta(minutes=5))
+
+        deal_ranges = client.history_ranges[::2]
+        self.assertEqual(deal_ranges[0], (self.observed_at - timedelta(hours=24), self.observed_at))
+        self.assertEqual(
+            deal_ranges[1],
+            (self.observed_at - timedelta(minutes=2), self.observed_at + timedelta(seconds=5)),
+        )
+        full_refresh_at = self.observed_at + timedelta(minutes=5)
+        self.assertEqual(
+            deal_ranges[2],
+            (full_refresh_at - timedelta(hours=24), full_refresh_at),
+        )
 
     def test_mt5_read_failure_still_closes_connection(self) -> None:
         client = FakeMt5()
@@ -123,15 +208,37 @@ class LiveDashboardTest(unittest.TestCase):
 
         self.assertTrue(client.shutdown_called)
 
+    def test_capture_state_records_read_failure(self) -> None:
+        client = FakeMt5()
+        client.fail_history = True
+        timer_values = iter([4.0, 4.025])
+        service = LiveDashboardService(
+            Mt5SnapshotSource(client),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            timer=lambda: next(timer_values),
+        )
+
+        service.poll_once()
+
+        state = service.state()
+        self.assertEqual(state["status"], "degraded")
+        self.assertEqual(state["capture"]["attempt_count"], 1)
+        self.assertEqual(state["capture"]["failure_count"], 1)
+        self.assertEqual(state["capture"]["consecutive_failures"], 1)
+        self.assertEqual(state["capture"]["last_duration_ms"], 25.0)
+
     def test_service_retains_bounded_deterministic_history(self) -> None:
         instants = iter(
             [self.observed_at, self.observed_at + timedelta(seconds=5), self.observed_at]
         )
+        timer_values = iter([10.0, 10.012, 20.0, 20.019])
         service = LiveDashboardService(
             DemoSnapshotSource(),
             interval_seconds=5,
             history_limit=2,
             clock=lambda: next(instants),
+            timer=lambda: next(timer_values),
         )
 
         service.poll_once()
@@ -143,6 +250,11 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(state["latest"]["equity"], 100_042.0)
         self.assertEqual(state["latest"]["operations"][0]["magic_number"], "11122")
         self.assertNotIn("operations", state["history"][0])
+        self.assertNotIn("recent_activity", state["history"][0])
+        self.assertEqual(state["capture"]["attempt_count"], 2)
+        self.assertEqual(state["capture"]["success_count"], 2)
+        self.assertEqual(state["capture"]["last_duration_ms"], 19.0)
+        self.assertEqual(state["capture"]["consecutive_failures"], 0)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
@@ -159,15 +271,18 @@ class LiveDashboardTest(unittest.TestCase):
             with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
                 payload = json.loads(response.read())
                 self.assertEqual(payload["status"], "connected")
-                self.assertEqual(payload["schema_version"], "live-dashboard-state-v2")
+                self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
                 self.assertEqual(len(payload["latest"]["operations"]), 3)
+                self.assertEqual(len(payload["latest"]["recent_activity"]), 2)
                 self.assertNotIn("operations", payload["history"][0])
+                self.assertEqual(payload["capture"]["success_count"], 1)
                 self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
 
             with urllib.request.urlopen(base_url, timeout=2) as response:
                 page = response.read().decode()
                 self.assertIn('id="operations-view"', page)
                 self.assertIn('id="magic-filter"', page)
+                self.assertIn('id="activity-view"', page)
 
             request = urllib.request.Request(f"{base_url}/api/state", method="POST")
             with self.assertRaises(urllib.error.HTTPError) as raised:

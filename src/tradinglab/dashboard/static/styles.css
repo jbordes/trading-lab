@@ -40,7 +40,7 @@ h2 { margin-bottom: 0; font-size: 1.15rem; }
 .status-dot.connected { color: #38d39f; background: currentColor; }
 .status-dot.degraded { color: #ff6b75; background: currentColor; }
 
-.view-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.view-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .view-tab { padding: 9px 14px; border: 1px solid rgba(143, 179, 197, 0.16); border-radius: 999px; background: rgba(10, 23, 33, 0.72); color: #8da3b1; font: inherit; font-size: 0.8rem; font-weight: 750; cursor: pointer; }
 .view-tab:hover { border-color: rgba(90, 200, 216, 0.42); color: #dceaf1; }
 .view-tab:focus-visible, .clear-filter:focus-visible, .filter-field input:focus-visible { outline: 2px solid #5ac8d8; outline-offset: 2px; }
@@ -89,7 +89,7 @@ h2 { margin-bottom: 0; font-size: 1.15rem; }
 .operations-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
 .operations-copy { margin: 8px 0 0; color: #8499a7; }
 .filter-field { display: grid; gap: 7px; width: min(100%, 310px); color: #8499a7; font-size: 0.75rem; font-weight: 700; }
-.filter-field input { width: 100%; padding: 10px 12px; border: 1px solid rgba(143, 179, 197, 0.2); border-radius: 10px; background: #091620; color: #e8f1f7; font: inherit; }
+.filter-field input, .filter-field select { width: 100%; padding: 10px 12px; border: 1px solid rgba(143, 179, 197, 0.2); border-radius: 10px; background: #091620; color: #e8f1f7; font: inherit; }
 .filter-field input::placeholder { color: #617887; }
 .operation-stats { display: grid; grid-template-columns: repeat(3, minmax(100px, 150px)) 1fr; align-items: center; gap: 12px; margin-bottom: 16px; }
 .operation-stats div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid rgba(143, 179, 197, 0.1); border-radius: 10px; background: rgba(255, 255, 255, 0.018); }
@@ -109,8 +109,20 @@ h2 { margin-bottom: 0; font-size: 1.15rem; }
 .operation-kind { display: inline-flex; padding: 5px 8px; border-radius: 999px; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
 .operation-kind.position { background: rgba(61, 145, 255, 0.12); color: #74afff; }
 .operation-kind.order { background: rgba(226, 168, 77, 0.12); color: #e5b560; }
+.operation-kind.deal { background: rgba(50, 210, 196, 0.12); color: #67e0d4; }
 .operation-profit.positive { color: #50d9aa; }
 .operation-profit.negative { color: #ff7f89; }
+.capture-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.capture-card { padding: 18px 20px; }
+.capture-card span { color: #77909f; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.09em; }
+.capture-card strong { display: block; margin: 9px 0 5px; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.capture-card small { color: #718897; }
+.positive-text { color: #50d9aa !important; }
+.negative-text { color: #ff7f89 !important; }
+.activity-panel { margin-top: 0; }
+.activity-filters { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(160px, 0.7fr); gap: 12px; width: min(100%, 500px); }
+.activity-event { display: block; max-width: 180px; margin-top: 7px; color: #8ba1ae; line-height: 1.35; }
+.activity-table { min-width: 1040px; }
 .operations-empty { margin: 0; padding: 42px 18px; color: #718897; text-align: center; }
 .error { margin-top: 16px; padding: 13px 16px; border: 1px solid rgba(255, 100, 112, 0.25); border-radius: 12px; background: rgba(255, 100, 112, 0.08); color: #ff9da4; }
 footer { margin-top: 22px; text-align: center; font-size: 0.75rem; }
@@ -123,6 +135,8 @@ footer { margin-top: 22px; text-align: center; font-size: 0.75rem; }
   .filter-field { width: 100%; }
   .operation-stats { grid-template-columns: repeat(3, 1fr); }
   .clear-filter { grid-column: 1 / -1; justify-self: start; }
+  .capture-grid { grid-template-columns: repeat(2, 1fr); }
+  .activity-filters { width: 100%; }
 }
 
 @media (max-width: 520px) {
@@ -132,4 +146,5 @@ footer { margin-top: 22px; text-align: center; font-size: 0.75rem; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .operation-stats { grid-template-columns: 1fr; }
   .clear-filter { grid-column: auto; }
+  .capture-grid, .activity-filters { grid-template-columns: 1fr; }
 }

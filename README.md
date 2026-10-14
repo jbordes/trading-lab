@@ -56,6 +56,7 @@ uv run python scripts/live_dashboard.py
 
 La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
 La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una instancia separada con acceso de inversor.
+La vista `Actividad` muestra deals y órdenes históricas recientes junto con duración, éxitos y fallos de la captura.
 
 ## Validación del repositorio
 

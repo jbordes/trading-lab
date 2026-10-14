@@ -36,16 +36,25 @@ Gate:
 
 ## Incremento 0C — Validación MT5 real
 
-1. Validar la captura contra el terminal MT5 demo ya autorizado.
-2. Mostrar posiciones abiertas y órdenes pendientes como operaciones
-   individuales, con filtro por Magic Number.
-3. Comparar precios, volumen, SL/TP, resultado y timestamps con el terminal
+Implementado:
+
+1. Captura conectada al terminal MT5 demo autorizado.
+2. Posiciones abiertas y órdenes pendientes individuales, con filtro por Magic
+   Number.
+3. Ventana móvil de 24 horas de deals y órdenes históricas, con lectura
+   incremental solapada, reconciliación completa periódica, deduplicación y
+   límite en memoria.
+4. Estado de captura con duración, intentos, éxitos, fallos y último éxito.
+
+Pendiente para cerrar el incremento:
+
+1. Comparar precios, volumen, SL/TP, resultado y timestamps con el terminal
    durante una sesión controlada.
-4. Medir latencia, fallos y coste de inicializar/cerrar en cada lectura.
-5. Determinar si conviene mantener la sesión IPC abierta.
-6. Incorporar una instancia separada con contraseña de inversor antes de usar
+2. Ejecutar una prueba prolongada y decidir con evidencia si conviene mantener la
+   sesión IPC abierta.
+3. Incorporar una instancia separada con contraseña de inversor antes de usar
    cuentas reales.
-7. Evaluar agrupación por bot después de validar el muestreo operativo, sin
+4. Evaluar agrupación por bot después de validar el muestreo operativo, sin
    reemplazar el detalle por operación.
 
 ## Incremento 1 — Contrato de control operativo

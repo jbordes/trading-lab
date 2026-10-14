@@ -28,6 +28,7 @@
       <nav class="view-tabs" aria-label="Secciones del dashboard">
         <button class="view-tab active" type="button" data-view="overview" aria-current="page">Resumen</button>
         <button class="view-tab" type="button" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
+        <button class="view-tab" type="button" data-view="activity">Actividad <span id="activity-badge">0</span></button>
       </nav>
 
       <section id="overview-view" class="dashboard-view">
@@ -126,6 +127,73 @@
               <tbody id="operations-body"></tbody>
             </table>
             <p id="operations-empty" class="operations-empty">Esperando operacionesâ€¦</p>
+          </div>
+        </article>
+      </section>
+
+      <section id="activity-view" class="dashboard-view" hidden>
+        <section class="capture-grid" aria-label="Estado de captura">
+          <article class="panel capture-card">
+            <span>Captura</span><strong id="capture-health">Iniciando</strong><small id="capture-streak">Sin lecturas</small>
+          </article>
+          <article class="panel capture-card">
+            <span>Ãšltimo Ã©xito</span><strong id="capture-last-success">â€”</strong><small id="capture-age">Edad â€”</small>
+          </article>
+          <article class="panel capture-card">
+            <span>DuraciÃ³n</span><strong id="capture-duration">â€”</strong><small id="capture-max-duration">MÃ¡ximo â€”</small>
+          </article>
+          <article class="panel capture-card">
+            <span>Intentos</span><strong id="capture-attempts">0</strong><small id="capture-results">0 correctos Â· 0 fallidos</small>
+          </article>
+        </section>
+
+        <article class="panel operations-panel activity-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">HISTORIAL MÃ“VIL</p>
+              <h2>Actividad reciente</h2>
+              <p id="activity-copy" class="operations-copy">Deals y Ã³rdenes histÃ³ricas de las Ãºltimas 24 horas.</p>
+            </div>
+            <div class="activity-filters">
+              <label class="filter-field" for="activity-magic-filter">
+                <span>Magic number</span>
+                <input id="activity-magic-filter" type="search" list="activity-magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
+                <datalist id="activity-magic-options"></datalist>
+              </label>
+              <label class="filter-field" for="activity-kind-filter">
+                <span>Tipo de evento</span>
+                <select id="activity-kind-filter">
+                  <option value="">Todos</option>
+                  <option value="deal">Deals</option>
+                  <option value="order">Ã“rdenes histÃ³ricas</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="operation-stats" aria-live="polite">
+            <div><span>Mostrados</span><strong id="visible-activity">0</strong></div>
+            <div><span>Deals</span><strong id="visible-deals">0</strong></div>
+            <div><span>Ã“rdenes</span><strong id="visible-history-orders">0</strong></div>
+            <button id="clear-activity-filter" class="clear-filter" type="button">Limpiar filtros</button>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table activity-table">
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Evento</th>
+                  <th>Ticket / Magic</th>
+                  <th>SÃ­mbolo</th>
+                  <th class="numeric">Volumen / Precio</th>
+                  <th class="numeric">Resultado neto</th>
+                  <th>Referencia</th>
+                </tr>
+              </thead>
+              <tbody id="activity-body"></tbody>
+            </table>
+            <p id="activity-empty" class="operations-empty">Recuperando actividad recienteâ€¦</p>
           </div>
         </article>
       </section>

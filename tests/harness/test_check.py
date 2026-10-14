@@ -172,7 +172,11 @@ class HarnessChecksTest(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"GITHUB_BASE_REF": "main", "TRADINGLAB_BASE_SHA": ""},
+                {
+                    "GITHUB_BASE_REF": "main",
+                    "TRADINGLAB_BASE_SHA": "",
+                    "TRADINGLAB_HEAD_SHA": "",
+                },
                 clear=False,
             ):
                 errors = CHECK.check_session_change_policy(root)
@@ -204,7 +208,11 @@ class HarnessChecksTest(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"GITHUB_BASE_REF": "main", "TRADINGLAB_BASE_SHA": ""},
+                {
+                    "GITHUB_BASE_REF": "main",
+                    "TRADINGLAB_BASE_SHA": "",
+                    "TRADINGLAB_HEAD_SHA": "",
+                },
                 clear=False,
             ):
                 errors = CHECK.check_session_change_policy(root)
@@ -250,6 +258,78 @@ class HarnessChecksTest(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {"GITHUB_BASE_REF": "", "TRADINGLAB_BASE_SHA": ""},
+                clear=False,
+            ):
+                errors = CHECK.check_session_change_policy(root)
+
+            self.assertEqual(errors, [])
+
+    def test_pull_request_ignores_daily_logs_added_only_to_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "README.md").write_text("# Base\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
+            self.run_git(root, "checkout", "-b", "feature/test")
+            (root / "README.md").write_text("# Feature\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "feature",
+            )
+            head_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.run_git(root, "checkout", "main")
+            session_path = root / "docs" / "sessions" / "2026-10-14.md"
+            session_path.parent.mkdir(parents=True)
+            session_path.write_text("# Bitácora en main\n", encoding="utf-8")
+            self.run_git(root, "add", session_path.relative_to(root).as_posix())
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "daily log",
+            )
+            base_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_BASE_REF": "main",
+                    "TRADINGLAB_BASE_SHA": base_sha,
+                    "TRADINGLAB_HEAD_SHA": head_sha,
+                },
                 clear=False,
             ):
                 errors = CHECK.check_session_change_policy(root)

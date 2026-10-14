@@ -16,6 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       TRADINGLAB_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      TRADINGLAB_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     strategy:
       fail-fast: false
       matrix:

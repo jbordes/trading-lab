@@ -197,13 +197,13 @@ def check_adrs(root: Path) -> list[str]:
 
 
 def changed_files(root: Path) -> tuple[set[Path], list[str]]:
+    pull_request_base = os.environ.get("GITHUB_BASE_REF")
     base_ref = os.environ.get("TRADINGLAB_BASE_SHA")
     if base_ref and set(base_ref) == {"0"}:
         base_ref = None
     if not base_ref:
-        base_branch = os.environ.get("GITHUB_BASE_REF")
-        if base_branch:
-            base_ref = f"origin/{base_branch}"
+        if pull_request_base:
+            base_ref = f"origin/{pull_request_base}"
         else:
             branch_result = run_git(root, "branch", "--show-current")
             branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
@@ -217,10 +217,24 @@ def changed_files(root: Path) -> tuple[set[Path], list[str]]:
     verify = run_git(root, "rev-parse", "--verify", base_ref)
     if verify.returncode != 0:
         return set(), [f"No se pudo resolver la base de la rama: {base_ref}"]
-    result = run_git(root, "diff", "--name-only", "-z", base_ref, "--")
+    comparison = base_ref
+    if pull_request_base:
+        head_ref = os.environ.get("TRADINGLAB_HEAD_SHA") or "HEAD"
+        verify_head = run_git(root, "rev-parse", "--verify", head_ref)
+        if verify_head.returncode != 0:
+            return set(), [f"No se pudo resolver la cabeza del pull request: {head_ref}"]
+        comparison = f"{base_ref}...{head_ref}"
+    result = run_git(root, "diff", "--name-only", "-z", comparison, "--")
     if result.returncode != 0:
         return set(), ["No se pudo calcular el diff para validar la política de bitácora"]
     paths = {Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item}
+    if pull_request_base:
+        working_tree = run_git(root, "diff", "--name-only", "-z", "HEAD", "--")
+        if working_tree.returncode != 0:
+            return set(), ["No se pudo validar el árbol de trabajo"]
+        paths.update(
+            Path(item.decode("utf-8")) for item in working_tree.stdout.split(b"\0") if item
+        )
     return paths, []
 
 

@@ -59,6 +59,8 @@ Pendiente para cerrar el incremento:
 
 ## Incremento 1 — Contrato de control operativo
 
+Guía para la conversación: [Métricas de riesgo para acordar con el socio](guia-metricas-para-el-socio.md).
+
 Resolver con el socio:
 
 1. definición exacta del método DDD/WSF;
@@ -81,6 +83,9 @@ Solo cuando el contrato de métricas históricas lo requiera:
 5. agregar compactación o downsampling únicamente si el volumen medido lo exige.
 
 ## Incremento 3 — Riesgo histórico y visualizaciones
+
+Las decisiones y ejemplos pendientes se recopilan en la
+[guía de métricas](guia-metricas-para-el-socio.md).
 
 1. Aprobar VaR, volatilidad, covarianza, riesgo de portfolio, MDD histórico y Sharpe.
 2. Definir retornos, ventanas, pesos, horizonte, confianza y tasa de referencia.

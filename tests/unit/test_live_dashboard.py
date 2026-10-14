@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
+import subprocess
 import sys
 import threading
 import unittest
@@ -336,13 +338,63 @@ class LiveDashboardTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
-    def test_activity_renderer_uses_the_net_result_as_its_breakdown_guard(self) -> None:
-        script = (Path(__file__).parents[2] / "src/tradinglab/dashboard/static/app.js").read_text(
-            encoding="utf-8"
+    def test_activity_renderer_handles_a_monetary_event(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js no está disponible para el smoke test del frontend")
+        app_js = Path(__file__).parents[2] / "src/tradinglab/dashboard/static/app.js"
+        smoke_test = r"""
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[1], "utf8");
+function functionSource(name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`No se encontró ${name}`);
+  const body = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = body; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`Función incompleta: ${name}`);
+}
+eval(`${functionSource("netOf")}\n${functionSource("activityRow")}`);
+function nodeStub() {
+  return {
+    children: [], className: "", textContent: "",
+    appendChild(child) { this.children.push(child); },
+    append(...children) { this.children.push(...children); },
+  };
+}
+globalThis.document = { createElement: () => nodeStub() };
+globalThis.toDate = (value) => new Date(value);
+globalThis.dateTimeFormatter = { format: () => "15/10/2026, 01:00:00" };
+globalThis.activityTypes = { sell_out: "Venta · salida" };
+globalThis.activityStates = {};
+globalThis.latestCurrency = "USD";
+globalThis.textCell = () => nodeStub();
+globalThis.detailCell = () => nodeStub();
+globalThis.decimal = String;
+globalThis.price = String;
+globalThis.money = (value) => String(value);
+const row = activityRow({
+  occurred_at: "2026-10-15T01:00:00Z", category: "deal",
+  event_type: "sell_out", event_state: null, ticket: "1", magic_number: "11122",
+  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1,
+  profit: 10, commission: -1, swap: 0, fee: 0, position_id: "2", order_ticket: "3",
+});
+if (row.children.length !== 7) throw new Error("La fila de actividad quedó incompleta");
+"""
+
+        result = subprocess.run(
+            [node, "-e", smoke_test, str(app_js)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
-        self.assertIn("const breakdown = netResult !== null", script)
-        self.assertNotIn("const breakdown = components.length", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

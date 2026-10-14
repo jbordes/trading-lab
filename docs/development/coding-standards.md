@@ -39,6 +39,12 @@ CLI o automatización -> caso de uso -> lógica de dominio -> puertos
 - Se crea una interfaz cuando separa una frontera externa, habilita una prueba relevante o existen implementaciones alternativas; no por cada clase.
 - Se priorizan KISS y cohesión. DRY no justifica una abstracción prematura y SOLID no exige multiplicar capas o patrones.
 
+## Selección tecnológica
+
+- Elegir lenguaje, runtime, librería y formato según el problema, el entorno de ejecución, la mantenibilidad y la evidencia del piloto.
+- Python es la base portable del harness y la elección actual para el pipeline de incubación MT5; no es una obligación universal para todo componente futuro.
+- Introducir otra tecnología solo cuando aporte una ventaja concreta y documentada, sin crear heterogeneidad accidental ni duplicar capacidades existentes.
+
 ## Legibilidad y tipos
 
 - Usar nombres descriptivos, funciones enfocadas y retornos explícitos.

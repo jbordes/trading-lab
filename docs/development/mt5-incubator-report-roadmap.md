@@ -6,6 +6,8 @@
 
 **Documento base:** [Análisis del informe automatizado de incubación MT5](../architecture/mt5-incubator-report-analysis.md)
 
+**Incremento activo:** [Spike de captura MT5 — contrato e inventario inicial](mt5-capture-spike.md)
+
 ## Principios de ejecución
 
 - Entregable v1: un libro por estrategia, con nombre `encubadora_<strategy_id>_<magic_number>.xlsx` y compatible con la referencia.
@@ -58,6 +60,12 @@ Tareas:
 **Salida:** fixtures mínimos y tests de contrato; no reportes operativos completos.
 
 **Gate:** los resultados anonimizados reproducen estructura, trades, costes y beneficio esperados.
+
+Avance del incremento 0A:
+
+- contrato de captura cruda `mt5-diagnostic-v1` implementado;
+- fixture sintético con historial, posición abierta y orden pendiente;
+- reconstrucción del trade y paridad económica todavía pendientes.
 
 ## Fase 2 — Núcleo y contratos
 
@@ -121,6 +129,12 @@ Tareas:
 9. No exponer funciones de trading y ejecutar siempre `shutdown()`.
 
 **Gate:** una captura repetible y sin efectos aporta los IDs necesarios para generar el golden dataset.
+
+Avance del incremento 0A:
+
+- diagnóstico de solo lectura y manifest SHA-256 implementados;
+- tests con cliente MT5 controlado implementados;
+- ejecución contra el terminal y los brokers reales pendiente.
 
 ## Fase 5 — Evidencia e ingesta incremental
 

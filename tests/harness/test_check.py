@@ -130,6 +130,23 @@ class HarnessChecksTest(unittest.TestCase):
         self.assertEqual(errors, ["Falló lint de Ruff"])
         self.assertEqual(run.call_count, 2)
 
+    def test_full_test_runner_includes_harness_and_product_suites(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tests" / "harness").mkdir(parents=True)
+            (root / "tests" / "unit").mkdir(parents=True)
+            completed = (
+                subprocess.CompletedProcess(args=[], returncode=0),
+                subprocess.CompletedProcess(args=[], returncode=1),
+            )
+            with patch.object(CHECK.subprocess, "run", side_effect=completed) as run:
+                errors = CHECK.run_unit_tests(root)
+
+        self.assertEqual(errors, ["Fallaron los tests en tests/unit"])
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("tests/harness", run.call_args_list[0].args[0])
+        self.assertIn("tests/unit", run.call_args_list[1].args[0])
+
     def test_feature_branch_rejects_daily_log_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

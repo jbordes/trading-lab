@@ -258,22 +258,28 @@ def check_session_change_policy(root: Path, current_date: date | None = None) ->
 
 
 def run_unit_tests(root: Path) -> list[str]:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "tests/harness",
-            "-p",
-            "test_*.py",
-            "-v",
-        ],
-        cwd=root,
-        check=False,
-    )
-    return [] if result.returncode == 0 else ["Fallaron los tests del harness"]
+    errors: list[str] = []
+    for suite in ("tests/harness", "tests/unit"):
+        if not (root / suite).is_dir():
+            continue
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                suite,
+                "-p",
+                "test_*.py",
+                "-v",
+            ],
+            cwd=root,
+            check=False,
+        )
+        if result.returncode != 0:
+            errors.append(f"Fallaron los tests en {suite}")
+    return errors
 
 
 def run_code_quality(root: Path) -> list[str]:
@@ -322,7 +328,7 @@ def main() -> int:
         return 1
     print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
     if args.mode == "full":
-        print("[OK] Tests del harness")
+        print("[OK] Tests automatizados")
     print("Resultado: validación correcta")
     return 0
 

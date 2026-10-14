@@ -19,6 +19,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Entorno de desarrollo](docs/development/environment.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
 - [Roadmap del informe automatizado de incubación MT5](docs/development/mt5-incubator-report-roadmap.md)
+- [Spike de captura MT5](docs/development/mt5-capture-spike.md)
 - [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 

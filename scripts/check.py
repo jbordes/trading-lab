@@ -86,6 +86,15 @@ CONFLICT_MARKERS = re.compile(r"^(?:<{7}|={7}|>{7})(?:\s|$)", re.MULTILINE)
 ADR_NAME = re.compile(r"^\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 ADR_STATES = {"proposed", "accepted", "superseded", "rejected"}
 ADR_SECTIONS = ("Contexto", "Alternativas consideradas", "Decisión", "Consecuencias")
+MQL5_FORBIDDEN_TOKENS = (
+    "#import",
+    "ctrade",
+    "orderdelete(",
+    "ordersend(",
+    "positionclose(",
+    "positioncloseby(",
+    "positionmodify(",
+)
 
 
 def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -153,6 +162,23 @@ def check_text_safety(root: Path, files: list[Path]) -> list[str]:
         for label, pattern in SECRET_PATTERNS:
             if pattern.search(text):
                 errors.append(f"Posible {label} en {relative.as_posix()}")
+    return errors
+
+
+def check_mql5_read_only(root: Path, files: list[Path]) -> list[str]:
+    errors: list[str] = []
+    for relative in files:
+        if relative.suffix.lower() != ".mq5":
+            continue
+        path = root / relative
+        if not path.is_file():
+            continue
+        normalized = "".join(path.read_text(encoding="utf-8").casefold().split())
+        for token in MQL5_FORBIDDEN_TOKENS:
+            if token in normalized:
+                errors.append(
+                    f"Operación no permitida en colector MQL5 {relative.as_posix()}: {token}"
+                )
     return errors
 
 
@@ -314,6 +340,7 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_required(root))
     errors.extend(check_repository_boundaries(root, files))
     errors.extend(check_text_safety(root, files))
+    errors.extend(check_mql5_read_only(root, files))
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
     errors.extend(validate_sessions(root))

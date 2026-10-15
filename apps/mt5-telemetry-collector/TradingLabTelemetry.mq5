@@ -8,19 +8,30 @@ input string IngestUrl = "http://127.0.0.1:8766/v1/telemetry";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string SourceId = "demo-terminal-01";
 input int IntervalSeconds = 5;
-input int RequestTimeoutMs = 3000;
+input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
 const string COLLECTOR_VERSION = "0.1.0";
 
 string session_id = "";
-string pending_body = "";
+// Bounded, volatile FIFO: preserve retry identity, prefer fresh samples on overflow.
+#define OUTBOX_CAPACITY 12
+#define MAX_PAYLOAD_BYTES 262144
+string outbox_body[OUTBOX_CAPACITY];
+ulong outbox_sequence[OUTBOX_CAPACITY];
+int outbox_head = 0;
+int outbox_count = 0;
+ulong dropped_samples = 0;
+ulong next_send_ms = 0;
+int retry_delay_seconds = 2;
+int head_attempts = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
 ulong sequence_number = 0;
 
 
+#ifndef TELEMETRY_QUEUE_TEST
 int OnInit()
 {
    if(StringFind(IngestUrl, "http://127.0.0.1:") != 0)
@@ -43,9 +54,9 @@ int OnInit()
       Print("TradingLab telemetry: IntervalSeconds must be between 2 and 60");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(RequestTimeoutMs < 500 || RequestTimeoutMs > 10000)
+   if(RequestTimeoutMs < 500 || RequestTimeoutMs > IntervalSeconds * 1000 / 4)
    {
-      Print("TradingLab telemetry: RequestTimeoutMs must be between 500 and 10000");
+      Print("TradingLab telemetry: timeout must be >=500ms and <=quarter of sample interval");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(MaxItemsPerSnapshot < 1 || MaxItemsPerSnapshot > 500)
@@ -68,32 +79,99 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   pending_body = "";
+   while(outbox_count > 0)
+      DropHead("shutdown");
    PrintFormat("TradingLab telemetry: stopped (%d)", reason);
 }
 
 
 void OnTimer()
 {
-   if(pending_body == "")
-   {
-      string reason = "timer";
-      if(startup_pending)
-         reason = "startup";
-      else if(trade_activity_pending)
-         reason = "trade_activity";
+   string reason = "timer";
+   if(startup_pending)
+      reason = "startup";
+   else if(trade_activity_pending)
+      reason = "trade_activity";
 
-      sequence_number++;
-      pending_body = BuildSnapshot(reason, sequence_number);
-      startup_pending = false;
-      trade_activity_pending = false;
-   }
+   sequence_number++;
+   EnqueueSnapshot(BuildSnapshot(reason, sequence_number), sequence_number);
+   startup_pending = false;
+   trade_activity_pending = false;
+   // Drain one extra item after success, bounded to two requests per tick.
+   if(TrySendQueued(GetTickCount64()))
+      TrySendQueued(GetTickCount64());
+}
+#endif
 
-   if(SendPendingMessage())
-      pending_body = "";
+
+void RemoveHead()
+{
+   outbox_body[outbox_head] = "";
+   outbox_head = (outbox_head + 1) % OUTBOX_CAPACITY;
+   outbox_count--;
+   head_attempts = 0;
 }
 
 
+void RecordDrop(const ulong sequence, const string reason)
+{
+   dropped_samples++;
+   PrintFormat("TradingLab telemetry: dropped sequence=%I64u reason=%s total=%I64u",
+               sequence, reason, dropped_samples);
+}
+
+
+void DropHead(const string reason)
+{
+   RecordDrop(outbox_sequence[outbox_head], reason);
+   RemoveHead();
+}
+
+
+void EnqueueSnapshot(const string body, const ulong sequence)
+{
+   char encoded[];
+   int size = StringToCharArray(body, encoded, 0, WHOLE_ARRAY, CP_UTF8) - 1;
+   if(size < 1 || size > MAX_PAYLOAD_BYTES)
+   {
+      RecordDrop(sequence, "payload_size");
+      return;
+   }
+   if(outbox_count == OUTBOX_CAPACITY)
+      DropHead("queue_full");
+   int tail = (outbox_head + outbox_count) % OUTBOX_CAPACITY;
+   outbox_body[tail] = body;
+   outbox_sequence[tail] = sequence;
+   outbox_count++;
+}
+
+
+bool TrySendQueued(const ulong now_ms)
+{
+   if(outbox_count == 0 || now_ms < next_send_ms)
+      return false;
+   // One bounded synchronous request per call; no Sleep and no retry loop.
+   int status = SendMessage(outbox_body[outbox_head]);
+   head_attempts++;
+   if(status == 200 || status == 202)
+   {
+      RemoveHead();
+      retry_delay_seconds = 2;
+      next_send_ms = 0;
+      return true;
+   }
+   // Retry ambiguous transport errors, throttling and server failures only.
+   bool retryable = status == -1 || status == 408 || status == 429 || status >= 500;
+   if(!retryable || head_attempts >= 5)
+      DropHead(retryable ? "retry_limit" : "http_rejected");
+   // Keep endpoint-level backoff even when overflow replaces the head.
+   next_send_ms = now_ms + (ulong)retry_delay_seconds * 1000;
+   retry_delay_seconds = MathMin(retry_delay_seconds * 2, 60);
+   return false;
+}
+
+
+#ifndef TELEMETRY_QUEUE_TEST
 void OnTradeTransaction(
    const MqlTradeTransaction &transaction,
    const MqlTradeRequest &request,
@@ -106,18 +184,18 @@ void OnTradeTransaction(
 }
 
 
-bool SendPendingMessage()
+int SendMessage(const string body)
 {
    char request_body[];
    char response_body[];
    string response_headers = "";
    string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + Token + "\r\n";
 
-   int encoded = StringToCharArray(pending_body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
+   int encoded = StringToCharArray(body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
    if(encoded <= 1)
    {
       Print("TradingLab telemetry: cannot encode the payload");
-      return false;
+      return 400;
    }
    ArrayResize(request_body, encoded - 1);
 
@@ -132,14 +210,15 @@ bool SendPendingMessage()
       response_headers
    );
    if(status == 200 || status == 202)
-      return true;
+      return status;
 
    if(status == -1)
       PrintFormat("TradingLab telemetry: request failed (%d)", GetLastError());
    else
       PrintFormat("TradingLab telemetry: receiver returned HTTP %d", status);
-   return false;
+   return status;
 }
+#endif
 
 
 string BuildSnapshot(const string reason, const ulong sequence)

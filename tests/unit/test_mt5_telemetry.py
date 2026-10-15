@@ -117,6 +117,21 @@ class TelemetryBufferTest(unittest.TestCase):
         self.assertEqual(outcome.sequence_gap, 2)
         self.assertEqual(buffer.state()["missing_sequences"], 2)
 
+    def test_recovery_after_outbox_loss_and_ambiguous_ack(self) -> None:
+        buffer = TelemetryBuffer()
+        first = parse_envelope(encoded(snapshot_message(sequence=1)))
+        buffer.accept(first)
+        # The response was lost: retry the identical message before later samples.
+        self.assertEqual(buffer.accept(first).status, "duplicate")
+        # Samples 2..13 were discarded during the outage; retained FIFO resumes.
+        for sequence in range(14, 26):
+            buffer.accept(parse_envelope(encoded(snapshot_message(sequence=sequence))))
+        state = buffer.state()
+        self.assertEqual(state["missing_sequences"], 12)
+        self.assertEqual(state["duplicates"], 1)
+        self.assertEqual(state["accepted"], 13)
+        self.assertEqual(state["latest"]["sequence"], 25)
+
     def test_reused_sequence_with_other_content_is_conflict(self) -> None:
         buffer = TelemetryBuffer()
         buffer.accept(parse_envelope(encoded(snapshot_message())))
@@ -195,6 +210,16 @@ class TelemetryServerTest(unittest.TestCase):
 
 
 class Mql5CollectorSafetyTest(unittest.TestCase):
+    def test_capture_precedes_delivery_without_pending_message_gate(self) -> None:
+        source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
+            encoding="utf-8"
+        )
+        timer = source.split("void OnTimer()", 1)[1].split("void RemoveHead()", 1)[0]
+        self.assertNotIn("pending_body", source)
+        self.assertLess(timer.index("EnqueueSnapshot("), timer.index("TrySendQueued("))
+        self.assertEqual(timer.count("TrySendQueued("), 2)
+        self.assertNotIn("Sleep(", source)
+
     def test_collector_source_has_no_trading_or_dll_calls(self) -> None:
         source = (ROOT / "apps" / "mt5-telemetry-collector" / "TradingLabTelemetry.mq5").read_text(
             encoding="utf-8"

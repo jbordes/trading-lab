@@ -385,6 +385,14 @@ class TelemetryServerTest(unittest.TestCase):
             health = json.loads(response.read())
             self.assertEqual(health["accepted"], 1)
             self.assertNotIn("latest", health)
+        snapshot_request = urllib.request.Request(
+            f"{self.base_url}/v1/snapshot",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        with urllib.request.urlopen(snapshot_request, timeout=2) as response:
+            latest = json.loads(response.read())
+            self.assertEqual(latest["source_id"], "demo-terminal-01")
+            self.assertEqual(latest["kind"], "account_snapshot")
 
     def test_rejects_missing_token_without_echoing_secret(self) -> None:
         request = urllib.request.Request(

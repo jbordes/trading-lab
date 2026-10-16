@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"Receptor MT5 del spike: http://127.0.0.1:{server.server_port}")
-    print("Solo acepta POST /v1/telemetry autenticado. Ctrl+C para detener.")
+    print("Ingesta y lectura local autenticadas. Ctrl+C para detener.")
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

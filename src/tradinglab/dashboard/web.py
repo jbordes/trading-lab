@@ -49,6 +49,13 @@ def create_server(
         server_version = "TradingLabDashboard/0.1"
         protocol_version = "HTTP/1.1"
 
+        def handle(self) -> None:
+            try:
+                super().handle()
+            except TimeoutError, ConnectionError, OSError:
+                # Browser disconnects and controlled shutdowns are normal network events.
+                self.close_connection = True
+
         def do_GET(self) -> None:  # noqa: N802
             path, _, raw_query = self.path.partition("?")
             query = parse_qs(raw_query)

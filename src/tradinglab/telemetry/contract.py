@@ -14,6 +14,16 @@ MAX_BODY_BYTES = 256 * 1024
 MAX_STRING_LENGTH = 512
 MAX_COLLECTION_ITEMS = 1_000
 MAX_NESTING_DEPTH = 6
+MAX_INT64 = 2**63 - 1
+MAX_UINT64 = 2**64 - 1
+DECIMAL_INTEGER = re.compile(r"-?(?:0|[1-9][0-9]{0,19})")
+UTC_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z"
+)
+ROW_NUMBERS = {"volume", "price_open", "price_current", "stop_loss", "take_profit"}
+ROW_FIELDS = ROW_NUMBERS | {"ticket", "magic_number", "symbol", "comment"}
+POSITION_FIELDS = ROW_FIELDS | {"position_id", "operation_type", "profit", "swap", "opened_at_msc"}
+ORDER_FIELDS = ROW_FIELDS | {"order_type", "created_at_msc"}
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MASKED_ACCOUNT = re.compile(r"^\*{4}[0-9]{1,8}$")
@@ -78,11 +88,13 @@ def parse_envelope(body: bytes) -> TelemetryEnvelope:
     if len(body) > MAX_BODY_BYTES:
         raise TelemetryValidationError("El cuerpo supera el límite permitido")
     try:
-        document = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (ValueError, RecursionError) as exc:
         raise TelemetryValidationError("El cuerpo no es JSON UTF-8 válido") from exc
     if not isinstance(document, dict):
         raise TelemetryValidationError("El mensaje debe ser un objeto JSON")
+    # Validate the entire document, including escaped Unicode and envelope values.
+    _validate_json_value(document, "mensaje", depth=-1)
 
     expected = {
         "schema_version",
@@ -106,8 +118,7 @@ def parse_envelope(body: bytes) -> TelemetryEnvelope:
     session_id = _identifier(document, "session_id")
     event_id = _identifier(document, "event_id")
     sequence = document["sequence"]
-    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
-        raise TelemetryValidationError("sequence debe ser un entero positivo")
+    _integer_range(sequence, "sequence", minimum=1, maximum=MAX_INT64)
 
     captured_at = _utc_timestamp(document["captured_at"])
     kind = _required_string(document, "kind")
@@ -117,7 +128,6 @@ def parse_envelope(body: bytes) -> TelemetryEnvelope:
     payload = document["payload"]
     if not isinstance(payload, dict):
         raise TelemetryValidationError("payload debe ser un objeto")
-    _validate_json_value(payload, "payload", depth=0)
     if kind == "heartbeat":
         _validate_heartbeat(payload)
     else:
@@ -148,7 +158,7 @@ def _validate_account_snapshot(payload: dict[str, Any]) -> None:
         {"reason", "account", "positions_total", "orders_total", "positions", "orders"},
         "snapshot",
     )
-    if payload["reason"] not in ALLOWED_REASONS:
+    if _required_string(payload, "reason") not in ALLOWED_REASONS:
         raise TelemetryValidationError("Motivo de snapshot no admitido")
 
     account = payload["account"]
@@ -165,8 +175,7 @@ def _validate_account_snapshot(payload: dict[str, Any]) -> None:
 
     for total_field in ("positions_total", "orders_total"):
         total = payload[total_field]
-        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
-            raise TelemetryValidationError(f"{total_field} debe ser un entero no negativo")
+        _integer_range(total, total_field, minimum=0, maximum=2**31 - 1)
 
     for collection in ("positions", "orders"):
         rows = payload[collection]
@@ -176,14 +185,56 @@ def _validate_account_snapshot(payload: dict[str, Any]) -> None:
             raise TelemetryValidationError(f"{collection} supera el máximo de elementos")
         if len(rows) > payload[f"{collection}_total"]:
             raise TelemetryValidationError(f"{collection} supera el total declarado")
+        seen_tickets: set[str] = set()
         for index, row in enumerate(rows):
             if not isinstance(row, dict):
                 raise TelemetryValidationError(f"{collection}[{index}] debe ser un objeto")
-            for identifier in ("ticket", "magic_number"):
-                if identifier not in row or not isinstance(row[identifier], str):
-                    raise TelemetryValidationError(
-                        f"{collection}[{index}].{identifier} debe ser texto"
-                    )
+            _validate_row(row, position=collection == "positions")
+            if row["ticket"] in seen_tickets:
+                raise TelemetryValidationError(f"{collection} contiene tickets duplicados")
+            seen_tickets.add(row["ticket"])
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise TelemetryValidationError("Claves JSON duplicadas")
+        result[key] = value
+    return result
+
+
+def _integer_range(value: Any, field: str, *, minimum: int, maximum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise TelemetryValidationError(f"{field} debe ser un entero dentro del rango permitido")
+
+
+def _decimal_text(row: dict[str, Any], field: str, *, minimum: int, maximum: int) -> None:
+    value = _required_string(row, field)
+    if not DECIMAL_INTEGER.fullmatch(value) or value == "-0":
+        raise TelemetryValidationError(f"{field} debe ser texto decimal entero")
+    _integer_range(int(value), field, minimum=minimum, maximum=maximum)
+
+
+def _validate_row(row: dict[str, Any], *, position: bool) -> None:
+    _require_exact_fields(row, POSITION_FIELDS if position else ORDER_FIELDS, "operación")
+    _decimal_text(row, "ticket", minimum=1, maximum=MAX_UINT64)
+    # MQL5 serializes MAGIC through its signed long getter; zero is valid.
+    _decimal_text(row, "magic_number", minimum=-(2**63), maximum=MAX_INT64)
+    _bounded_string(row, "symbol", maximum=128)
+    if not isinstance(row["comment"], str) or len(row["comment"]) > 256:
+        raise TelemetryValidationError("comment debe ser texto de hasta 256 caracteres")
+    numeric_fields = ROW_NUMBERS | ({"profit", "swap"} if position else set())
+    for field in numeric_fields:
+        _finite_number(row[field], field)
+    if row["volume"] < 0:
+        raise TelemetryValidationError("volume no puede ser negativo")
+    kind_field = "operation_type" if position else "order_type"
+    _integer_range(row[kind_field], kind_field, minimum=0, maximum=1 if position else 8)
+    time_field = "opened_at_msc" if position else "created_at_msc"
+    _decimal_text(row, time_field, minimum=0, maximum=MAX_INT64)
+    if position:
+        _decimal_text(row, "position_id", minimum=1, maximum=MAX_INT64)
 
 
 def _validate_json_value(value: Any, path: str, *, depth: int) -> None:
@@ -192,6 +243,11 @@ def _validate_json_value(value: Any, path: str, *, depth: int) -> None:
     if value is None or isinstance(value, (str, bool)):
         if isinstance(value, str) and len(value) > MAX_STRING_LENGTH:
             raise TelemetryValidationError(f"{path} contiene texto demasiado largo")
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise TelemetryValidationError("Texto Unicode inválido") from exc
         return
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         _finite_number(value, path)
@@ -208,6 +264,7 @@ def _validate_json_value(value: Any, path: str, *, depth: int) -> None:
         for key, item in value.items():
             if not isinstance(key, str) or not key or len(key) > 64:
                 raise TelemetryValidationError(f"{path} contiene una clave inválida")
+            _validate_json_value(key, "clave", depth=depth + 1)
             _validate_json_value(item, f"{path}.{key}", depth=depth + 1)
         return
     raise TelemetryValidationError(f"{path} contiene un tipo JSON no admitido")
@@ -250,14 +307,17 @@ def _identifier(value: dict[str, Any], field: str) -> str:
 def _finite_number(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TelemetryValidationError(f"{field} debe ser numérico")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise TelemetryValidationError(f"{field} excede el rango numérico") from exc
     if not math.isfinite(result):
         raise TelemetryValidationError(f"{field} debe ser finito")
     return result
 
 
 def _utc_timestamp(value: Any) -> str:
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if not isinstance(value, str) or not UTC_TIMESTAMP.fullmatch(value):
         raise TelemetryValidationError("captured_at debe ser UTC y terminar en Z")
     try:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00")
@@ -265,4 +325,4 @@ def _utc_timestamp(value: Any) -> str:
         raise TelemetryValidationError("captured_at no es una fecha ISO válida") from exc
     if parsed.tzinfo != UTC:
         raise TelemetryValidationError("captured_at debe estar expresado en UTC")
-    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return parsed.isoformat().replace("+00:00", "Z")

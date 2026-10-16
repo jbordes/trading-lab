@@ -144,7 +144,42 @@ La prueba nativa incluye NaN, ambos infinitos, ceros, valores negativos,
 rechazo sin desplazar muestras válidas y recuperación de la siguiente muestra.
 Su ejecución en MT5 sigue pendiente; compilar no demuestra esas aserciones.
 
-### Procedimiento de piloto
+### Validación del receptor (corrección 3)
+
+`mt5-telemetry-v1` exige ahora todos los campos que emite el collector actual;
+no admite filas parciales ni campos desconocidos. No cambia el formato emitido
+por MQL5, pero clientes de prueba con filas abreviadas deben completarlas.
+
+- Comunes a posiciones y órdenes: `ticket`, `magic_number`, `symbol`, `volume`,
+  `price_open`, `price_current`, `stop_loss`, `take_profit` y `comment`.
+- Posiciones: además `position_id`, `operation_type`, `profit`, `swap` y
+  `opened_at_msc`.
+- Órdenes: además `order_type` y `created_at_msc`.
+- Tickets: texto decimal positivo de hasta uint64, sin duplicados dentro de cada
+  colección. Magic Number: texto decimal int64, incluido cero y signo negativo,
+  coherente con la serialización del getter `long` usado por el collector.
+  Position ID: decimal positivo int64. Tiempos en milisegundos: decimal int64 no
+  negativo. No se convierten estos identificadores a float.
+- Importes y precios: números finitos, no booleanos ni cadenas. El volumen no
+  puede ser negativo. Los precios y el P/L no reciben límites económicos nuevos.
+- Tipo de posición: entero 0/1; tipo de orden: entero 0..8, según las propiedades
+  de [posiciones](https://www.mql5.com/en/docs/constants/tradingconstants/positionproperties)
+  y [órdenes](https://www.mql5.com/en/docs/constants/tradingconstants/orderproperties).
+- Símbolo: texto no vacío de hasta 128 caracteres; comentario: hasta 256,
+  permitiendo vacío. `captured_at`: ISO UTC con segundos y fracción opcional de
+  hasta seis dígitos; conserva precisión al normalizar.
+
+JSON con claves repetidas, profundidad excesiva, Unicode inválido o números
+desmesurados se rechaza mediante errores de validación. La frontera HTTP devuelve
+400 `invalid_message` sin devolver valores ni claves recibidos. Un rechazo no
+modifica el buffer y no impide aceptar mensajes válidos posteriores.
+
+Autorizaciones no ASCII o repetidas reciben 401; Content-Length repetido o
+Transfer-Encoding reciben 400 antes de leer el cuerpo. El token configurado debe
+ser ASCII imprimible sin espacios ni controles. Esto no añade límites de hilos,
+timeout de lectura ni retención de sesiones: siguen pendientes del punto 6.
+
+### Pasos del piloto
 
 1. Revisar la fuente y compilarla con MetaEditor sin warnings.
 2. Iniciar el receptor con un token efímero.

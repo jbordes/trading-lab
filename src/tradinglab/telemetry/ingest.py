@@ -112,8 +112,10 @@ def create_telemetry_server(
 
     if not 0 <= port <= 65535:
         raise ValueError("Puerto fuera de rango")
-    if len(token) < 24:
-        raise ValueError("El token de ingestión debe tener al menos 24 caracteres")
+    if len(token) < 24 or not token.isascii() or any(not 33 <= ord(c) <= 126 for c in token):
+        raise ValueError(
+            "El token debe tener al menos 24 caracteres ASCII sin espacios ni controles"
+        )
     if not 1 <= max_body_bytes <= MAX_BODY_BYTES:
         raise ValueError("Límite de cuerpo fuera de rango")
 
@@ -135,14 +137,23 @@ def create_telemetry_server(
             if self.path.split("?", 1)[0] != "/v1/telemetry":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
-            if not hmac.compare_digest(
-                self.headers.get("Authorization", ""), expected_authorization
+            authorization = self.headers.get("Authorization", "")
+            if (
+                len(self.headers.get_all("Authorization", [])) != 1
+                or not authorization.isascii()
+                or not hmac.compare_digest(authorization, expected_authorization)
             ):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             content_type = self.headers.get_content_type()
             if content_type != "application/json":
                 self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "content_type"})
+                return
+            if (
+                self.headers.get_all("Transfer-Encoding")
+                or len(self.headers.get_all("Content-Length", [])) > 1
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "ambiguous_framing"})
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", ""))
@@ -161,10 +172,8 @@ def create_telemetry_server(
             try:
                 envelope = parse_envelope(body)
                 outcome = buffer.accept(envelope)
-            except TelemetryValidationError as exc:
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST, {"error": "invalid_message", "detail": str(exc)}
-                )
+            except TelemetryValidationError:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_message"})
                 return
             except TelemetryConflictError:
                 self._send_json(HTTPStatus.CONFLICT, {"error": "idempotency_conflict"})

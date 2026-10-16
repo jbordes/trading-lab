@@ -103,6 +103,23 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_mql5_read_only_guard_rejects_trading_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = Path("apps/collector/unsafe.mq5")
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                "void OnTick() { Order" + "Send(request, result); }\n", encoding="utf-8"
+            )
+
+            errors = CHECK.check_mql5_read_only(root, [relative])
+
+            self.assertEqual(
+                errors,
+                ["Operación no permitida en colector MQL5 apps/collector/unsafe.mq5: ordersend("],
+            )
+
     def test_markdown_links_accept_existing_relative_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

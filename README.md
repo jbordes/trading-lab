@@ -22,6 +22,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Análisis de UX y diseño en evolución del dashboard](docs/development/dashboard-evolution-ux.md)
 - [Guía para acordar métricas de riesgo](docs/development/guia-metricas-para-el-socio.md)
 - [Spike de captura MT5](docs/development/mt5-capture-spike.md)
+- [Spike de colector de telemetría MT5](docs/development/mt5-telemetry-collector-spike.md)
 - [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 
@@ -59,6 +60,13 @@ uv run python scripts/live_dashboard.py
 La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
 La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una instancia separada con acceso de inversor.
 La vista `Actividad` muestra deals y órdenes históricas recientes junto con duración, éxitos y fallos de la captura.
+
+El colector MQL5 push se mantiene como spike independiente y no se instala en una
+terminal sin revisión y aprobación humana. Su receptor local puede iniciarse con:
+
+```text
+uv run python scripts/telemetry_receiver.py
+```
 
 ## Validación del repositorio
 

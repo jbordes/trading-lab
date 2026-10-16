@@ -75,6 +75,26 @@ Python una apertura/cierre entre muestras, costes, reinicio y caída del recepto
 Medir latencia, ventana necesaria y saturación antes de agregar paginación o
 persistencia. Validar la zona horaria del servidor; no asumir tiempos UTC.
 
+## Incremento 0D — Telemetría push visible
+
+Implementado en el primer corte:
+
+1. lectura autenticada de la última muestra validada desde el receptor loopback;
+2. selección explícita del `source_id` esperado y rechazo de otra fuente;
+3. proyección de cuenta, balance/equity, posiciones y órdenes al contrato del
+   dashboard;
+4. estado degradado ante receptor ausente, autenticación incorrecta o muestra
+   con más de 30 segundos;
+5. deduplicación de muestras sin cambios para no inflar la curva al consultar el
+   receptor más rápido que el colector.
+
+Pendiente para cerrar el incremento:
+
+1. ejecutar receptor, EA y dashboard juntos en la terminal demo aislada;
+2. comparar una muestra push con la captura Python del mismo instante;
+3. validar la zona horaria del servidor antes de mostrar timestamps y deals;
+4. medir desconexión, reconexión y frescura durante una prueba prolongada.
+
 ## Incremento 1 — Contrato de control operativo
 
 Guía para la conversación: [Métricas de riesgo para acordar con el socio](guia-metricas-para-el-socio.md).

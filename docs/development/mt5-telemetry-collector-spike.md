@@ -19,12 +19,14 @@ Terminal demo MT5
     v
 receptor 127.0.0.1:8766
     |
+    | GET /v1/snapshot + mismo Bearer token
     v
-buffer acotado en memoria + /health
+adaptador servidor del dashboard + buffer acotado en memoria + /health
 ```
 
 El receptor es un proceso separado. El servidor del dashboard continúa
-rechazando `POST` y no conoce el token de ingestión.
+rechazando `POST`; su adaptador servidor conoce el token local, pero nunca lo
+entrega al navegador.
 
 ## Contrato `mt5-telemetry-v1`
 
@@ -75,7 +77,9 @@ El estado diagnóstico queda disponible en:
 http://127.0.0.1:8766/health
 ```
 
-No expone un listado histórico completo y se pierde al detener el proceso.
+`GET /v1/snapshot` requiere el mismo Bearer token y devuelve solamente la última
+muestra de cuenta validada. No expone un listado histórico completo y la memoria
+se pierde al detener el proceso.
 
 ## Fuente MQL5
 
@@ -257,7 +261,11 @@ y reactivar manualmente el EA. Una caída más larga que la ventana, truncamient
 o descarte por tamaño máximo de mensaje puede dejar información irrecuperable
 en este piloto. La consulta de MT5 es sincrónica: medir su coste antes de ampliar
 la ventana o frecuencia. No hay almacenamiento durable, watermark persistente,
-reconstrucción de equity, emparejamiento de trades ni cambio de UI/dashboard.
+reconstrucción de equity ni emparejamiento de trades.
+
+La primera integración con el dashboard proyecta únicamente cuenta y operaciones
+actuales. No publica todavía los deals de esta ventana porque sus timestamps
+conservan la escala del servidor MT5 hasta validar su zona horaria.
 
 `/health` publica solo estado y cantidad retenida de historial, nunca sus filas.
 Las pruebas Python cubren entrada/salida entre muestras, solapamientos, tickets

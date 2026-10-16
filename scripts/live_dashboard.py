@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -25,11 +27,31 @@ def port(value: str) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--demo", action="store_true", help="Usa datos sintéticos sin conectar MT5."
+    )
+    source.add_argument(
+        "--telemetry",
+        action="store_true",
+        help="Lee el receptor push local en lugar de la API Python de MT5.",
     )
     parser.add_argument("--interval", type=interval, default=5.0, help="Segundos entre lecturas.")
     parser.add_argument("--port", type=port, default=8765, help="Puerto local.")
+    parser.add_argument(
+        "--telemetry-port", type=port, default=8766, help="Puerto local del receptor push."
+    )
+    parser.add_argument(
+        "--telemetry-source",
+        default="demo-terminal-01",
+        help="SourceId no sensible configurado en el colector MQL5.",
+    )
+    parser.add_argument(
+        "--telemetry-max-age",
+        type=interval,
+        default=30.0,
+        help="Segundos máximos sin una nueva muestra antes de degradar la vista.",
+    )
     return parser.parse_args(argv)
 
 
@@ -38,11 +60,36 @@ def main(argv: list[str] | None = None) -> int:
     sys.path.insert(0, str(root / "src"))
     from tradinglab.dashboard.service import LiveDashboardService
     from tradinglab.dashboard.snapshot import DemoSnapshotSource, Mt5SnapshotSource
+    from tradinglab.dashboard.telemetry import (
+        TELEMETRY_TOKEN_ENV,
+        LoopbackTelemetryClient,
+        TelemetrySnapshotSource,
+    )
     from tradinglab.dashboard.web import create_server
 
     args = parse_args(argv)
     if args.demo:
         source = DemoSnapshotSource()
+    elif args.telemetry:
+        credential = os.environ.get(TELEMETRY_TOKEN_ENV, "")
+        if len(credential) < 24:
+            print(
+                f"Error: configure {TELEMETRY_TOKEN_ENV} con el mismo token del receptor.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.port == args.telemetry_port:
+            print("Error: dashboard y receptor deben usar puertos diferentes.", file=sys.stderr)
+            return 2
+        try:
+            source = TelemetrySnapshotSource(
+                LoopbackTelemetryClient(token=credential, port=args.telemetry_port),
+                source_id=args.telemetry_source,
+                max_age=timedelta(seconds=args.telemetry_max_age),
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
     else:
         try:
             mt5 = importlib.import_module("MetaTrader5")

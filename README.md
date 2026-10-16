@@ -68,6 +68,17 @@ terminal sin revisión y aprobación humana. Su receptor local puede iniciarse c
 uv run python scripts/telemetry_receiver.py
 ```
 
+Con el mismo `TRADINGLAB_TELEMETRY_TOKEN` disponible en ambos procesos, otra
+terminal puede mostrar la última muestra push validada:
+
+```text
+uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01
+```
+
+El adaptador solo consulta `http://127.0.0.1:8766`, no entrega el token al
+navegador y marca la vista como degradada si pasan 30 segundos sin una muestra
+nueva. El `SourceId` debe coincidir con el configurado en el EA.
+
 ## Validación del repositorio
 
 Con [uv](https://docs.astral.sh/uv/) instalado:

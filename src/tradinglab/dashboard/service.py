@@ -63,7 +63,9 @@ class LiveDashboardService:
             return
         duration_ms = _milliseconds(self._timer() - started)
         with self._lock:
-            self._history.append(snapshot.as_history_dict())
+            history_sample = snapshot.as_history_dict()
+            if not self._history or self._history[-1] != history_sample:
+                self._history.append(history_sample)
             self._latest = snapshot
             self._status = "connected"
             self._error = None

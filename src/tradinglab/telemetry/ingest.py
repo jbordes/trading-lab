@@ -148,6 +148,15 @@ class TelemetryBuffer:
                 return result
         return {"status": "unavailable", "deals": []}
 
+    def latest_account_snapshot(self) -> dict[str, Any] | None:
+        """Return an owned copy of the newest validated account snapshot."""
+
+        with self._lock:
+            for envelope in reversed(self._messages):
+                if envelope.kind == "account_snapshot":
+                    return deepcopy(envelope.as_dict())
+        return None
+
     def _prune_fingerprints(self) -> None:
         retained_sessions = {(item.source_id, item.session_id) for item in self._messages}
         self._last_sequences = {
@@ -217,18 +226,23 @@ def create_telemetry_server(
                 health.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, health)
                 return
+            if path == "/v1/snapshot":
+                if not self._is_authorized():
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                latest = buffer.latest_account_snapshot()
+                if latest is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "snapshot_unavailable"})
+                    return
+                self._send_json(HTTPStatus.OK, latest)
+                return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path.split("?", 1)[0] != "/v1/telemetry":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
-            authorization = self.headers.get("Authorization", "")
-            if (
-                len(self.headers.get_all("Authorization", [])) != 1
-                or not authorization.isascii()
-                or not hmac.compare_digest(authorization, expected_authorization)
-            ):
+            if not self._is_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             content_type = self.headers.get_content_type()
@@ -284,6 +298,14 @@ def create_telemetry_server(
 
         def log_message(self, format: str, *args: Any) -> None:
             del format, args
+
+        def _is_authorized(self) -> bool:
+            authorization = self.headers.get("Authorization", "")
+            return (
+                len(self.headers.get_all("Authorization", [])) == 1
+                and authorization.isascii()
+                and hmac.compare_digest(authorization, expected_authorization)
+            )
 
         def _method_not_allowed(self) -> None:
             self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed"})

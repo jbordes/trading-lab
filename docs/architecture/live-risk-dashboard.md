@@ -90,6 +90,15 @@ alimentar todavía la UI; no reemplaza el historial del adaptador Python ni una
 futura persistencia. Los tiempos de ejecución conservan la escala del servidor
 MT5 hasta validar su conversión.
 
+La primera integración visible conserva receptor y dashboard como procesos
+separados. El receptor expone la última muestra de cuenta validada mediante
+`GET /v1/snapshot`, autenticado y limitado a loopback. Un adaptador del lado
+servidor del dashboard vuelve a validar el contrato, exige el `source_id`
+esperado y degrada la vista cuando la muestra supera la antigüedad configurada.
+El token no llega al navegador. Balance, equity y operaciones actuales se
+proyectan en la interfaz; los deals y los timestamps operativos quedan fuera de
+esta integración hasta validar la zona horaria del servidor MT5.
+
 ### StocksTrader
 
 Será un adaptador REST separado para cuentas de esa plataforma. No se asumirá que cubre cuentas MT5 de RoboForex ni que ofrece WebSocket. El colector propio permitirá únicamente llamadas de lectura, mantendrá el token fuera del navegador y se probará primero con una cuenta demo.

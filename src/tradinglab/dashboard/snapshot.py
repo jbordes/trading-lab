@@ -232,12 +232,19 @@ class DemoSnapshotSource:
 
     def __init__(self) -> None:
         self._index = 0
+        self._realized = 0.0
 
     def collect(self, observed_at: datetime) -> LiveSnapshot:
         _require_aware(observed_at)
+        # Cada 24 lecturas se simula un fallo de captura para validar los
+        # estados degradados del dashboard sin depender del terminal real.
+        if self._index > 0 and self._index % 24 == 0:
+            self._index += 1
+            raise DashboardReadError("MT5 devolvió timeout de lectura (simulado)")
         move = self._MOVES[self._index % len(self._MOVES)]
+        balance = 100_000.0 + self._realized
         self._index += 1
-        balance = 100_000.0
+        self._realized += move
         return LiveSnapshot(
             source="demo",
             account_reference="DEMO-0001",
@@ -248,10 +255,10 @@ class DemoSnapshotSource:
             equity=balance + move,
             floating_profit=move,
             margin=1_250.0,
-            margin_free=98_750.0 + move,
+            margin_free=balance - 1_250.0 + move,
             margin_level=8_000.0,
-            open_positions=2,
-            active_orders=1,
+            open_positions=4,
+            active_orders=2,
             operations=(
                 OperationSnapshot(
                     "position",
@@ -297,6 +304,51 @@ class DemoSnapshotSource:
                     None,
                     _utc_iso(observed_at),
                     "demo-pending",
+                ),
+                OperationSnapshot(
+                    "position",
+                    "810003",
+                    "11122",
+                    "EURUSD",
+                    "sell",
+                    0.2,
+                    1.0851,
+                    1.0844,
+                    1.09,
+                    None,
+                    round(move * 0.6, 2),
+                    _utc_iso(observed_at),
+                    "demo-alpha-2",
+                ),
+                OperationSnapshot(
+                    "position",
+                    "810004",
+                    "55555",
+                    "US30",
+                    "buy",
+                    1.0,
+                    42150.0,
+                    42280.0,
+                    None,
+                    None,
+                    round(move * -0.3, 2),
+                    _utc_iso(observed_at),
+                    "demo-index",
+                ),
+                OperationSnapshot(
+                    "order",
+                    "910002",
+                    "33007",
+                    "XAUUSD",
+                    "buy_stop",
+                    0.05,
+                    2680.0,
+                    2675.0,
+                    None,
+                    2695.0,
+                    None,
+                    _utc_iso(observed_at),
+                    "demo-gold-entry",
                 ),
             ),
             recent_activity=(
@@ -492,13 +544,13 @@ def _order_snapshot(order: object) -> OperationSnapshot:
 
 def _identifier(value: object, name: str) -> str:
     if isinstance(value, bool):
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido") from exc
+        raise DashboardReadError(f"MT5 devolvió {name} inválido") from exc
     if number < 0 or str(value).strip() not in {str(number), f"{number}.0"}:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     return str(number)
 
 
@@ -515,7 +567,7 @@ def _type_name(value: object, names: Mapping[int, str], name: str) -> str:
 def _symbol(value: object) -> str:
     text = str(value).strip()
     if not text or len(text) > 64 or any(character in text for character in "\r\n\0"):
-        raise DashboardReadError("MT5 devolviÃ³ symbol invÃ¡lido")
+        raise DashboardReadError("MT5 devolvió symbol inválido")
     return text
 
 
@@ -536,11 +588,11 @@ def _timestamp(value: object, name: str) -> str | None:
         return None
     seconds = _number(value, name)
     if seconds < 0:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {name} inválido")
     try:
         return _utc_iso(datetime.fromtimestamp(seconds, tz=UTC))
     except (OSError, OverflowError, ValueError) as exc:
-        raise DashboardReadError(f"MT5 devolviÃ³ {name} invÃ¡lido") from exc
+        raise DashboardReadError(f"MT5 devolvió {name} inválido") from exc
 
 
 def _record_timestamp(record: object, milliseconds_name: str, seconds_name: str, label: str) -> str:
@@ -550,7 +602,7 @@ def _record_timestamp(record: object, milliseconds_name: str, seconds_name: str,
     else:
         timestamp = _timestamp(_field(record, seconds_name, None), label)
     if timestamp is None:
-        raise DashboardReadError(f"MT5 devolviÃ³ {label} invÃ¡lido")
+        raise DashboardReadError(f"MT5 devolvió {label} inválido")
     return timestamp
 
 

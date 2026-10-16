@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gzip
 import json
+import shutil
+import subprocess
 import sys
 import threading
 import unittest
@@ -256,6 +259,143 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(state["capture"]["last_duration_ms"], 19.0)
         self.assertEqual(state["capture"]["consecutive_failures"], 0)
 
+    def test_state_filters_history_since_observed_at(self) -> None:
+        instants = iter(
+            [
+                self.observed_at,
+                self.observed_at + timedelta(seconds=5),
+                self.observed_at + timedelta(seconds=10),
+            ]
+        )
+        timer_values = iter([10.0, 10.012, 20.0, 20.019, 30.0, 30.023])
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: next(instants),
+            timer=lambda: next(timer_values),
+        )
+        service.poll_once()
+        service.poll_once()
+        service.poll_once()
+
+        state = service.state(history_since="2026-10-14T19:30:00Z")
+
+        self.assertTrue(state["history_truncated"])
+        self.assertEqual(len(state["history"]), 2)
+        self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:05Z")
+
+    def test_statics_serve_etag_and_304(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/assets/app.js", timeout=2) as response:
+                body = response.read()
+                etag = response.headers["ETag"]
+                self.assertTrue(body.startswith(b'"use strict"'))
+                self.assertIn("no-cache", response.headers["Cache-Control"])
+            second = urllib.request.Request(
+                f"{base_url}/assets/app.js", headers={"If-None-Match": etag}
+            )
+            try:
+                urllib.request.urlopen(second, timeout=2)
+                self.fail("Se esperaba un 304 Not Modified")
+            except urllib.error.HTTPError as error:
+                try:
+                    self.assertEqual(error.code, 304)
+                    self.assertEqual(error.headers["Vary"], "Accept-Encoding")
+                finally:
+                    error.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_head_and_gzip_on_statics(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            head = urllib.request.Request(f"{base_url}/assets/app.js", method="HEAD")
+            with urllib.request.urlopen(head, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.read(), b"")
+                self.assertIn("ETag", response.headers)
+            gzipped = urllib.request.Request(
+                f"{base_url}/assets/app.js", headers={"Accept-Encoding": "gzip"}
+            )
+            with urllib.request.urlopen(gzipped, timeout=2) as response:
+                self.assertEqual(response.headers["Content-Encoding"], "gzip")
+                self.assertEqual(response.headers["Vary"], "Accept-Encoding")
+                payload = gzip.decompress(response.read())
+                self.assertTrue(payload.startswith(b'"use strict"'))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_activity_renderer_handles_a_monetary_event(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js no está disponible para el smoke test del frontend")
+        app_js = Path(__file__).parents[2] / "src/tradinglab/dashboard/static/app.js"
+        smoke_test = r"""
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[1], "utf8");
+function functionSource(name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`No se encontró ${name}`);
+  const body = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = body; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`Función incompleta: ${name}`);
+}
+eval(`${functionSource("netOf")}\n${functionSource("activityRow")}`);
+function nodeStub() {
+  return {
+    children: [], className: "", textContent: "",
+    appendChild(child) { this.children.push(child); },
+    append(...children) { this.children.push(...children); },
+  };
+}
+globalThis.document = { createElement: () => nodeStub() };
+globalThis.toDate = (value) => new Date(value);
+globalThis.dateTimeFormatter = { format: () => "15/10/2026, 01:00:00" };
+globalThis.activityTypes = { sell_out: "Venta · salida" };
+globalThis.activityStates = {};
+globalThis.latestCurrency = "USD";
+globalThis.textCell = () => nodeStub();
+globalThis.detailCell = () => nodeStub();
+globalThis.decimal = String;
+globalThis.price = String;
+globalThis.money = (value) => String(value);
+const row = activityRow({
+  occurred_at: "2026-10-15T01:00:00Z", category: "deal",
+  event_type: "sell_out", event_state: null, ticket: "1", magic_number: "11122",
+  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1,
+  profit: 10, commission: -1, swap: 0, fee: 0, position_id: "2", order_ticket: "3",
+});
+if (row.children.length !== 7) throw new Error("La fila de actividad quedó incompleta");
+"""
+
+        result = subprocess.run(
+            [node, "-e", smoke_test, str(app_js)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
             DemoSnapshotSource(),
@@ -272,7 +412,7 @@ class LiveDashboardTest(unittest.TestCase):
                 payload = json.loads(response.read())
                 self.assertEqual(payload["status"], "connected")
                 self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
-                self.assertEqual(len(payload["latest"]["operations"]), 3)
+                self.assertEqual(len(payload["latest"]["operations"]), 6)
                 self.assertEqual(len(payload["latest"]["recent_activity"]), 2)
                 self.assertNotIn("operations", payload["history"][0])
                 self.assertEqual(payload["capture"]["success_count"], 1)

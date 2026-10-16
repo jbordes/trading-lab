@@ -7,6 +7,7 @@ import hmac
 import json
 import threading
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,6 +80,7 @@ class TelemetryBuffer:
     def state(self) -> dict[str, Any]:
         with self._lock:
             latest = self._messages[-1].as_dict() if self._messages else None
+            history = latest["payload"].get("history") if latest else None
             return {
                 "status": "ready",
                 "accepted": self._accepted,
@@ -86,7 +88,32 @@ class TelemetryBuffer:
                 "missing_sequences": self._gaps,
                 "retained": len(self._messages),
                 "latest": latest,
+                "history_status": history["status"] if history else "unavailable",
+                "history_retained": len(history["deals"]) if history else 0,
             }
+
+    def recent_deals(self, source_id: str, *, magic_number: str | None = None) -> dict[str, Any]:
+        """Project the latest window, never append overlapping executions or sum P/L.
+
+        Source IDs must identify one approved account. This is a bounded in-memory
+        view, not an archive; error/truncated windows remain visibly incomplete.
+        """
+        with self._lock:
+            for envelope in reversed(self._messages):
+                if envelope.source_id != source_id or envelope.kind != "account_snapshot":
+                    continue
+                history = envelope.payload.get("history")
+                if history is None:
+                    return {"status": "unavailable", "deals": []}
+                result = deepcopy(history)
+                result["captured_at"] = envelope.captured_at
+                result["deals"] = [
+                    deal
+                    for deal in result["deals"]
+                    if magic_number is None or deal["magic_number"] == magic_number
+                ]
+                return result
+        return {"status": "unavailable", "deals": []}
 
     def _prune_fingerprints(self) -> None:
         retained_sequences = {

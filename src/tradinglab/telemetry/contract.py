@@ -24,6 +24,17 @@ ROW_NUMBERS = {"volume", "price_open", "price_current", "stop_loss", "take_profi
 ROW_FIELDS = ROW_NUMBERS | {"ticket", "magic_number", "symbol", "comment"}
 POSITION_FIELDS = ROW_FIELDS | {"position_id", "operation_type", "profit", "swap", "opened_at_msc"}
 ORDER_FIELDS = ROW_FIELDS | {"order_type", "created_at_msc"}
+DEAL_NUMBERS = {"volume", "price", "profit", "commission", "swap", "fee"}
+DEAL_FIELDS = DEAL_NUMBERS | {
+    "ticket",
+    "order_id",
+    "position_id",
+    "magic_number",
+    "time_msc",
+    "deal_type",
+    "entry",
+    "symbol",
+}
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MASKED_ACCOUNT = re.compile(r"^\*{4}[0-9]{1,8}$")
@@ -155,11 +166,14 @@ def _validate_heartbeat(payload: dict[str, Any]) -> None:
 def _validate_account_snapshot(payload: dict[str, Any]) -> None:
     _require_exact_fields(
         payload,
-        {"reason", "account", "positions_total", "orders_total", "positions", "orders"},
+        {"reason", "account", "positions_total", "orders_total", "positions", "orders"}
+        | ({"history"} if "history" in payload else set()),
         "snapshot",
     )
     if _required_string(payload, "reason") not in ALLOWED_REASONS:
         raise TelemetryValidationError("Motivo de snapshot no admitido")
+    if "history" in payload:
+        _validate_history(payload["history"])
 
     account = payload["account"]
     if not isinstance(account, dict):
@@ -202,6 +216,55 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise TelemetryValidationError("Claves JSON duplicadas")
         result[key] = value
     return result
+
+
+def _validate_history(history: Any) -> None:
+    if not isinstance(history, dict):
+        raise TelemetryValidationError("history debe ser un objeto")
+    _require_exact_fields(
+        history, {"status", "from_server_seconds", "to_server_seconds", "total", "deals"}, "history"
+    )
+    status = _required_string(history, "status")
+    if status not in {"complete", "truncated", "error"}:
+        raise TelemetryValidationError("Estado de historial no admitido")
+    for field in ("from_server_seconds", "to_server_seconds"):
+        _decimal_text(history, field, minimum=0, maximum=MAX_INT64 // 1000 - 1)
+    start, end = int(history["from_server_seconds"]), int(history["to_server_seconds"])
+    if not 0 <= end - start <= 86400:
+        raise TelemetryValidationError("Ventana de historial inválida")
+    _integer_range(history["total"], "total", minimum=0, maximum=2**31 - 1)
+    deals = history["deals"]
+    if not isinstance(deals, list) or len(deals) > 200:
+        raise TelemetryValidationError("Historial limitado a 200 ejecuciones")
+    if (
+        status == "complete"
+        and len(deals) != history["total"]
+        or status == "truncated"
+        and not 0 < len(deals) < history["total"]
+        or status == "error"
+        and (deals or history["total"] != 0)
+    ):
+        raise TelemetryValidationError("Estado y conteos de historial inconsistentes")
+    tickets: set[str] = set()
+    for deal in deals:
+        if not isinstance(deal, dict):
+            raise TelemetryValidationError("Ejecución debe ser un objeto")
+        _require_exact_fields(deal, DEAL_FIELDS, "ejecución")
+        _decimal_text(deal, "ticket", minimum=1, maximum=MAX_UINT64)
+        for field in ("order_id", "position_id", "time_msc"):
+            _decimal_text(deal, field, minimum=0, maximum=MAX_INT64)
+        _decimal_text(deal, "magic_number", minimum=-(2**63), maximum=MAX_INT64)
+        _integer_range(deal["deal_type"], "deal_type", minimum=0, maximum=17)
+        _integer_range(deal["entry"], "entry", minimum=0, maximum=3)
+        if not isinstance(deal["symbol"], str) or len(deal["symbol"]) > 128:
+            raise TelemetryValidationError("Símbolo inválido")
+        for field in DEAL_NUMBERS:
+            _finite_number(deal[field], field)
+        if deal["volume"] < 0 or not start * 1000 <= int(deal["time_msc"]) < (end + 1) * 1000:
+            raise TelemetryValidationError("Volumen o tiempo fuera de ventana")
+        if deal["ticket"] in tickets:
+            raise TelemetryValidationError("Ticket de ejecución duplicado")
+        tickets.add(deal["ticket"])
 
 
 def _integer_range(value: Any, field: str, *, minimum: int, maximum: int) -> None:

@@ -10,12 +10,14 @@ input string SourceId = "demo-terminal-01";
 input int IntervalSeconds = 5;
 input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
+input int HistoryLookbackSeconds = 3600;
+input int MaxDealsPerSnapshot = 200;
 // Operator-approved demo identity; never commit real account configuration.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.1.0";
+const string COLLECTOR_VERSION = "0.1.1";
 
 string session_id = "";
 // Bounded, volatile FIFO: preserve retry identity, prefer fresh samples on overflow.
@@ -103,6 +105,12 @@ int OnInit()
 
    if(!CheckPilotSafety())
       return INIT_FAILED;
+   if(HistoryLookbackSeconds < 60 || HistoryLookbackSeconds > 86400 ||
+      MaxDealsPerSnapshot < 1 || MaxDealsPerSnapshot > 200)
+   {
+      Print("TradingLab telemetry: history window must be 60..86400 seconds, deals 1..200");
+      return INIT_PARAMETERS_INCORRECT;
+   }
    session_id = "session-" + CompactUtcTimestamp() + "-" + IntegerToString((long)GetTickCount64());
    if(!EventSetTimer(IntervalSeconds))
    {
@@ -310,7 +318,8 @@ string BuildSnapshot(const string reason, const ulong sequence)
    payload += "\"positions_total\":" + IntegerToString(PositionsTotal()) + ",";
    payload += "\"orders_total\":" + IntegerToString(OrdersTotal()) + ",";
    payload += "\"positions\":" + BuildPositions(valid) + ",";
-   payload += "\"orders\":" + BuildOrders(valid);
+   payload += "\"orders\":" + BuildOrders(valid) + ",";
+   payload += "\"history\":" + BuildHistory();
    payload += "}";
 
    string body = "{";
@@ -332,6 +341,69 @@ string FinalizeSnapshot(const string body, const bool valid)
 {
    // All-or-nothing: never publish partial financial data or invented zeroes.
    return valid ? body : "";
+}
+
+
+string HistoryResult(const string status, const long from_time, const long to_time,
+                     const int total, const string deals)
+{
+   return "{\"status\":\"" + status + "\",\"from_server_seconds\":\"" +
+          IntegerToString(from_time) + "\",\"to_server_seconds\":\"" +
+          IntegerToString(to_time) + "\",\"total\":" + IntegerToString(total) +
+          ",\"deals\":" + deals + "}";
+}
+
+
+string BuildHistory()
+{
+   // HistorySelect uses broker-server time, not UTC. Re-read the whole bounded
+   // window: no cursor advances on failed sends and missed callbacks are harmless.
+   long to_time = (long)TimeCurrent();
+   long from_time = MathMax(0, to_time - HistoryLookbackSeconds);
+   ResetLastError();
+   if(to_time <= 0 || !HistorySelect((datetime)from_time, (datetime)to_time))
+      return HistoryResult("error", from_time, MathMax(0, to_time), 0, "[]");
+   int total = HistoryDealsTotal();
+   if(GetLastError() != 0 || total < 0)
+      return HistoryResult("error", from_time, to_time, 0, "[]");
+   int start = MathMax(0, total - MaxDealsPerSnapshot);
+   string deals = "[";
+   bool valid = true;
+   for(int index = start; index < total; index++)
+   {
+      ResetLastError();
+      ulong ticket = HistoryDealGetTicket(index);
+      if(ticket == 0)
+         return HistoryResult("error", from_time, to_time, 0, "[]");
+      string row = BuildDeal(ticket, valid);
+      if(!valid || GetLastError() != 0)
+         return HistoryResult("error", from_time, to_time, 0, "[]");
+      if(index > start)
+         deals += ",";
+      deals += row;
+   }
+   deals += "]";
+   return HistoryResult(start == 0 ? "complete" : "truncated", from_time, to_time, total, deals);
+}
+
+
+string BuildDeal(const ulong ticket, bool &valid)
+{
+   string row = "{\"ticket\":\"" + UnsignedIdentifier(ticket) + "\",";
+   row += "\"order_id\":\"" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_ORDER)) + "\",";
+   row += "\"position_id\":\"" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_POSITION_ID)) + "\",";
+   row += "\"magic_number\":\"" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_MAGIC)) + "\",";
+   row += "\"time_msc\":\"" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_TIME_MSC)) + "\",";
+   row += "\"deal_type\":" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_TYPE)) + ",";
+   row += "\"entry\":" + IntegerToString(HistoryDealGetInteger(ticket, DEAL_ENTRY)) + ",";
+   row += "\"symbol\":\"" + JsonEscape(HistoryDealGetString(ticket, DEAL_SYMBOL)) + "\",";
+   row += "\"volume\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_VOLUME), valid) + ",";
+   row += "\"price\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_PRICE), valid) + ",";
+   row += "\"profit\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_PROFIT), valid) + ",";
+   row += "\"commission\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_COMMISSION), valid) + ",";
+   row += "\"swap\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_SWAP), valid) + ",";
+   row += "\"fee\":" + JsonNumber(HistoryDealGetDouble(ticket, DEAL_FEE), valid) + "}";
+   return row;
 }
 
 

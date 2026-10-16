@@ -57,6 +57,19 @@ Pendiente para cerrar el incremento:
 4. Evaluar agrupación por bot después de validar el muestreo operativo, sin
    reemplazar el detalle por operación.
 
+## Spike complementario — Telemetría push MT5
+
+Implementado en la rama del [spike](mt5-telemetry-collector-spike.md): guardas de
+demo/loopback, cola acotada, validación estricta y recuperación de deals mediante
+relectura de una ventana reciente. La reconciliación reemplaza la vista, conserva
+Magic Number y costes y señala errores/truncamiento. No cambia la UI ni calcula
+métricas; pruebas sintéticas y compilación no equivalen a validación en terminal.
+
+Pendiente: ejecutar las pruebas nativas en un terminal aislado y comparar contra
+Python una apertura/cierre entre muestras, costes, reinicio y caída del receptor.
+Medir latencia, ventana necesaria y saturación antes de agregar paginación o
+persistencia. Validar la zona horaria del servidor; no asumir tiempos UTC.
+
 ## Incremento 1 — Contrato de control operativo
 
 Guía para la conversación: [Métricas de riesgo para acordar con el socio](guia-metricas-para-el-socio.md).

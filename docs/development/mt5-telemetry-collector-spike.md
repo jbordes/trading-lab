@@ -90,8 +90,9 @@ No expone un listado histórico completo y se pierde al detener el proceso.
 - ignora el cuerpo de respuesta y nunca recibe instrucciones;
 - limita posiciones y órdenes por snapshot.
 
-Todavía no envía deals históricos, velas ni muestras intermedias de equity. Esos
-incrementos dependen de lo observado en la comparación.
+Desde la corrección 5 envía una ventana acotada de deals históricos. No envía
+velas ni reconstruye muestras intermedias de equity; esos incrementos dependen
+de lo observado en la comparación.
 
 ### Recuperación de envíos (corrección 1)
 
@@ -211,7 +212,59 @@ desconexión y cambios de login/servidor. Están compiladas; su ejecución y los
 cambios reales de cuenta quedan pendientes de un terminal de pruebas aislado,
 nunca de la terminal que esté ejecutando los bots del socio.
 
-### Ejecución supervisada
+### Historial reciente y reconciliación (corrección 5)
+
+El collector 0.1.1 añade `history` al snapshot. El receptor actualizado mantiene
+compatibilidad con snapshots previos sin ese campo (`unavailable`); un receptor
+anterior debe actualizarse antes de usar este collector.
+
+En cada captura se relee la ventana completa con `HistorySelect`, incluso si no
+llegó ningún callback de transacción. Por defecto cubre 3600 segundos; se permite
+configurar `HistoryLookbackSeconds` entre 60 y 86400 y `MaxDealsPerSnapshot` entre
+1 y 200. Al superar el límite, se toma el tramo final de la lista de MT5 y se
+informa `truncated` con el total seleccionado. No hay paginación ni promesa de
+recuperar todas las ejecuciones de ventanas saturadas.
+
+Se preservan ticket, orden, posición, Magic Number, tipo, entrada/salida/reversión,
+tiempo en milisegundos, símbolo, volumen, precio, P/L, comisión, swap y fee.
+También se admiten asientos no comerciales: no se infiere que cada deal sea un
+trade completo. Los datos provienen de las [propiedades de deals](https://www.mql5.com/en/docs/constants/tradingconstants/dealproperties).
+
+`from_server_seconds`, `to_server_seconds` y `time_msc` mantienen la escala del
+servidor de MT5: [HistorySelect usa tiempo del servidor](https://www.mql5.com/en/docs/trading/historyselect).
+No se rotulan como UTC ni se inventa una conversión. `captured_at` sigue en UTC.
+La zona y cambios horarios del broker requieren validación antes de calcular
+métricas que crucen ambas escalas.
+
+El contrato distingue `complete` (todos los elementos seleccionados), `truncated`
+y `error` (fallo de lectura o dato no finito). `complete` no certifica sincronía
+del broker ni completitud de toda la vida de la cuenta. Un error de historial
+envía la cuenta junto con `history.status=error`, sin filas históricas parciales
+ni ceros sustitutos; no se presenta como ventana vacía correcta.
+
+`TelemetryBuffer.recent_deals(source_id, magic_number=...)` proyecta la última
+ventana recibida, sin concatenar solapamientos ni sumar P/L. Tickets repetidos
+dentro de una ventana se rechazan; una nueva ventana reemplaza la anterior y
+refleja correcciones/eliminaciones disponibles en el broker. El estado de una
+ventana truncada sigue siendo incompleto, incluso tras filtrar por Magic Number.
+Un `source_id` corresponde a una sola cuenta aprobada, con un solo collector;
+asignar otro ID al cambiar de cuenta. No es un catálogo histórico multicuenta.
+
+Releer recupera deals perdidos por callbacks o envíos **mientras permanezcan en
+la ventana y entren en el límite**. Reiniciar el receptor pierde su memoria y la
+siguiente muestra la repuebla. Al detenerse la guarda de cuenta hay que revisar
+y reactivar manualmente el EA. Una caída más larga que la ventana, truncamiento
+o descarte por tamaño máximo de mensaje puede dejar información irrecuperable
+en este piloto. La consulta de MT5 es sincrónica: medir su coste antes de ampliar
+la ventana o frecuencia. No hay almacenamiento durable, watermark persistente,
+reconstrucción de equity, emparejamiento de trades ni cambio de UI/dashboard.
+
+`/health` publica solo estado y cantidad retenida de historial, nunca sus filas.
+Las pruebas Python cubren entrada/salida entre muestras, solapamientos, tickets
+con igual milisegundo, reinicios, correcciones, filtros, límites y errores; la
+prueba nativa usa un historial simulado y sigue pendiente de ejecución en MT5.
+
+### Procedimiento supervisado
 
 1. Revisar la fuente y compilarla con MetaEditor sin warnings.
 2. Iniciar el receptor con un token efímero.

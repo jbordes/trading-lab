@@ -1,5 +1,12 @@
 // Deterministic native test: no network, account reads or trading at runtime.
 #define TELEMETRY_QUEUE_TEST
+#define TimeCurrent FakeTimeCurrent
+#define HistorySelect FakeHistorySelect
+#define HistoryDealsTotal FakeHistoryDealsTotal
+#define HistoryDealGetTicket FakeHistoryDealGetTicket
+#define HistoryDealGetInteger FakeHistoryDealGetInteger
+#define HistoryDealGetDouble FakeHistoryDealGetDouble
+#define HistoryDealGetString FakeHistoryDealGetString
 #include "../../apps/mt5-telemetry-collector/TradingLabTelemetry.mq5"
 
 int fake_status = -1;
@@ -36,6 +43,7 @@ void ResetQueue()
 
 void OnStart()
 {
+   TestHistoryRecovery();
    TestPilotGuards();
    TestNumericRejection();
    ResetQueue();
@@ -96,6 +104,54 @@ void OnStart()
    EnqueueSnapshot(oversized, 99);
    Check(outbox_count == 0 && dropped_samples == 2, "oversize rejected before retention");
    PrintFormat("TradingLab outbox tests: %d failure(s)", failures);
+}
+
+
+bool history_select_ok = true;
+bool history_number_ok = true;
+int history_count = 2;
+datetime FakeTimeCurrent() { return (datetime)1000; }
+bool FakeHistorySelect(datetime from_time, datetime to_time) { return history_select_ok; }
+int FakeHistoryDealsTotal() { return history_count; }
+ulong FakeHistoryDealGetTicket(int index) { return (ulong)(index + 1); }
+long FakeHistoryDealGetInteger(ulong ticket, ENUM_DEAL_PROPERTY_INTEGER property)
+{
+   if(property == DEAL_TIME_MSC) return 999000 + (long)ticket;
+   if(property == DEAL_MAGIC) return 11122;
+   if(property == DEAL_TYPE) return 0;
+   if(property == DEAL_ENTRY) return (long)(ticket % 2);
+   return 42;
+}
+double FakeHistoryDealGetDouble(ulong ticket, ENUM_DEAL_PROPERTY_DOUBLE property)
+{
+   if(!history_number_ok) return MathArcsin(2.0);
+   return 0.1;
+}
+string FakeHistoryDealGetString(ulong ticket, ENUM_DEAL_PROPERTY_STRING property)
+{
+   return "TEST";
+}
+void TestHistoryRecovery()
+{
+   string first = BuildHistory();
+   Check(StringFind(first, "\"status\":\"complete\"") >= 0, "history complete");
+   Check(StringFind(first, "\"ticket\":\"1\"") >= 0 &&
+         StringFind(first, "\"ticket\":\"2\"") >= 0, "entry and exit between samples retained");
+   Check(BuildHistory() == first, "overlap re-reads same executions without cursor");
+   history_count = 201;
+   string truncated = BuildHistory();
+   Check(StringFind(truncated, "\"status\":\"truncated\"") >= 0,
+         "excess history not labelled complete");
+   history_count = 0;
+   Check(StringFind(BuildHistory(), "\"status\":\"complete\"") >= 0, "empty history is valid");
+   history_select_ok = false;
+   Check(StringFind(BuildHistory(), "\"status\":\"error\"") >= 0, "history failure visible");
+   history_select_ok = true;
+   history_count = 2;
+   history_number_ok = false;
+   Check(StringFind(BuildHistory(), "\"status\":\"error\"") >= 0, "invalid cost never zeroed");
+   history_number_ok = true;
+   Check(BuildHistory() == first, "history recovers on next selection");
 }
 
 

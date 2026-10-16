@@ -76,6 +76,20 @@ El adaptador Python es específico de Windows y se conecta al terminal autorizad
 
 El diagnóstico inmutable ya implementado se conserva para inventario, reconciliación y evidencia; la vista en vivo no lo reemplaza.
 
+El [spike de telemetría push](../development/mt5-telemetry-collector-spike.md)
+evalúa un segundo adaptador para terminales ubicados en otra VPS. Su receptor es
+un proceso loopback separado y no modifica la frontera HTTP read-only del
+dashboard. Solo una comparación contra la captura Python podrá justificar una
+topología remota posterior.
+
+El spike incorpora una ventana móvil de ejecuciones (`deals`) para recuperar
+actividad entre muestras: una hora y hasta 200 filas por defecto, con estados
+explícitos completo/truncado/error. La vista recibida se reemplaza al reconciliar,
+no se acumulan solapamientos. Es memoria temporal, sin emparejar trades ni
+alimentar todavía la UI; no reemplaza el historial del adaptador Python ni una
+futura persistencia. Los tiempos de ejecución conservan la escala del servidor
+MT5 hasta validar su conversión.
+
 ### StocksTrader
 
 Será un adaptador REST separado para cuentas de esa plataforma. No se asumirá que cubre cuentas MT5 de RoboForex ni que ofrece WebSocket. El colector propio permitirá únicamente llamadas de lectura, mantendrá el token fuera del navegador y se probará primero con una cuenta demo.

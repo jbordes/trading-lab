@@ -70,10 +70,14 @@ con eliminación de índices de sesiones al desalojar sus mensajes. Los seis
 puntos de revisión están implementados para el piloto; no implican cierre de
 la comparación real ni autorización de despliegue o merge.
 
-Pendiente: ejecutar las pruebas nativas en un terminal aislado y comparar contra
-Python una apertura/cierre entre muestras, costes, reinicio y caída del receptor.
-Medir latencia, ventana necesaria y saturación antes de agregar paginación o
-persistencia. Validar la zona horaria del servidor; no asumir tiempos UTC.
+La prueba nativa determinista fue compilada y ejecutada en MT5-Juampi el
+2026-10-17 con 0 errores, 0 warnings y 0 fallos. Se ejecutó sin red, lecturas de
+cuenta ni funciones de trading; valida las simulaciones, no el piloto real.
+
+Pendiente: comparar contra Python una apertura/cierre entre muestras, costes,
+reinicio y caída del receptor. Medir latencia, ventana necesaria y saturación
+antes de agregar paginación o persistencia. Validar la zona horaria del servidor;
+no asumir tiempos UTC.
 
 ## Incremento 0D — Telemetría push visible
 

@@ -36,6 +36,7 @@ void ResetQueue()
 
 void OnStart()
 {
+   TestPilotGuards();
    TestNumericRejection();
    ResetQueue();
    EnqueueSnapshot("first", 1);
@@ -95,6 +96,39 @@ void OnStart()
    EnqueueSnapshot(oversized, 99);
    Check(outbox_count == 0 && dropped_samples == 2, "oversize rejected before retention");
    PrintFormat("TradingLab outbox tests: %d failure(s)", failures);
+}
+
+
+void TestPilotGuards()
+{
+   Check(IsLoopbackIngestUrl("http://127.0.0.1:8766/v1/telemetry"), "local endpoint allowed");
+   Check(IsLoopbackIngestUrl("http://127.0.0.1:65535/v1/telemetry"), "maximum port allowed");
+   string invalid[] = {
+      "http://127.0.0.1:8766@external.example/v1/telemetry",
+      "http://127.0.0.1:8766/v1/telemetry?url=external",
+      "http://127.0.0.1:8766/v1/telemetry#fragment",
+      "http://localhost:8766/v1/telemetry", "http://127.0.0.1:0/v1/telemetry",
+      "http://127.0.0.1:65536/v1/telemetry", "http://127.0.0.1:08766/v1/telemetry",
+      "http://127.0.0.1:+8766/v1/telemetry", "http://127.0.0.1:8766/other",
+      "http://127.0.0.1:8766\\@external.example/v1/telemetry",
+      "http://127.0.0.1:8766/v1/telemetry\r\n", "https://127.0.0.1:8766/v1/telemetry"
+   };
+   for(int i = 0; i < ArraySize(invalid); i++)
+      Check(!IsLoopbackIngestUrl(invalid[i]), "ambiguous or remote URL rejected");
+   Check(IsApprovedDemo(true, ACCOUNT_TRADE_MODE_DEMO, 1234, "DEMO", 1234, "DEMO"),
+         "approved connected demo allowed");
+   Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_REAL, 1234, "DEMO", 1234, "DEMO"),
+         "real account rejected even if server name says demo");
+   Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_CONTEST, 1234, "DEMO", 1234, "DEMO"),
+         "contest rejected");
+   Check(!IsApprovedDemo(false, ACCOUNT_TRADE_MODE_DEMO, 1234, "DEMO", 1234, "DEMO"),
+         "disconnected rejected");
+   Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_DEMO, 5678, "DEMO", 1234, "DEMO"),
+         "changed login rejected");
+   Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_DEMO, 1234, "OTHER", 1234, "DEMO"),
+         "changed server rejected");
+   Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_DEMO, 0, "", 0, ""),
+         "unconfigured identity rejected");
 }
 
 

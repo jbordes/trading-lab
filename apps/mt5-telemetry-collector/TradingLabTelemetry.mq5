@@ -10,6 +10,9 @@ input string SourceId = "demo-terminal-01";
 input int IntervalSeconds = 5;
 input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
+// Operator-approved demo identity; never commit real account configuration.
+input long ExpectedDemoLogin = 0;
+input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
 const string COLLECTOR_VERSION = "0.1.0";
@@ -29,12 +32,45 @@ int head_attempts = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
 ulong sequence_number = 0;
+bool safety_stopped = false;
+
+
+bool IsLoopbackIngestUrl(const string url)
+{
+   const string prefix = "http://127.0.0.1:";
+   const string suffix = "/v1/telemetry";
+   if(StringFind(url, prefix) != 0)
+      return false;
+   int start = StringLen(prefix);
+   int length = StringLen(url) - start - StringLen(suffix);
+   if(length < 1 || length > 5 || StringSubstr(url, start + length) != suffix)
+      return false;
+   string port = StringSubstr(url, start, length);
+   if(StringGetCharacter(port, 0) == '0')
+      return false;
+   for(int i = 0; i < length; i++)
+   {
+      ushort character = StringGetCharacter(port, i);
+      if(character < '0' || character > '9')
+         return false;
+   }
+   long number = StringToInteger(port);
+   return number >= 1 && number <= 65535;
+}
+
+
+bool IsApprovedDemo(const bool connected, const long mode, const long login,
+                    const string server, const long expected_login, const string expected_server)
+{
+   return connected && mode == ACCOUNT_TRADE_MODE_DEMO && expected_login > 0 &&
+          expected_server != "" && login == expected_login && server == expected_server;
+}
 
 
 #ifndef TELEMETRY_QUEUE_TEST
 int OnInit()
 {
-   if(StringFind(IngestUrl, "http://127.0.0.1:") != 0)
+   if(!IsLoopbackIngestUrl(IngestUrl))
    {
       Print("TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
       return INIT_PARAMETERS_INCORRECT;
@@ -65,6 +101,8 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
 
+   if(!CheckPilotSafety())
+      return INIT_FAILED;
    session_id = "session-" + CompactUtcTimestamp() + "-" + IntegerToString((long)GetTickCount64());
    if(!EventSetTimer(IntervalSeconds))
    {
@@ -87,6 +125,8 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
+   if(!CheckPilotSafety())
+      return;
    string reason = "timer";
    if(startup_pending)
       reason = "startup";
@@ -94,12 +134,40 @@ void OnTimer()
       reason = "trade_activity";
 
    sequence_number++;
-   EnqueueSnapshot(BuildSnapshot(reason, sequence_number), sequence_number);
+   string body = BuildSnapshot(reason, sequence_number);
+   // Discard a sample collected while the terminal identity was changing.
+   if(!CheckPilotSafety())
+   {
+      RecordDrop(sequence_number, "pilot_guard");
+      return;
+   }
+   EnqueueSnapshot(body, sequence_number);
    startup_pending = false;
    trade_activity_pending = false;
    // Drain one extra item after success, bounded to two requests per tick.
    if(TrySendQueued(GetTickCount64()))
       TrySendQueued(GetTickCount64());
+}
+
+
+bool CheckPilotSafety()
+{
+   if(safety_stopped)
+      return false;
+   ResetLastError();
+   bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   string server = AccountInfoString(ACCOUNT_SERVER);
+   if(GetLastError() == 0 && IsApprovedDemo(connected, mode, login, server,
+                                          ExpectedDemoLogin, ExpectedDemoServer))
+      return true;
+   safety_stopped = true;
+   EventKillTimer();
+   while(outbox_count > 0)
+      DropHead("pilot_guard");
+   Print("TradingLab telemetry: pilot guard stopped capture; review demo identity and reattach EA");
+   return false;
 }
 #endif
 
@@ -158,6 +226,9 @@ bool TrySendQueued(const ulong now_ms)
       return false;
    // One bounded synchronous request per call; no Sleep and no retry loop.
    int status = SendMessage(outbox_body[outbox_head]);
+   // The live safety guard may have cleared the queue inside SendMessage.
+   if(safety_stopped)
+      return false;
    head_attempts++;
    if(status == 200 || status == 202)
    {
@@ -192,6 +263,8 @@ void OnTradeTransaction(
 
 int SendMessage(const string body)
 {
+   if(!CheckPilotSafety() || !IsLoopbackIngestUrl(IngestUrl))
+      return 0;
    char request_body[];
    char response_body[];
    string response_headers = "";

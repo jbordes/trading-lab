@@ -179,12 +179,45 @@ Transfer-Encoding reciben 400 antes de leer el cuerpo. El token configurado debe
 ser ASCII imprimible sin espacios ni controles. Esto no añade límites de hilos,
 timeout de lectura ni retención de sesiones: siguen pendientes del punto 6.
 
-### Pasos del piloto
+### Guardas del piloto (corrección 4)
+
+El collector exige configurar localmente `ExpectedDemoLogin` (>0) y
+`ExpectedDemoServer` (nombre exacto); los valores por defecto impiden iniciar.
+No versionar esa configuración ni incluir el login completo en logs. La cuenta
+debe estar conectada y tener `ACCOUNT_TRADE_MODE_DEMO`; un nombre de servidor con
+la palabra «demo» no basta. Se rechazan cuentas reales y de concurso, según las
+[propiedades de cuenta de MT5](https://www.mql5.com/en/docs/constants/environment_state/accountinformation).
+
+La identidad autorizada se comprueba al iniciar, antes y después de construir
+cada muestra y antes de cada envío. Desconexión, error al consultar la identidad
+o cambio de login/servidor activa una parada: cancela el temporizador, descarta
+la cola con motivo `pilot_guard` y no reanuda desde el siguiente tick. El operador
+debe revisar y volver a adjuntar el EA; si MT5 lo reinicializa automáticamente,
+la nueva cuenta también debe coincidir con la configuración explícita. No se
+autoriza automáticamente otra demo ni se modifica la cuenta o sus operaciones.
+La identidad no es una lectura transaccional: estas comprobaciones reducen la
+ventana de cambio durante captura, pero requieren validación real en el piloto.
+
+La URL admite exclusivamente `http://127.0.0.1:<puerto>/v1/telemetry`, con puerto
+decimal 1..65535 sin ceros iniciales. Rechaza dominios, `localhost`, credenciales
+en URL, rutas distintas, query, fragmentos, espacios, controles y escapes.
+Esto valida el destino configurado, no constituye aislamiento de red del
+terminal. Usar únicamente nuestro receptor local, que no emite redirecciones;
+no se ha comprobado el comportamiento interno de WebRequest ante redirecciones
+o proxies. No sustituirlo por un servicio local de terceros sin esa evaluación.
+
+Las pruebas nativas incluyen URLs ambiguas, cuentas reales/de concurso,
+desconexión y cambios de login/servidor. Están compiladas; su ejecución y los
+cambios reales de cuenta quedan pendientes de un terminal de pruebas aislado,
+nunca de la terminal que esté ejecutando los bots del socio.
+
+### Ejecución supervisada
 
 1. Revisar la fuente y compilarla con MetaEditor sin warnings.
 2. Iniciar el receptor con un token efímero.
 3. Autorizar únicamente `http://127.0.0.1:8766` en una terminal demo.
-4. Adjuntar el EA a un solo gráfico.
+4. Configurar localmente `ExpectedDemoLogin` y `ExpectedDemoServer` de la demo
+   autorizada y adjuntar el EA a un solo gráfico.
 5. Ejecutar simultáneamente el dashboard con fuente Python.
 6. Comparar cuenta, posiciones, órdenes, Magic Numbers, timestamps y latencia.
 7. Interrumpir el receptor durante más de 12 intervalos: comprobar descartes

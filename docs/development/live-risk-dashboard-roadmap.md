@@ -65,6 +65,11 @@ relectura de una ventana reciente. La reconciliación reemplaza la vista, conser
 Magic Number y costes y señala errores/truncamiento. No cambia la UI ni calcula
 métricas; pruebas sintéticas y compilación no equivalen a validación en terminal.
 
+El receptor incorpora límites de conexiones, plazo de red y contenido retenido,
+con eliminación de índices de sesiones al desalojar sus mensajes. Los seis
+puntos de revisión están implementados para el piloto; no implican cierre de
+la comparación real ni autorización de despliegue o merge.
+
 Pendiente: ejecutar las pruebas nativas en un terminal aislado y comparar contra
 Python una apertura/cierre entre muestras, costes, reinicio y caída del receptor.
 Medir latencia, ventana necesaria y saturación antes de agregar paginación o

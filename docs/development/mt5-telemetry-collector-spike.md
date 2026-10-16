@@ -177,8 +177,8 @@ modifica el buffer y no impide aceptar mensajes válidos posteriores.
 
 Autorizaciones no ASCII o repetidas reciben 401; Content-Length repetido o
 Transfer-Encoding reciben 400 antes de leer el cuerpo. El token configurado debe
-ser ASCII imprimible sin espacios ni controles. Esto no añade límites de hilos,
-timeout de lectura ni retención de sesiones: siguen pendientes del punto 6.
+ser ASCII imprimible sin espacios ni controles. Los límites de conexiones,
+tiempo de red y retención se describen en la corrección 6.
 
 ### Guardas del piloto (corrección 4)
 
@@ -263,6 +263,56 @@ reconstrucción de equity, emparejamiento de trades ni cambio de UI/dashboard.
 Las pruebas Python cubren entrada/salida entre muestras, solapamientos, tickets
 con igual milisegundo, reinicios, correcciones, filtros, límites y errores; la
 prueba nativa usa un historial simulado y sigue pendiente de ejecución en MT5.
+
+### Recursos del receptor (corrección 6)
+
+Por defecto se atienden hasta **8 conexiones simultáneas**, con un plazo de red
+de **5 segundos** por conexión y una cola de escucha configurada en 8. El exceso
+se cierra sin crear un worker ni esperar a leer su petición; no se promete una
+respuesta HTTP 503. El collector lo trata como fallo de transporte reintentable.
+
+Cada conexión admitida tiene timeout de socket y un temporizador absoluto que
+interrumpe su socket: enviar bytes lentamente no renueva ese plazo. Cubre espera
+de cabeceras, cuerpo y envío de respuesta; no interrumpe código Python que ya
+esté calculando o esperando el lock. Se usa un worker y un temporizador por
+conexión admitida; ambos se liberan al terminar. El cierre del servidor interrumpe
+también las conexiones activas. En Windows una lectura ya bloqueada puede tardar
+hasta un timeout de socket adicional en liberar el worker, aunque el peer ya vea
+el cierre; no se promete que el hilo termine exactamente al vencer el plazo.
+No es aislamiento de CPU ni defensa contra una
+inundación local sostenida; el receptor continúa limitado a loopback.
+
+El buffer conserva hasta **500 mensajes y 16 MiB de JSON canónico**, aplicando
+ambos límites y desalojando primero los mensajes más antiguos. Un mensaje que
+supere el presupuesto configurado se rechaza sin cambiar el buffer. Es un
+presupuesto de contenido serializado, no un límite de RAM del proceso: objetos
+Python, índices y peticiones en curso consumen memoria adicional acotada por sus
+respectivos límites. El máximo HTTP sigue siendo 256 KiB por cuerpo.
+
+Los índices de duplicados, event IDs y últimas secuencias se conservan únicamente
+mientras haya mensajes retenidos de su ámbito. Por tanto las sesiones retenidas
+no pueden superar el número de mensajes. Un reintento antiguo de una sesión aún
+retenida puede ser rechazado como obsoleto; una sesión completamente desalojada
+se considera desconocida y puede volver a aceptarse. **No hay protección durable
+contra replay**, tampoco tras reiniciar el proceso. Los contadores no sustituyen
+un historial autoritativo. Las copias defensivas evitan que un consumidor cambie
+el contenido retenido o amplíe la memoria por una referencia compartida.
+
+Configuración opcional del receptor:
+
+```text
+uv run python scripts/telemetry_receiver.py --max-connections 8 --request-timeout 5 --max-messages 500 --max-retained-mib 16
+```
+
+Rangos: 1..32 conexiones, 0.05..30 segundos, 1..10000 mensajes y 1..64 MiB por CLI.
+`/health` informa conexiones activas/rechazadas/expiradas, sesiones retenidas y
+bytes canónicos, sin copiar ni exponer el último payload. Un socket que agota su
+timeout de inactividad puede cerrarse antes del temporizador absoluto y no sumar
+al contador de expiraciones de este último.
+
+Las pruebas locales cubren cuerpos y cabeceras incompletos, saturación, vencimiento
+absoluto controlado, cierre, fallo al crear worker, churn de sesiones, presupuesto
+por bytes y semántica de replay tras desalojo. No acceden a MT5.
 
 ### Procedimiento supervisado
 

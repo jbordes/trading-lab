@@ -27,6 +27,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=500,
         help="Cantidad máxima de mensajes conservados solo en memoria.",
     )
+    parser.add_argument(
+        "--max-retained-mib",
+        type=int,
+        default=16,
+        help="Presupuesto de contenido serializado retenido (1..64 MiB).",
+    )
+    parser.add_argument(
+        "--max-connections",
+        type=int,
+        default=8,
+        help="Conexiones atendidas simultáneamente (1..32).",
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=5.0,
+        help="Plazo máximo de red por conexión en segundos (0.05..30).",
+    )
     return parser.parse_args(argv)
 
 
@@ -45,8 +63,16 @@ def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.ingest import TelemetryBuffer, create_telemetry_server
 
     try:
-        buffer = TelemetryBuffer(max_messages=args.max_messages)
-        server = create_telemetry_server(buffer, token=credential, port=args.port)
+        buffer = TelemetryBuffer(
+            max_messages=args.max_messages, max_retained_bytes=args.max_retained_mib * 1024 * 1024
+        )
+        server = create_telemetry_server(
+            buffer,
+            token=credential,
+            port=args.port,
+            max_connections=args.max_connections,
+            request_timeout=args.request_timeout,
+        )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

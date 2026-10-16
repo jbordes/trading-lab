@@ -10,7 +10,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from tradinglab.telemetry.contract import (
@@ -19,6 +19,7 @@ from tradinglab.telemetry.contract import (
     TelemetryValidationError,
     parse_envelope,
 )
+from tradinglab.telemetry.http_server import BoundedTelemetryServer
 
 
 class TelemetryConflictError(RuntimeError):
@@ -38,10 +39,26 @@ class IngestOutcome:
 class TelemetryBuffer:
     """Bounded, thread-safe and idempotent in-memory buffer for the spike."""
 
-    def __init__(self, *, max_messages: int = 500) -> None:
-        if not 1 <= max_messages <= 10_000:
+    def __init__(
+        self, *, max_messages: int = 500, max_retained_bytes: int = 16 * 1024 * 1024
+    ) -> None:
+        if (
+            isinstance(max_messages, bool)
+            or not isinstance(max_messages, int)
+            or not 1 <= max_messages <= 10_000
+        ):
             raise ValueError("max_messages debe estar entre 1 y 10000")
-        self._messages: deque[TelemetryEnvelope] = deque(maxlen=max_messages)
+        if (
+            isinstance(max_retained_bytes, bool)
+            or not isinstance(max_retained_bytes, int)
+            or not 1 <= max_retained_bytes <= 64 * 1024 * 1024
+        ):
+            raise ValueError("max_retained_bytes debe ser 1..67108864 bytes")
+        self._max_messages = max_messages
+        self._max_retained_bytes = max_retained_bytes
+        self._retained_bytes = 0
+        self._message_sizes: deque[int] = deque()
+        self._messages: deque[TelemetryEnvelope] = deque()
         self._fingerprints: dict[tuple[str, str, int], str] = {}
         self._event_fingerprints: dict[tuple[str, str], str] = {}
         self._last_sequences: dict[tuple[str, str], int] = {}
@@ -51,7 +68,11 @@ class TelemetryBuffer:
         self._lock = threading.Lock()
 
     def accept(self, envelope: TelemetryEnvelope) -> IngestOutcome:
-        fingerprint = hashlib.sha256(envelope.canonical_bytes()).hexdigest()
+        canonical = envelope.canonical_bytes()
+        size = len(canonical)
+        if size > self._max_retained_bytes:
+            raise TelemetryValidationError("El mensaje supera la capacidad del buffer")
+        fingerprint = hashlib.sha256(canonical).hexdigest()
         session_key = (envelope.source_id, envelope.session_id)
         sequence_key = (*session_key, envelope.sequence)
         event_key = (envelope.source_id, envelope.event_id)
@@ -68,7 +89,16 @@ class TelemetryBuffer:
             if envelope.sequence <= previous:
                 raise TelemetryStaleError("Secuencia anterior no reconocida")
             gap = max(envelope.sequence - previous - 1, 0)
-            self._messages.append(envelope)
+            while self._messages and (
+                len(self._messages) >= self._max_messages
+                or self._retained_bytes + size > self._max_retained_bytes
+            ):
+                self._messages.popleft()
+                self._retained_bytes -= self._message_sizes.popleft()
+            # Keep ownership: callers cannot enlarge/mutate a retained payload.
+            self._messages.append(deepcopy(envelope))
+            self._message_sizes.append(size)
+            self._retained_bytes += size
             self._fingerprints[sequence_key] = fingerprint
             self._event_fingerprints[event_key] = fingerprint
             self._last_sequences[session_key] = envelope.sequence
@@ -77,7 +107,7 @@ class TelemetryBuffer:
             self._prune_fingerprints()
             return IngestOutcome(status="accepted", sequence_gap=gap)
 
-    def state(self) -> dict[str, Any]:
+    def state(self, *, include_latest: bool = True) -> dict[str, Any]:
         with self._lock:
             latest = self._messages[-1].as_dict() if self._messages else None
             history = latest["payload"].get("history") if latest else None
@@ -87,7 +117,10 @@ class TelemetryBuffer:
                 "duplicates": self._duplicates,
                 "missing_sequences": self._gaps,
                 "retained": len(self._messages),
-                "latest": latest,
+                "latest": deepcopy(latest) if include_latest else None,
+                "retained_bytes": self._retained_bytes,
+                "max_retained_bytes": self._max_retained_bytes,
+                "retained_sessions": len(self._last_sequences),
                 "history_status": history["status"] if history else "unavailable",
                 "history_retained": len(history["deals"]) if history else 0,
             }
@@ -116,6 +149,10 @@ class TelemetryBuffer:
         return {"status": "unavailable", "deals": []}
 
     def _prune_fingerprints(self) -> None:
+        retained_sessions = {(item.source_id, item.session_id) for item in self._messages}
+        self._last_sequences = {
+            key: value for key, value in self._last_sequences.items() if key in retained_sessions
+        }
         retained_sequences = {
             (item.source_id, item.session_id, item.sequence) for item in self._messages
         }
@@ -134,7 +171,9 @@ def create_telemetry_server(
     token: str,
     port: int,
     max_body_bytes: int = MAX_BODY_BYTES,
-) -> ThreadingHTTPServer:
+    max_connections: int = 8,
+    request_timeout: float = 5.0,
+) -> BoundedTelemetryServer:
     """Create a receiver bound exclusively to IPv4 loopback."""
 
     if not 0 <= port <= 65535:
@@ -145,17 +184,37 @@ def create_telemetry_server(
         )
     if not 1 <= max_body_bytes <= MAX_BODY_BYTES:
         raise ValueError("Límite de cuerpo fuera de rango")
+    if (
+        isinstance(max_connections, bool)
+        or not isinstance(max_connections, int)
+        or not 1 <= max_connections <= 32
+    ):
+        raise ValueError("max_connections debe ser 1..32")
+    if (
+        isinstance(request_timeout, bool)
+        or not isinstance(request_timeout, (int, float))
+        or not 0.05 <= request_timeout <= 30
+    ):
+        raise ValueError("request_timeout debe ser 0.05..30 segundos")
 
     expected_authorization = f"Bearer {token}"
 
     class TelemetryHandler(BaseHTTPRequestHandler):
         server_version = "TradingLabTelemetrySpike/0.1"
 
+        def handle(self) -> None:
+            try:
+                super().handle()
+            except TimeoutError, ConnectionError, OSError:
+                # A deadline, shutdown or peer disconnect is a normal network failure.
+                self.close_connection = True
+
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?", 1)[0]
             if path == "/health":
-                health = buffer.state()
+                health = buffer.state(include_latest=False)
                 health.pop("latest")
+                health.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, health)
                 return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -240,4 +299,9 @@ def create_telemetry_server(
             self.end_headers()
             self.wfile.write(data)
 
-    return ThreadingHTTPServer(("127.0.0.1", port), TelemetryHandler)
+    return BoundedTelemetryServer(
+        ("127.0.0.1", port),
+        TelemetryHandler,
+        max_connections=max_connections,
+        request_timeout=request_timeout,
+    )

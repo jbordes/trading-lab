@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-16
 
-**Estado:** infraestructura local implementada y fuente compilada; prueba demo pendiente
+**Estado:** infraestructura local implementada y prueba nativa aprobada; piloto demo pendiente
 
 **Decisión:** [ADR-0003](../adr/0003-mt5-push-telemetry-spike.md)
 
@@ -123,12 +123,13 @@ valores de equity inexistentes. En el cierre normal se registran los descartes.
 
 La prueba nativa `tests/mql5/telemetry_outbox_test.mq5` usa la lógica real de la
 cola con reloj y respuestas HTTP simuladas, sin red ni lecturas de cuenta en su
-ejecución. Compilarla no equivale a ejecutarla: en una terminal de pruebas aislada,
-ejecutarla como script y exigir `TradingLab outbox tests: 0 failure(s)`.
-Los checks Python verifican el orden captura/envío y el receptor; la prueba
-nativa y la desconexión real del piloto son validaciones diferentes.
+ejecución. El 2026-10-17 se compiló con 0 errores y 0 warnings y se ejecutó como
+script en la terminal aislada MT5-Juampi, con el resultado
+`TradingLab outbox tests: 0 failure(s)`. Los checks Python verifican el orden
+captura/envío y el receptor; esta prueba determinista no sustituye la desconexión
+real ni la comparación del piloto demo.
 
-## Prueba manual pendiente
+## Resultado nativo y pruebas manuales pendientes
 
 ### Valores numéricos inválidos (corrección 2)
 
@@ -147,7 +148,7 @@ rangos económicos. No modifica todavía el contrato del receptor (punto 3).
 
 La prueba nativa incluye NaN, ambos infinitos, ceros, valores negativos,
 rechazo sin desplazar muestras válidas y recuperación de la siguiente muestra.
-Su ejecución en MT5 sigue pendiente; compilar no demuestra esas aserciones.
+Estas aserciones quedaron aprobadas en la ejecución aislada del 2026-10-17.
 
 ### Validación del receptor (corrección 3)
 
@@ -212,9 +213,10 @@ no se ha comprobado el comportamiento interno de WebRequest ante redirecciones
 o proxies. No sustituirlo por un servicio local de terceros sin esa evaluación.
 
 Las pruebas nativas incluyen URLs ambiguas, cuentas reales/de concurso,
-desconexión y cambios de login/servidor. Están compiladas; su ejecución y los
-cambios reales de cuenta quedan pendientes de un terminal de pruebas aislado,
-nunca de la terminal que esté ejecutando los bots del socio.
+desconexión y cambios de login/servidor. Sus escenarios simulados quedaron
+aprobados en la ejecución aislada del 2026-10-17. Los cambios reales de cuenta
+y desconexión continúan pendientes en un terminal de pruebas aislado, nunca en
+la terminal que esté ejecutando los bots del socio.
 
 ### Historial reciente y reconciliación (corrección 5)
 
@@ -270,7 +272,8 @@ conservan la escala del servidor MT5 hasta validar su zona horaria.
 `/health` publica solo estado y cantidad retenida de historial, nunca sus filas.
 Las pruebas Python cubren entrada/salida entre muestras, solapamientos, tickets
 con igual milisegundo, reinicios, correcciones, filtros, límites y errores; la
-prueba nativa usa un historial simulado y sigue pendiente de ejecución en MT5.
+prueba nativa con historial simulado fue ejecutada correctamente en MT5-Juampi
+el 2026-10-17.
 
 ### Recursos del receptor (corrección 6)
 

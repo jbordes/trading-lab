@@ -89,11 +89,25 @@ class TelemetryContractTest(unittest.TestCase):
             parse_envelope(encoded(message))
 
     def test_rejects_non_finite_numbers(self) -> None:
-        message = snapshot_message()
-        message["payload"]["account"]["equity"] = float("nan")  # type: ignore[index]
+        for value in (float("nan"), float("inf"), float("-inf")):
+            for scope in ("account", "positions", "orders"):
+                with self.subTest(value=value, scope=scope):
+                    message = snapshot_message()
+                    payload = message["payload"]
+                    if scope == "account":
+                        payload["account"]["equity"] = value
+                    else:
+                        payload[scope] = [{"ticket": "1", "magic_number": "2", "profit": value}]
+                        payload[f"{scope}_total"] = 1
+                    with self.assertRaisesRegex(TelemetryValidationError, "finito"):
+                        parse_envelope(encoded(message))
 
-        with self.assertRaisesRegex(TelemetryValidationError, "finito"):
-            parse_envelope(encoded(message))
+    def test_real_zero_and_negative_values_are_preserved(self) -> None:
+        message = snapshot_message()
+        message["payload"]["account"]["equity"] = 0.0
+        envelope = parse_envelope(encoded(message))
+        self.assertEqual(envelope.payload["account"]["equity"], 0.0)
+        self.assertEqual(envelope.payload["positions"][0]["profit"], -50.0)
 
 
 class TelemetryBufferTest(unittest.TestCase):
@@ -210,6 +224,26 @@ class TelemetryServerTest(unittest.TestCase):
 
 
 class Mql5CollectorSafetyTest(unittest.TestCase):
+    def test_numeric_validity_propagates_through_all_snapshot_sections(self) -> None:
+        source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
+            encoding="utf-8"
+        )
+        for section in ("BuildAccount", "BuildPositions", "BuildOrders"):
+            self.assertIn(f"{section}(valid)", source)
+            self.assertIn(f"string {section}(bool &valid)", source)
+        calls = [line for line in source.splitlines() if "+ JsonNumber(" in line]
+        self.assertTrue(calls)
+        self.assertTrue(all(", valid)" in line for line in calls))
+        self.assertIn("return FinalizeSnapshot(body, valid);", source)
+        numeric = source.split("string JsonNumber(", 1)[1].split("string UnsignedIdentifier", 1)[0]
+        self.assertIn("valid = false;", numeric)
+        self.assertNotIn('return "0";', numeric)
+        enqueue = source.split("void EnqueueSnapshot(", 1)[1].split("bool TrySendQueued", 1)[0]
+        self.assertLess(
+            enqueue.index('RecordDrop(sequence, "invalid_numeric")'),
+            enqueue.index("outbox_count == OUTBOX_CAPACITY"),
+        )
+
     def test_capture_precedes_delivery_without_pending_message_gate(self) -> None:
         source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
             encoding="utf-8"

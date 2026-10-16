@@ -125,6 +125,27 @@ nativa y la desconexión real del piloto son validaciones diferentes.
 
 ## Prueba manual pendiente
 
+### Valores numéricos inválidos (corrección 2)
+
+La captura usa [MathIsValidNumber](https://www.mql5.com/en/docs/math/mathisvalidnumber)
+para detectar NaN e infinitos en los campos numéricos de cuenta, posiciones y
+órdenes. Si alguno es inválido, descarta el snapshot completo **antes** de entrar
+en la cola: nunca lo convierte en cero ni publica una muestra parcial.
+El motivo `invalid_numeric` se registra junto con la secuencia y el contador de
+descartes, sin valores financieros. La siguiente captura parte de un estado de
+validación nuevo; los ceros auténticos y valores negativos finitos se conservan.
+
+El hueco será visible al receptor cuando llegue una secuencia posterior. El
+placeholder interno `null` jamás se publica. Esta guarda detecta no-finitos;
+no detecta un fallo de lectura que MT5 represente como un cero finito ni valida
+rangos económicos. No modifica todavía el contrato del receptor (punto 3).
+
+La prueba nativa incluye NaN, ambos infinitos, ceros, valores negativos,
+rechazo sin desplazar muestras válidas y recuperación de la siguiente muestra.
+Su ejecución en MT5 sigue pendiente; compilar no demuestra esas aserciones.
+
+### Procedimiento de piloto
+
 1. Revisar la fuente y compilarla con MetaEditor sin warnings.
 2. Iniciar el receptor con un token efímero.
 3. Autorizar únicamente `http://127.0.0.1:8766` en una terminal demo.

@@ -36,6 +36,7 @@ void ResetQueue()
 
 void OnStart()
 {
+   TestNumericRejection();
    ResetQueue();
    EnqueueSnapshot("first", 1);
    TrySendQueued(0);
@@ -94,4 +95,50 @@ void OnStart()
    EnqueueSnapshot(oversized, 99);
    Check(outbox_count == 0 && dropped_samples == 2, "oversize rejected before retention");
    PrintFormat("TradingLab outbox tests: %d failure(s)", failures);
+}
+
+
+// IEEE-754 fixtures avoid arithmetic exceptions while constructing NaN/infinities.
+union DoubleFixture
+{
+   ulong bits;
+   double value;
+};
+
+
+void TestNumericRejection()
+{
+   ResetQueue();
+   bool valid = true;
+   Check(JsonNumber(0.0, valid) == "0.00000000" && valid, "real zero preserved");
+   Check(JsonNumber(-12.5, valid) == "-12.50000000" && valid, "negative profit preserved");
+   Check(JsonNumber(12.5, valid) == "12.50000000" && valid, "positive number preserved");
+
+   ulong patterns[3] = {0x7FF8000000000000, 0x7FF0000000000000, 0xFFF0000000000000};
+   // A bad new sample must not evict any older valid sample, even at capacity.
+   for(int i = 1; i <= OUTBOX_CAPACITY; i++)
+      EnqueueSnapshot("valid", (ulong)i);
+   for(int i = 0; i < 3; i++)
+   {
+      DoubleFixture fixture;
+      fixture.bits = patterns[i];
+      valid = true;
+      string body = "{\"equity\":" + JsonNumber(fixture.value, valid);
+      Check(!valid, "non-finite invalidates sample");
+      body += ",\"profit\":" + JsonNumber(0.0, valid) + "}";
+      Check(!valid, "later finite field cannot clear invalid state");
+      body = FinalizeSnapshot(body, valid);
+      Check(body == "", "invalid snapshot has no publishable body");
+      EnqueueSnapshot(body, (ulong)(OUTBOX_CAPACITY + i + 1));
+   }
+   Check(outbox_count == OUTBOX_CAPACITY && outbox_sequence[outbox_head] == 1,
+         "invalid sample does not evict retained samples");
+   Check(dropped_samples == 3 && sends == 0, "one counted drop per invalid sample");
+   ResetQueue();
+   valid = true;
+   string body = "{\"equity\":" + JsonNumber(0.0, valid) + "}";
+   EnqueueSnapshot(FinalizeSnapshot(body, valid), 16);
+   fake_status = 202;
+   TrySendQueued(0);
+   Check(sends == 1 && last_body == body, "next valid sample recovers without fake zero");
 }

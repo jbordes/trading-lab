@@ -130,6 +130,12 @@ void DropHead(const string reason)
 
 void EnqueueSnapshot(const string body, const ulong sequence)
 {
+   // BuildSnapshot returns no body when any numeric field is non-finite.
+   if(body == "")
+   {
+      RecordDrop(sequence, "invalid_numeric");
+      return;
+   }
    char encoded[];
    int size = StringToCharArray(body, encoded, 0, WHOLE_ARRAY, CP_UTF8) - 1;
    if(size < 1 || size > MAX_PAYLOAD_BYTES)
@@ -223,14 +229,15 @@ int SendMessage(const string body)
 
 string BuildSnapshot(const string reason, const ulong sequence)
 {
+   bool valid = true;
    string event_id = session_id + ":" + IntegerToString((long)sequence);
    string payload = "{";
    payload += "\"reason\":\"" + reason + "\",";
-   payload += "\"account\":" + BuildAccount() + ",";
+   payload += "\"account\":" + BuildAccount(valid) + ",";
    payload += "\"positions_total\":" + IntegerToString(PositionsTotal()) + ",";
    payload += "\"orders_total\":" + IntegerToString(OrdersTotal()) + ",";
-   payload += "\"positions\":" + BuildPositions() + ",";
-   payload += "\"orders\":" + BuildOrders();
+   payload += "\"positions\":" + BuildPositions(valid) + ",";
+   payload += "\"orders\":" + BuildOrders(valid);
    payload += "}";
 
    string body = "{";
@@ -244,28 +251,35 @@ string BuildSnapshot(const string reason, const ulong sequence)
    body += "\"kind\":\"account_snapshot\",";
    body += "\"payload\":" + payload;
    body += "}";
-   return body;
+   return FinalizeSnapshot(body, valid);
 }
 
 
-string BuildAccount()
+string FinalizeSnapshot(const string body, const bool valid)
+{
+   // All-or-nothing: never publish partial financial data or invented zeroes.
+   return valid ? body : "";
+}
+
+
+string BuildAccount(bool &valid)
 {
    string account = "{";
    account += "\"login_masked\":\"" + MaskedLogin() + "\",";
    account += "\"server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\",";
    account += "\"currency\":\"" + JsonEscape(AccountInfoString(ACCOUNT_CURRENCY)) + "\",";
-   account += "\"balance\":" + JsonNumber(AccountInfoDouble(ACCOUNT_BALANCE)) + ",";
-   account += "\"equity\":" + JsonNumber(AccountInfoDouble(ACCOUNT_EQUITY)) + ",";
-   account += "\"profit\":" + JsonNumber(AccountInfoDouble(ACCOUNT_PROFIT)) + ",";
-   account += "\"margin\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN)) + ",";
-   account += "\"margin_free\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN_FREE)) + ",";
-   account += "\"margin_level\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL));
+   account += "\"balance\":" + JsonNumber(AccountInfoDouble(ACCOUNT_BALANCE), valid) + ",";
+   account += "\"equity\":" + JsonNumber(AccountInfoDouble(ACCOUNT_EQUITY), valid) + ",";
+   account += "\"profit\":" + JsonNumber(AccountInfoDouble(ACCOUNT_PROFIT), valid) + ",";
+   account += "\"margin\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN), valid) + ",";
+   account += "\"margin_free\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN_FREE), valid) + ",";
+   account += "\"margin_level\":" + JsonNumber(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL), valid);
    account += "}";
    return account;
 }
 
 
-string BuildPositions()
+string BuildPositions(bool &valid)
 {
    string result = "[";
    int emitted = 0;
@@ -283,13 +297,13 @@ string BuildPositions()
       result += "\"magic_number\":\"" + IntegerToString(PositionGetInteger(POSITION_MAGIC)) + "\",";
       result += "\"symbol\":\"" + JsonEscape(PositionGetString(POSITION_SYMBOL)) + "\",";
       result += "\"operation_type\":" + IntegerToString(PositionGetInteger(POSITION_TYPE)) + ",";
-      result += "\"volume\":" + JsonNumber(PositionGetDouble(POSITION_VOLUME)) + ",";
-      result += "\"price_open\":" + JsonNumber(PositionGetDouble(POSITION_PRICE_OPEN)) + ",";
-      result += "\"price_current\":" + JsonNumber(PositionGetDouble(POSITION_PRICE_CURRENT)) + ",";
-      result += "\"stop_loss\":" + JsonNumber(PositionGetDouble(POSITION_SL)) + ",";
-      result += "\"take_profit\":" + JsonNumber(PositionGetDouble(POSITION_TP)) + ",";
-      result += "\"profit\":" + JsonNumber(PositionGetDouble(POSITION_PROFIT)) + ",";
-      result += "\"swap\":" + JsonNumber(PositionGetDouble(POSITION_SWAP)) + ",";
+      result += "\"volume\":" + JsonNumber(PositionGetDouble(POSITION_VOLUME), valid) + ",";
+      result += "\"price_open\":" + JsonNumber(PositionGetDouble(POSITION_PRICE_OPEN), valid) + ",";
+      result += "\"price_current\":" + JsonNumber(PositionGetDouble(POSITION_PRICE_CURRENT), valid) + ",";
+      result += "\"stop_loss\":" + JsonNumber(PositionGetDouble(POSITION_SL), valid) + ",";
+      result += "\"take_profit\":" + JsonNumber(PositionGetDouble(POSITION_TP), valid) + ",";
+      result += "\"profit\":" + JsonNumber(PositionGetDouble(POSITION_PROFIT), valid) + ",";
+      result += "\"swap\":" + JsonNumber(PositionGetDouble(POSITION_SWAP), valid) + ",";
       result += "\"opened_at_msc\":\"" + IntegerToString(PositionGetInteger(POSITION_TIME_MSC)) + "\",";
       result += "\"comment\":\"" + JsonEscape(Truncate(PositionGetString(POSITION_COMMENT), 256)) + "\"";
       result += "}";
@@ -300,7 +314,7 @@ string BuildPositions()
 }
 
 
-string BuildOrders()
+string BuildOrders(bool &valid)
 {
    string result = "[";
    int emitted = 0;
@@ -317,11 +331,11 @@ string BuildOrders()
       result += "\"magic_number\":\"" + IntegerToString(OrderGetInteger(ORDER_MAGIC)) + "\",";
       result += "\"symbol\":\"" + JsonEscape(OrderGetString(ORDER_SYMBOL)) + "\",";
       result += "\"order_type\":" + IntegerToString(OrderGetInteger(ORDER_TYPE)) + ",";
-      result += "\"volume\":" + JsonNumber(OrderGetDouble(ORDER_VOLUME_CURRENT)) + ",";
-      result += "\"price_open\":" + JsonNumber(OrderGetDouble(ORDER_PRICE_OPEN)) + ",";
-      result += "\"price_current\":" + JsonNumber(OrderGetDouble(ORDER_PRICE_CURRENT)) + ",";
-      result += "\"stop_loss\":" + JsonNumber(OrderGetDouble(ORDER_SL)) + ",";
-      result += "\"take_profit\":" + JsonNumber(OrderGetDouble(ORDER_TP)) + ",";
+      result += "\"volume\":" + JsonNumber(OrderGetDouble(ORDER_VOLUME_CURRENT), valid) + ",";
+      result += "\"price_open\":" + JsonNumber(OrderGetDouble(ORDER_PRICE_OPEN), valid) + ",";
+      result += "\"price_current\":" + JsonNumber(OrderGetDouble(ORDER_PRICE_CURRENT), valid) + ",";
+      result += "\"stop_loss\":" + JsonNumber(OrderGetDouble(ORDER_SL), valid) + ",";
+      result += "\"take_profit\":" + JsonNumber(OrderGetDouble(ORDER_TP), valid) + ",";
       result += "\"created_at_msc\":\"" + IntegerToString(OrderGetInteger(ORDER_TIME_SETUP_MSC)) + "\",";
       result += "\"comment\":\"" + JsonEscape(Truncate(OrderGetString(ORDER_COMMENT), 256)) + "\"";
       result += "}";
@@ -342,10 +356,14 @@ string MaskedLogin()
 }
 
 
-string JsonNumber(const double value)
+string JsonNumber(const double value, bool &valid)
 {
    if(!MathIsValidNumber(value))
-      return "0";
+   {
+      valid = false;
+      // Internal placeholder only: FinalizeSnapshot discards the whole message.
+      return "null";
+   }
    return DoubleToString(value, 8);
 }
 

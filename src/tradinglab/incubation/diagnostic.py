@@ -28,6 +28,10 @@ class Mt5InitializationError(DiagnosticError):
     """Raised when the local MT5 terminal cannot be initialized."""
 
 
+class Mt5IdentityError(DiagnosticError):
+    """Raised when MT5 does not match the explicitly authorized identity."""
+
+
 class Mt5ReadError(DiagnosticError):
     """Raised when an MT5 read operation fails."""
 
@@ -43,7 +47,7 @@ class CaptureValidationError(DiagnosticError):
 class Mt5Client(Protocol):
     """Small read-only boundary implemented by the MetaTrader5 module."""
 
-    def initialize(self) -> bool: ...
+    def initialize(self, path: str, *, timeout: int) -> bool: ...
 
     def shutdown(self) -> None: ...
 
@@ -77,6 +81,24 @@ class CaptureWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class Mt5TerminalIdentity:
+    """Expected terminal and account identity for one isolated diagnostic."""
+
+    terminal_path: Path
+    data_path: Path
+    account_login: int
+    server: str
+
+    def __post_init__(self) -> None:
+        if not self.terminal_path.is_absolute() or not self.data_path.is_absolute():
+            raise ValueError("Las rutas de identidad MT5 deben ser absolutas")
+        if isinstance(self.account_login, bool) or self.account_login <= 0:
+            raise ValueError("El login esperado debe ser un entero positivo")
+        if not self.server.strip() or any(ord(char) < 32 for char in self.server):
+            raise ValueError("El servidor esperado no es válido")
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceResult:
     """Paths and digest for a completed evidence publication."""
 
@@ -92,16 +114,20 @@ def collect_mt5_diagnostic(
     window: CaptureWindow,
     *,
     captured_at: datetime,
+    identity: Mt5TerminalIdentity,
 ) -> dict[str, JsonValue]:
     """Collect every read-only MT5 dataset required by the discovery spike."""
 
     _require_aware(captured_at, "captured_at")
-    if not client.initialize():
+    if not client.initialize(str(identity.terminal_path), timeout=10_000):
         raise Mt5InitializationError(
             f"No se pudo inicializar MT5: {_safe_error(client.last_error())}"
         )
 
     try:
+        account = _read_one(client, "account_info")
+        terminal = _read_one(client, "terminal_info")
+        _verify_terminal_identity(account, terminal, identity)
         payload: dict[str, JsonValue] = {
             "schema_version": SCHEMA_VERSION,
             "captured_at": _utc_iso(captured_at),
@@ -109,8 +135,8 @@ def collect_mt5_diagnostic(
                 "date_from": _utc_iso(window.date_from),
                 "date_to": _utc_iso(window.date_to),
             },
-            "account": _read_one(client, "account_info"),
-            "terminal": _read_one(client, "terminal_info"),
+            "account": account,
+            "terminal": terminal,
             "history_orders": _read_many(
                 client,
                 "history_orders_get",
@@ -247,6 +273,34 @@ def _read_many(client: Mt5Client, method_name: str, *args: datetime) -> list[Jso
     if not all(isinstance(record, dict) for record in records):
         raise Mt5ReadError(f"{method_name} devolvió registros inesperados")
     return records
+
+
+def _verify_terminal_identity(
+    account: Mapping[str, JsonValue],
+    terminal: Mapping[str, JsonValue],
+    expected: Mt5TerminalIdentity,
+) -> None:
+    terminal_path = terminal.get("path")
+    data_path = terminal.get("data_path")
+    login = account.get("login")
+    server = account.get("server")
+    matches = (
+        isinstance(terminal_path, str)
+        and _same_path(Path(terminal_path), expected.terminal_path.parent)
+        and isinstance(data_path, str)
+        and _same_path(Path(data_path), expected.data_path)
+        and isinstance(login, int)
+        and not isinstance(login, bool)
+        and login == expected.account_login
+        and isinstance(server, str)
+        and server == expected.server
+    )
+    if not matches:
+        raise Mt5IdentityError("La terminal MT5 no coincide con la identidad esperada")
+
+
+def _same_path(actual: Path, expected: Path) -> bool:
+    return os.path.normcase(os.path.abspath(actual)) == os.path.normcase(os.path.abspath(expected))
 
 
 def _to_json_value(value: object) -> JsonValue:

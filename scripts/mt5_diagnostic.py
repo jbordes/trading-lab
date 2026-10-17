@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tradinglab.incubation.diagnostic import Mt5TerminalIdentity
 
 
 def parse_datetime(value: str) -> datetime:
@@ -54,6 +60,32 @@ def resolve_output_path(
     return resolved
 
 
+def terminal_identity_from_environment(env: Mapping[str, str]) -> Mt5TerminalIdentity:
+    """Build the expected identity without exposing its values in argv or logs."""
+
+    from tradinglab.incubation.diagnostic import Mt5TerminalIdentity
+
+    names = {
+        "terminal_path": "TRADINGLAB_MT5_TERMINAL_PATH",
+        "data_path": "TRADINGLAB_MT5_DATA_PATH",
+        "account_login": "TRADINGLAB_MT5_EXPECTED_LOGIN",
+        "server": "TRADINGLAB_MT5_EXPECTED_SERVER",
+    }
+    missing = [name for name in names.values() if not env.get(name, "").strip()]
+    if missing:
+        raise ValueError("Falta configurar la identidad MT5: " + ", ".join(missing))
+    try:
+        account_login = int(env[names["account_login"]])
+    except ValueError as exc:
+        raise ValueError("TRADINGLAB_MT5_EXPECTED_LOGIN debe ser un entero positivo") from exc
+    return Mt5TerminalIdentity(
+        terminal_path=Path(env[names["terminal_path"]]),
+        data_path=Path(env[names["data_path"]]),
+        account_login=account_login,
+        server=env[names["server"]],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "src"))
@@ -95,7 +127,13 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     try:
-        payload = collect_mt5_diagnostic(mt5, window, captured_at=captured_at)
+        identity = terminal_identity_from_environment(os.environ)
+        payload = collect_mt5_diagnostic(
+            mt5,
+            window,
+            captured_at=captured_at,
+            identity=identity,
+        )
         result = write_capture_evidence(payload, output)
     except (DiagnosticError, OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

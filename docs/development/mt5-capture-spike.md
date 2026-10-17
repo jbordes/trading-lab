@@ -61,6 +61,14 @@ uv run python scripts/mt5_diagnostic.py \
 
 Preparar en Windows el extra opcional bloqueado y ejecutar con un terminal MT5 ya autenticado:
 
+Antes de capturar, configurar fuera de Git las cuatro variables que fijan una
+única identidad autorizada:
+
+- `TRADINGLAB_MT5_TERMINAL_PATH`: ruta absoluta a `terminal64.exe`;
+- `TRADINGLAB_MT5_DATA_PATH`: carpeta de datos esperada de esa instalación;
+- `TRADINGLAB_MT5_EXPECTED_LOGIN`: cuenta esperada;
+- `TRADINGLAB_MT5_EXPECTED_SERVER`: servidor esperado con coincidencia exacta.
+
 ```text
 uv sync --locked --extra mt5
 uv run python scripts/mt5_diagnostic.py \
@@ -68,7 +76,12 @@ uv run python scripts/mt5_diagnostic.py \
   --date-to 2026-10-14T18:00:00Z
 ```
 
-El comando no recibe login ni contraseña y no importa ni expone funciones de envío de órdenes. Si una lectura falla, no publica evidencia parcial y siempre cierra la conexión inicializada.
+Los valores no se reciben por argumentos ni se imprimen. El comando conecta
+mediante la ruta explícita y, antes de leer históricos u operaciones, compara la
+ruta de la terminal, carpeta de datos, cuenta y servidor devueltos por MT5. Una
+diferencia cancela la captura. No recibe contraseñas ni importa o expone funciones
+de envío de órdenes. Si una lectura falla, no publica evidencia parcial y siempre
+cierra la conexión inicializada.
 
 ## Qué debe comprobar la ejecución real
 

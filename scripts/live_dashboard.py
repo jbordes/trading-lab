@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import os
 import sys
 from datetime import timedelta
@@ -27,14 +26,14 @@ def port(value: str) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group()
+    source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--demo", action="store_true", help="Usa datos sintéticos sin conectar MT5."
     )
     source.add_argument(
         "--telemetry",
         action="store_true",
-        help="Lee el receptor push local en lugar de la API Python de MT5.",
+        help="Lee el receptor push local del collector MQL5.",
     )
     parser.add_argument("--interval", type=interval, default=5.0, help="Segundos entre lecturas.")
     parser.add_argument("--port", type=port, default=8765, help="Puerto local.")
@@ -43,7 +42,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--telemetry-source",
-        default="demo-terminal-01",
         help="SourceId no sensible configurado en el colector MQL5.",
     )
     parser.add_argument(
@@ -52,14 +50,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=30.0,
         help="Segundos máximos sin una nueva muestra antes de degradar la vista.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.telemetry and not args.telemetry_source:
+        parser.error("--telemetry requiere --telemetry-source")
+    if args.demo and args.telemetry_source:
+        parser.error("--telemetry-source solo se admite con --telemetry")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "src"))
     from tradinglab.dashboard.service import LiveDashboardService
-    from tradinglab.dashboard.snapshot import DemoSnapshotSource, Mt5SnapshotSource
+    from tradinglab.dashboard.snapshot import DemoSnapshotSource
     from tradinglab.dashboard.telemetry import (
         TELEMETRY_TOKEN_ENV,
         LoopbackTelemetryClient,
@@ -71,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.demo:
         source = DemoSnapshotSource()
     elif args.telemetry:
+        assert args.telemetry_source is not None
         credential = os.environ.get(TELEMETRY_TOKEN_ENV, "")
         if len(credential) < 24:
             print(
@@ -90,17 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
-    else:
-        try:
-            mt5 = importlib.import_module("MetaTrader5")
-        except ModuleNotFoundError:
-            print(
-                "Error: MetaTrader5 no está instalado. Use `uv sync --locked --extra mt5` "
-                "o ejecute con --demo.",
-                file=sys.stderr,
-            )
-            return 3
-        source = Mt5SnapshotSource(mt5)
+    else:  # pragma: no cover - argparse requires one of the two modes
+        raise AssertionError("modo de dashboard no resuelto")
 
     service = LiveDashboardService(source, interval_seconds=args.interval)
     server = create_server(service, port=args.port)

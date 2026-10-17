@@ -128,11 +128,6 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border
 .topbar .eyebrow { color: var(--accent); font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 6px; }
 .topbar h1 { margin-bottom: 4px; font-size: 1.5rem; letter-spacing: -0.01em; }
 .subtitle { margin: 0; color: var(--ink-3); font-size: 0.875rem; }
-.source-pill {
-  display: inline-block; margin-left: 10px; padding: 3px 10px; border-radius: var(--radius-md);
-  background: var(--accent-bg); color: var(--accent); font-size: 0.75rem; font-weight: 700;
-  letter-spacing: 0.02em; vertical-align: middle;
-}
 
 .connection { display: flex; align-items: center; gap: 10px; }
 .connection div { display: flex; flex-direction: column; }
@@ -143,7 +138,7 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); flex: none; }
 .status-dot.connected { background: var(--profit); }
 .status-dot.degraded { background: var(--loss); }
-.identity.stale, .metrics.stale { opacity: 0.7; }
+.metrics.stale { opacity: 0.7; }
 
 .view-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
 .view-tab {
@@ -157,36 +152,24 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border
   border-radius: var(--radius-md); background: var(--accent-bg); color: var(--accent); font-size: 0.75rem;
 }
 
-.identity { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--border); }
-.identity div { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: var(--surface); }
-.identity span, .metric-card span { color: var(--ink-3); font-size: 0.8125rem; }
-.identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
 .metric-card { position: relative; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.metric-card span { color: var(--ink-3); font-size: 0.8125rem; }
 .metric-card strong { display: block; margin: 8px 0 4px; font-size: clamp(1.35rem, 3vw, 2rem); letter-spacing: -0.02em; }
-.metric-card strong, .identity strong, .activity-row strong { font-variant-numeric: tabular-nums; }
+.metric-card strong, .activity-row strong { font-variant-numeric: tabular-nums; }
 .metric-card small { color: var(--ink-3); font-size: 0.8125rem; }
 .metric-card.positive strong { color: var(--profit); }
 .metric-card.negative strong { color: var(--loss); }
+.metric-hero strong { font-size: clamp(1.8rem, 4vw, 2.6rem); }
+.metric-hero .profit-line { font-size: 0.875rem; }
 .plain-summary { margin: 0 0 20px; color: var(--ink-2); font-size: 0.9375rem; }
 
-.risk-panel { margin-bottom: 20px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
-.risk-panel .panel-heading { margin-bottom: 16px; }
-.risk-heading-right { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
-.risk-scope { display: grid; gap: 5px; color: var(--ink-3); font-size: 0.8125rem; font-weight: 600; }
-.risk-scope select { padding: 8px 10px; border: 1px solid var(--control-border); border-radius: var(--radius-md); background: var(--sunken); color: var(--ink-3); font: inherit; font-size: 0.875rem; cursor: not-allowed; }
-.risk-meters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 26px; }
-.risk-meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 9px; }
-.risk-meter-head span { color: var(--ink-2); font-size: 0.875rem; font-weight: 600; }
-.risk-meter-head strong { font-size: 1.25rem; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
-.risk-bar { height: 8px; border-radius: var(--radius-sm); background: var(--sunken); overflow: hidden; }
-.risk-bar-fill { width: 0; height: 100%; border-radius: var(--radius-sm); background: var(--profit); }
-.risk-meter.warn .risk-bar-fill { background: var(--warn); }
-.risk-meter.critical .risk-bar-fill { background: var(--loss); }
-.risk-meter.warn .risk-meter-head strong { color: var(--warn); }
-.risk-meter.critical .risk-meter-head strong { color: var(--loss); }
-.risk-caption { margin: 9px 0 0; color: var(--ink-3); font-size: 0.8125rem; }
+.source-strip { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.source-strip .eyebrow { margin-bottom: 4px; }
+.source-description { margin: 0; color: var(--ink-2); font-size: 0.9375rem; }
+.risk-note h2 { font-size: 1.05rem; margin-bottom: 8px; }
+.risk-note p { color: var(--ink-2); font-size: 0.875rem; margin-bottom: 12px; }
+.risk-note a { font-size: 0.875rem; }
 
 .content-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 0.8fr); gap: 16px; }
 .panel { padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
@@ -311,7 +294,6 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border
 
 @media (max-width: 820px) {
   .metrics { grid-template-columns: repeat(2, 1fr); }
-  .identity { grid-template-columns: repeat(2, 1fr); }
   .content-grid { grid-template-columns: 1fr; }
   .operations-heading { align-items: stretch; flex-direction: column; }
   .filter-field { width: 100%; }
@@ -337,8 +319,6 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border
   .site-nav { align-items: flex-start; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .metrics { grid-template-columns: 1fr; }
-  .identity { grid-template-columns: repeat(2, 1fr); }
-  .risk-meters { grid-template-columns: 1fr; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .operation-stats { grid-template-columns: 1fr; }
   .clear-filter { grid-column: auto; }

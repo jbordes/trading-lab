@@ -1,30 +1,20 @@
 "use strict";
 
 const ids = [
-  "status", "freshness", "source", "account", "server", "currency", "balance",
-  "equity", "profit", "margin-free", "margin-level", "positions", "orders", "margin"
+  "status", "freshness", "account-identity", "balance",
+  "equity", "profit-line", "margin-free", "margin-level", "positions", "orders", "margin", "last-reading"
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const statusDot = document.getElementById("status-dot");
-const identityPanel = document.querySelector(".identity");
 const metricsPanel = document.querySelector(".metrics");
-const sourcePill = document.getElementById("source-pill");
+const equityCard = document.getElementById("equity-card");
+const sourceDescription = document.getElementById("source-description");
 const groupByBotInput = document.getElementById("group-by-bot");
 const errorHuman = document.getElementById("error-human");
 const errorTechnical = document.getElementById("error-technical");
 const errorTechnicalDetails = document.getElementById("error-technical-details");
 const plainSummary = document.getElementById("plain-summary");
-const riskBadge = document.getElementById("risk-badge");
-const dddMeter = document.getElementById("ddd-meter");
-const dddValue = document.getElementById("ddd-value");
-const dddFill = document.getElementById("ddd-fill");
-const dddCaption = document.getElementById("ddd-caption");
-const maxddMeter = document.getElementById("maxdd-meter");
-const maxddValue = document.getElementById("maxdd-value");
-const maxddFill = document.getElementById("maxdd-fill");
-const maxddCaption = document.getElementById("maxdd-caption");
 const errorBox = document.getElementById("error");
-const profitCard = document.getElementById("profit-card");
 const chartEmpty = document.getElementById("chart-empty");
 const chart = document.getElementById("chart");
 const chartHigh = document.getElementById("chart-high");
@@ -194,6 +184,16 @@ const captureHealthLabels = {
   starting: "Iniciando",
 };
 
+const SOURCE_LABELS = {
+  demo: "Demo local · datos simulados",
+  "mt5-telemetry": "MT5 · telemetría",
+  mt5: "MT5 · lectura directa",
+};
+
+function sourceLabel(source) {
+  return SOURCE_LABELS[source] || "Fuente local";
+}
+
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
@@ -203,66 +203,13 @@ function toDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// PROTOTIPO incremento 1: el panel de riesgo muestra la estructura final con
-// valores ilustrativos SOLO para la fuente demo. Los números reales llegarán
-// desde el snapshot cuando el contrato DDD/Max DD se apruebe con el socio.
-const DEMO_RISK = {
-  ddd: { usedPercent: 19, value: -0.95, limit: 5, caption: "reset a medianoche (Madrid)" },
-  maxdd: { usedPercent: 62, value: -12.3, limit: 20, caption: "acumulado desde el inicio de la incubación" },
-};
-
-const madridPartsFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-});
-
-function madridResetLabel() {
-  const parts = madridPartsFormatter.formatToParts(new Date());
-  const hour = Number(parts.find((part) => part.type === "hour").value);
-  const minute = Number(parts.find((part) => part.type === "minute").value);
-  const second = Number(parts.find((part) => part.type === "second").value);
-  const remaining = (24 * 3600 - (hour * 3600 + minute * 60 + second)) % (24 * 3600);
-  return `faltan ${elapsed(remaining)}`;
-}
-
-function setRiskMeter(meter, valueEl, fillEl, captionEl, metric) {
-  setText(valueEl, `${decimal(metric.value)} %`);
-  const percent = Math.min(100, metric.usedPercent);
-  fillEl.style.width = `${percent}%`;
-  meter.classList.toggle("warn", percent >= 50 && percent < 80);
-  meter.classList.toggle("critical", percent >= 80);
-  setText(captionEl, `Usado el ${Math.round(percent)} % del límite (${decimal(metric.limit)} %) · ${metric.caption}`);
-}
-
-function clearRiskMeter(meter, valueEl, fillEl, captionEl) {
-  setText(valueEl, "—");
-  fillEl.style.width = "0%";
-  meter.classList.remove("warn", "critical");
-  setText(captionEl, "Fórmula y límites pendientes de validación con el socio.");
-}
-
-function renderRisk(source) {
-  if (source === "demo") {
-    setText(riskBadge, "Contrato pendiente · valores ilustrativos");
-    const ddd = { ...DEMO_RISK.ddd, caption: `${DEMO_RISK.ddd.caption} · ${madridResetLabel()}` };
-    setRiskMeter(dddMeter, dddValue, dddFill, dddCaption, ddd);
-    setRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption, DEMO_RISK.maxdd);
-  } else {
-    setText(riskBadge, "Contrato pendiente");
-    clearRiskMeter(dddMeter, dddValue, dddFill, dddCaption);
-    clearRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption);
-  }
-}
-
 function renderSummary(value, currency, status) {
   const plural = (count, singular, pluralForm) => `${count} ${count === 1 ? singular : pluralForm}`;
   const positions = plural(value.open_positions || 0, "posición abierta", "posiciones abiertas");
   const orders = plural(value.active_orders || 0, "orden activa", "órdenes activas");
   const profit = money(value.floating_profit || 0, currency, true);
-  const riskPhrase = value.source === "demo"
-    ? "riesgo dentro del límite (valores ilustrativos)"
-    : "métricas de riesgo pendientes de contrato";
   const capturePhrase = status === "connected" ? "" : " · captura degradada, los datos pueden estar atrasados";
-  setText(plainSummary, `Cuenta ${latestSource} · ${positions} · ${orders} · resultado abierto ${profit} · ${riskPhrase}${capturePhrase}`);
+  setText(plainSummary, `${sourceLabel(value.source)} · ${positions} · ${orders} · resultado abierto ${profit} · métricas de riesgo pendientes de contrato${capturePhrase}`);
 }
 
 function renderState(state) {
@@ -270,7 +217,7 @@ function renderState(state) {
   statusDot.className = `status-dot ${state.status}`;
   const errorText = state.error || "";
   if (errorText) {
-    setText(errorHuman, "No pudimos leer el terminal. Se conserva la última muestra válida.");
+    setText(errorHuman, "No pudimos leer la fuente de datos. Se conserva la última muestra válida.");
     setText(errorTechnical, errorText);
     errorTechnicalDetails.hidden = false;
   }
@@ -287,12 +234,11 @@ function renderState(state) {
   const staleData = ageSeconds > 2 * latestIntervalSeconds;
   const criticalAge = ageSeconds > 10 * latestIntervalSeconds;
   setText(elements.freshness, observedAt
-    ? `hace ${elapsed(ageSeconds)} · cada ${elapsed(latestIntervalSeconds)}`
+    ? `Actualizado hace ${elapsed(ageSeconds)}`
     : "sin lectura válida");
   elements.freshness.title = observedAt ? `Última lectura ${timeFormatter.format(observedAt)}` : "";
   elements.freshness.classList.toggle("aged", staleData && !criticalAge);
   elements.freshness.classList.toggle("stale", criticalAge);
-  identityPanel.classList.toggle("stale", staleData);
   metricsPanel.classList.toggle("stale", staleData);
   if (value.observed_at === lastObservedAt) return;
   lastObservedAt = value.observed_at;
@@ -300,14 +246,18 @@ function renderState(state) {
   const currency = value.currency || "USD";
   latestCurrency = currency;
   latestSource = value.source.toUpperCase();
-  setText(sourcePill, latestSource);
-  elements.source.textContent = latestSource;
-  elements.account.textContent = value.account_reference;
-  elements.server.textContent = value.server;
-  elements.currency.textContent = value.currency || "—";
+  elements["account-identity"].textContent = value.account_reference && value.server
+    ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
+    : "Cuenta sin identificar";
   elements.balance.textContent = money(value.balance, currency);
   elements.equity.textContent = money(value.equity, currency);
-  elements.profit.textContent = money(value.floating_profit, currency, true);
+  const profitWord = value.floating_profit > 0 ? "ganancia" : value.floating_profit < 0 ? "pérdida" : "sin resultado";
+  setText(elements["profit-line"], `Resultado abierto: ${money(value.floating_profit || 0, currency, true)} (${profitWord})`);
+  elements["profit-line"].className = value.floating_profit > 0
+    ? "profit-line positive-text"
+    : value.floating_profit < 0 ? "profit-line negative-text" : "profit-line";
+  equityCard.classList.toggle("positive", value.floating_profit > 0);
+  equityCard.classList.toggle("negative", value.floating_profit < 0);
   elements["margin-free"].textContent = money(value.margin_free, currency);
   elements["margin-level"].textContent = value.margin_level === null
     ? "—"
@@ -315,10 +265,12 @@ function renderState(state) {
   elements.positions.textContent = number(value.open_positions);
   elements.orders.textContent = number(value.active_orders);
   elements.margin.textContent = money(value.margin, currency);
-  renderRisk(value.source);
+  setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
+  const health = state.source_health || {};
+  const sourceId = health.source_id ? ` · ${health.source_id}` : "";
+  const collector = health.collector_version ? ` · Colector ${health.collector_version}` : "";
+  setText(sourceDescription, `${sourceLabel(value.source)}${sourceId}${collector}`);
   renderSummary(value, currency, state.status);
-  profitCard.classList.toggle("positive", value.floating_profit > 0);
-  profitCard.classList.toggle("negative", value.floating_profit < 0);
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
   operationsBadge.textContent = number(latestOperations.length);
   if (activeView === "operations") renderOperations();

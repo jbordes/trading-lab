@@ -23,9 +23,9 @@
       </nav>
       <header class="topbar">
         <div>
-          <p class="eyebrow">TRADINGLAB 2.0</p>
-          <h1>Monitor MT5 <span id="source-pill" class="source-pill">—</span></h1>
-          <p class="subtitle">Observación local · Solo lectura</p>
+          <p class="eyebrow">PANEL DE LA CUENTA</p>
+          <h1>Panel de la cuenta</h1>
+          <p class="subtitle" id="account-identity">—</p>
         </div>
         <div class="connection">
           <span id="status-dot" class="status-dot"></span>
@@ -48,62 +48,26 @@
       </nav>
 
       <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview">
-      <section class="identity panel">
-        <div><span>Fuente</span><strong id="source">—</strong></div>
-        <div><span>Cuenta</span><strong id="account">—</strong></div>
-        <div><span>Servidor</span><strong id="server">—</strong></div>
-        <div><span>Moneda</span><strong id="currency">—</strong></div>
-      </section>
-
       <section class="metrics" aria-label="Estado de cuenta">
-        <article class="metric-card accent-blue">
-          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
-        </article>
-        <article class="metric-card accent-cyan">
-          <span>Equity</span><strong id="equity">—</strong><small>Valor actual</small>
-        </article>
-        <article class="metric-card" id="profit-card">
-          <span>Resultado abierto (P&amp;L)</span><strong id="profit">—</strong><small>Ganancia/pérdida no realizada</small>
+        <article class="metric-card metric-hero" id="equity-card">
+          <span>Equity</span><strong id="equity">—</strong><small id="profit-line" class="profit-line">—</small>
         </article>
         <article class="metric-card">
-          <span>Margen libre</span><strong id="margin-free">—</strong><small>Disponible tras margen en uso</small>
+          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
+        </article>
+        <article class="metric-card">
+          <span>Margen libre</span><strong id="margin-free">—</strong><small>Disponible para operar</small>
         </article>
       </section>
 
       <p id="plain-summary" class="plain-summary"></p>
 
-      <section class="panel risk-panel" aria-label="Control de riesgo">
-        <div class="panel-heading">
-          <div><p class="eyebrow">CONTROL DE RIESGO</p><h2>Riesgo del día</h2></div>
-          <div class="risk-heading-right">
-            <label class="risk-scope" for="risk-scope-select">
-              <span>Alcance</span>
-              <select id="risk-scope-select" disabled title="El alcance (cuenta o por bot) se define en el contrato DDD/Max DD con el socio.">
-                <option>Cuenta</option>
-                <option>Por bot / estrategia</option>
-              </select>
-            </label>
-            <span class="pending-badge" id="risk-badge">Contrato pendiente</span>
-          </div>
+      <section class="panel source-strip" aria-label="Origen de los datos">
+        <div>
+          <p class="eyebrow">ORIGEN</p>
+          <p class="source-description" id="source-description">—</p>
         </div>
-        <div class="risk-meters">
-          <div class="risk-meter" id="ddd-meter">
-            <div class="risk-meter-head">
-              <span>Drawdown diario (DDD)</span>
-              <strong id="ddd-value">—</strong>
-            </div>
-            <div class="risk-bar"><div class="risk-bar-fill" id="ddd-fill"></div></div>
-            <p class="risk-caption" id="ddd-caption">Fórmula y límites pendientes de validación con el socio.</p>
-          </div>
-          <div class="risk-meter" id="maxdd-meter">
-            <div class="risk-meter-head">
-              <span>Drawdown máximo total</span>
-              <strong id="maxdd-value">—</strong>
-            </div>
-            <div class="risk-bar"><div class="risk-bar-fill" id="maxdd-fill"></div></div>
-            <p class="risk-caption" id="maxdd-caption">Fórmula y límites pendientes de validación con el socio.</p>
-          </div>
-        </div>
+        <a class="button-primary" href="#activity" id="source-health-link">Ver estado de la fuente</a>
       </section>
 
       <section class="content-grid">
@@ -132,11 +96,18 @@
 
         <aside class="side-stack">
           <article class="panel compact-panel">
-            <p class="eyebrow">ACTIVIDAD</p>
+            <p class="eyebrow">CONTEXTO</p>
             <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
             <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
             <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
             <div class="activity-row"><span>Nivel de margen</span><strong id="margin-level">—</strong></div>
+            <div class="activity-row"><span>Última lectura</span><strong id="last-reading">—</strong></div>
+          </article>
+          <article class="panel compact-panel risk-note">
+            <p class="eyebrow">RIESGO</p>
+            <h2>DDD y Max DD</h2>
+            <p>Contrato pendiente: no mostramos estimaciones hasta acordar las fórmulas con el socio.</p>
+            <p><a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver la guía de métricas</a></p>
           </article>
         </aside>
       </section>

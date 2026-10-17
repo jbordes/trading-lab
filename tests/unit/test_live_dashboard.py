@@ -525,9 +525,9 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
                 self.assertIn("text/html", response.headers["Content-Type"])
                 self.assertIn(b"TradingLab", response.read())
             with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
-                self.assertIn(b"Monitor MT5", response.read())
+                self.assertIn(b"Panel de la cuenta", response.read())
             with urllib.request.urlopen(f"{base_url}/dashboard/", timeout=2) as response:
-                self.assertIn(b"Monitor MT5", response.read())
+                self.assertIn(b"Panel de la cuenta", response.read())
             with urllib.request.urlopen(f"{base_url}/assets/theme.js", timeout=2) as response:
                 self.assertIn("javascript", response.headers["Content-Type"])
                 self.assertIn(b"data-theme-toggle", response.read())

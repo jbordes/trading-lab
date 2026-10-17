@@ -23,6 +23,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Guía para acordar métricas de riesgo](docs/development/guia-metricas-para-el-socio.md)
 - [Spike de captura MT5](docs/development/mt5-capture-spike.md)
 - [Spike de colector de telemetría MT5](docs/development/mt5-telemetry-collector-spike.md)
+- [Operación supervisada del collector MT5](docs/development/mt5-collector-operations.md)
 - [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 

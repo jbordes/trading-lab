@@ -19,7 +19,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from tradinglab.dashboard.service import LiveDashboardService  # noqa: E402
 from tradinglab.dashboard.snapshot import (  # noqa: E402
     DemoSnapshotSource,
+    LiveSnapshot,
     Mt5SnapshotSource,
+    ReceiverHealth,
+    SourceHealth,
 )
 from tradinglab.dashboard.web import create_server  # noqa: E402
 
@@ -43,6 +46,26 @@ HistoricalOrder = namedtuple(
     "HistoricalOrder",
     "ticket position_id magic symbol type state volume_initial price_open time_done_msc time_done time_setup_msc time_setup comment",
 )
+
+
+class FakeHealthProvider:
+    def __init__(self, *, fail: bool = False, receiver: ReceiverHealth | None = None) -> None:
+        self.fail = fail
+        self.receiver = receiver
+        self.calls = 0
+
+    def health(self, observed_at: datetime) -> SourceHealth:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("salud rota")
+        return SourceHealth(
+            availability="available",
+            source_id="demo-terminal-01",
+            collector_version="0.1.0",
+            checked_at="2026-10-14T19:30:05Z",
+            error=None,
+            receiver=self.receiver,
+        )
 
 
 class FakeMt5:
@@ -395,6 +418,101 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_state_keeps_v3_contract_and_adds_source_health(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["schema_version"], "live-dashboard-state-v3")
+        self.assertIn("status", state)
+        self.assertIn("latest", state)
+        self.assertIn("history", state)
+        self.assertIn("capture", state)
+        health = state["source_health"]
+        self.assertEqual(health["availability"], "not_applicable")
+        self.assertIsNone(health["source_id"])
+        self.assertIsNone(health["collector_version"])
+        self.assertIsNone(health["checked_at"])
+        self.assertIsNone(health["error"])
+        self.assertIsNone(health["receiver"])
+
+    def test_health_failure_does_not_degrade_capture(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=FakeHealthProvider(fail=True),
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["status"], "connected")
+        self.assertEqual(state["source_health"]["availability"], "unavailable")
+        self.assertIsNone(state["source_health"]["receiver"])
+
+    def test_capture_failure_still_publishes_health(self) -> None:
+        class FailingSource(DemoSnapshotSource):
+            def collect(self, observed_at: datetime) -> LiveSnapshot:
+                raise RuntimeError("captura rota")
+
+        receiver = ReceiverHealth(
+            accepted=5,
+            duplicates=0,
+            missing_sequences=0,
+            retained=1,
+            retained_sessions=1,
+            history_status="complete",
+        )
+        service = LiveDashboardService(
+            FailingSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=FakeHealthProvider(receiver=receiver),
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["status"], "degraded")
+        self.assertEqual(state["source_health"]["availability"], "available")
+        self.assertEqual(state["source_health"]["receiver"]["accepted"], 5)
+
+    def test_health_is_polled_independently_every_cycle(self) -> None:
+        provider = FakeHealthProvider()
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=provider,
+        )
+
+        service.poll_once()
+        service.poll_once()
+
+        self.assertEqual(provider.calls, 2)
+
+    def test_http_state_includes_source_health(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
+        )
+        service.poll_once()
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
+                payload = json.loads(response.read())
+                self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
+                self.assertEqual(payload["source_health"]["availability"], "not_applicable")
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from tradinglab.dashboard.snapshot import DashboardReadError, LiveSnapshot, OperationSnapshot
+from tradinglab.dashboard.snapshot import (
+    DashboardReadError,
+    LiveSnapshot,
+    OperationSnapshot,
+    ReceiverHealth,
+    SourceHealth,
+    utc_iso,
+)
 from tradinglab.telemetry.contract import (
     IDENTIFIER,
     MAX_BODY_BYTES,
@@ -37,6 +45,12 @@ class TelemetrySnapshotClient(Protocol):
 
     def latest(self) -> TelemetryEnvelope: ...
 
+    def health(self) -> ReceiverHealth: ...
+
+
+_COUNTER_FIELDS = ("accepted", "duplicates", "missing_sequences", "retained", "retained_sessions")
+_HISTORY_STATUSES = {"complete", "truncated", "error", "unavailable"}
+
 
 class LoopbackTelemetryClient:
     """Fetch the newest snapshot from the authenticated loopback receiver."""
@@ -63,6 +77,7 @@ class LoopbackTelemetryClient:
             raise ValueError("El timeout de telemetría debe ser 0.05..30 segundos")
         query = urllib.parse.urlencode({"source_id": source_id})
         self._url = f"http://127.0.0.1:{port}/v1/snapshot?{query}"
+        self._health_url = f"http://127.0.0.1:{port}/health"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
 
@@ -92,6 +107,49 @@ class LoopbackTelemetryClient:
         except TelemetryValidationError as exc:
             raise DashboardReadError("El receptor devolvió una muestra inválida") from exc
 
+    def health(self) -> ReceiverHealth:
+        request = urllib.request.Request(
+            self._health_url,
+            headers={"Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise DashboardReadError(f"El receptor respondió HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise DashboardReadError("No se pudo leer el estado del receptor local") from exc
+        if len(body) > MAX_BODY_BYTES:
+            raise DashboardReadError("La respuesta del receptor supera el límite permitido")
+        try:
+            payload = json.loads(body)
+        except (ValueError, TypeError) as exc:
+            raise DashboardReadError("El receptor devolvió un estado inválido") from exc
+        return _receiver_health(payload)
+
+
+def _receiver_health(payload: object) -> ReceiverHealth:
+    if not isinstance(payload, dict):
+        raise DashboardReadError("El receptor devolvió un estado inválido")
+    counters: dict[str, int] = {}
+    for field in _COUNTER_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise DashboardReadError("El receptor devolvió contadores inválidos")
+        counters[field] = value
+    history_status = payload.get("history_status")
+    if history_status not in _HISTORY_STATUSES:
+        raise DashboardReadError("El receptor devolvió un estado de historial inválido")
+    return ReceiverHealth(
+        accepted=counters["accepted"],
+        duplicates=counters["duplicates"],
+        missing_sequences=counters["missing_sequences"],
+        retained=counters["retained"],
+        retained_sessions=counters["retained_sessions"],
+        history_status=history_status,
+    )
+
 
 class TelemetrySnapshotSource:
     """Map one recent, validated telemetry envelope to the dashboard projection."""
@@ -114,6 +172,7 @@ class TelemetrySnapshotSource:
         self._source_id = source_id
         self._max_age = max_age
         self._future_tolerance = future_tolerance
+        self._collector_version: str | None = None
 
     def collect(self, observed_at: datetime) -> LiveSnapshot:
         if observed_at.tzinfo is None or observed_at.utcoffset() is None:
@@ -123,6 +182,7 @@ class TelemetrySnapshotSource:
             raise DashboardReadError("El receptor no devolvió una muestra de cuenta")
         if envelope.source_id != self._source_id:
             raise DashboardReadError("La muestra pertenece a otra fuente de telemetría")
+        self._collector_version = envelope.collector_version
         captured_at = datetime.fromisoformat(envelope.captured_at[:-1] + "+00:00")
         age = observed_at.astimezone(UTC) - captured_at
         if age > self._max_age:
@@ -158,6 +218,32 @@ class TelemetrySnapshotSource:
             recent_activity=(),
             activity_window_hours=activity_window_hours,
         )
+
+    def health(self, observed_at: datetime) -> SourceHealth:
+        checked_at = utc_iso(observed_at)
+        try:
+            receiver = self._client.health()
+        except DashboardReadError as exc:
+            return SourceHealth(
+                availability="unavailable",
+                source_id=self._source_id,
+                collector_version=self._collector_version,
+                checked_at=checked_at,
+                error=_safe_health_message(exc),
+                receiver=None,
+            )
+        return SourceHealth(
+            availability="available",
+            source_id=self._source_id,
+            collector_version=self._collector_version,
+            checked_at=checked_at,
+            error=None,
+            receiver=receiver,
+        )
+
+
+def _safe_health_message(exc: DashboardReadError) -> str:
+    return str(exc).replace("\r", " ").replace("\n", " ").strip()[:240]
 
 
 def _position(row: dict[str, object]) -> OperationSnapshot:

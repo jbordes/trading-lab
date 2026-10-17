@@ -9,7 +9,7 @@ const statusDot = document.getElementById("status-dot");
 const metricsPanel = document.querySelector(".metrics");
 const equityCard = document.getElementById("equity-card");
 const sourceDescription = document.getElementById("source-description");
-const groupByBotInput = document.getElementById("group-by-bot");
+const operationsNote = document.getElementById("operations-note");
 const errorHuman = document.getElementById("error-human");
 const errorTechnical = document.getElementById("error-technical");
 const errorTechnicalDetails = document.getElementById("error-technical-details");
@@ -49,6 +49,8 @@ let latestActivityMagicKey = "";
 let activeView = "overview";
 let lastHistory = [];
 let latestSource = "MT5";
+let latestSourceLabel = "Fuente local";
+let telemetryMode = false;
 let lastPollSince = null;
 
 const activityElements = {
@@ -246,6 +248,8 @@ function renderState(state) {
   const currency = value.currency || "USD";
   latestCurrency = currency;
   latestSource = value.source.toUpperCase();
+  latestSourceLabel = sourceLabel(value.source);
+  telemetryMode = value.source === "mt5-telemetry";
   elements["account-identity"].textContent = value.account_reference && value.server
     ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
     : "Cuenta sin identificar";
@@ -413,8 +417,7 @@ function elapsed(seconds) {
 
 function renderOperations() {
   const filter = magicFilter.value.trim();
-  const grouped = groupByBotInput.checked;
-  const signature = `${latestCurrency}|${filter}|${grouped}|${JSON.stringify(latestOperations)}`;
+  const signature = `${latestCurrency}|${filter}|${JSON.stringify(latestOperations)}`;
   if (signature === latestOperationsSignature) return;
   latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
@@ -432,11 +435,12 @@ function renderOperations() {
     }));
   }
 
-  operationsBody.replaceChildren(...operationRows(filtered, grouped));
+  operationsBody.replaceChildren(...filtered.flatMap(operationRow));
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
-    ? `${latestSource} no informa operaciones activas.`
-    : "Ninguna operación coincide con ese magic number.";
+    ? "La fuente no informa operaciones abiertas."
+    : "Ninguna operación coincide con ese Magic.";
+  operationsNote.hidden = !(telemetryMode && latestOperations.length > 0);
   visibleOperations.textContent = filter
     ? `${number(filtered.length)} de ${number(latestOperations.length)}`
     : number(filtered.length);
@@ -445,99 +449,100 @@ function renderOperations() {
   clearFilter.disabled = !filter;
 }
 
-function operationRows(operations, grouped) {
-  if (!grouped) return operations.map(operationRow);
-  const groups = new Map();
-  for (const operation of operations) {
-    const magic = String(operation.magic_number);
-    if (!groups.has(magic)) groups.set(magic, []);
-    groups.get(magic).push(operation);
-  }
-  const magics = [...groups.keys()].sort(
-    (left, right) => left.localeCompare(right, undefined, { numeric: true }),
-  );
-  const rows = [];
-  for (const magic of magics) {
-    const list = groups.get(magic);
-    rows.push(groupRow(magic, list));
-    rows.push(...list.map(operationRow));
-  }
-  return rows;
-}
-
-function groupRow(magic, operations) {
-  const row = document.createElement("tr");
-  row.className = "group-row";
-  const labelCell = document.createElement("td");
-  labelCell.colSpan = 7;
-  const label = document.createElement("strong");
-  label.className = "group-magic";
-  label.textContent = `Bot · Magic ${magic}`;
-  const count = document.createElement("span");
-  count.className = "group-count";
-  count.textContent = `${operations.length} operación${operations.length === 1 ? "" : "es"}`;
-  labelCell.append(label, count);
-  const profitSum = operations.reduce(
-    (total, operation) => total + (Number.isFinite(operation.floating_profit) ? operation.floating_profit : 0),
-    0,
-  );
-  row.setAttribute("aria-label", `Bot Magic ${magic}: ${operations.length} operación${operations.length === 1 ? "" : "es"}, P&L ${money(profitSum, latestCurrency, true)}`);
-  const profitCell = document.createElement("td");
-  profitCell.className = "numeric operation-profit";
-  if (profitSum > 0) profitCell.classList.add("positive");
-  else if (profitSum < 0) profitCell.classList.add("negative");
-  profitCell.textContent = money(profitSum, latestCurrency, true);
-  const timeCell = document.createElement("td");
-  row.append(labelCell, profitCell, timeCell);
-  return row;
-}
-
 function operationRow(operation) {
   const row = document.createElement("tr");
   const kind = operation.kind === "position" ? "Posición" : "Orden";
   const kindCell = document.createElement("td");
+  kindCell.setAttribute("data-label", "Operación");
   const badge = document.createElement("span");
   badge.className = `operation-kind ${operation.kind}`;
   badge.textContent = kind;
   kindCell.appendChild(badge);
+  const typeText = document.createElement("small");
+  typeText.className = "cell-detail-text";
+  typeText.textContent = operationTypes[operation.operation_type] || operation.operation_type;
+  kindCell.appendChild(typeText);
   row.appendChild(kindCell);
-  row.appendChild(detailCell(`#${operation.ticket}`, `Magic ${operation.magic_number}`, "mono"));
-  row.appendChild(detailCell(operation.symbol, operation.comment || "Sin comentario"));
-  row.appendChild(textCell(operationTypes[operation.operation_type] || operation.operation_type));
-  row.appendChild(textCell(decimal(operation.volume), "numeric"));
-  row.appendChild(detailCell(price(operation.price_open), price(operation.price_current), "numeric"));
-  row.appendChild(detailCell(price(operation.stop_loss), price(operation.take_profit), "numeric"));
+  row.appendChild(detailCell(operation.symbol, operation.comment || "Sin comentario", "", "Instrumento"));
+  row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
 
+  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
   const profit = document.createElement("td");
   profit.className = "numeric operation-profit";
-  if (Number.isFinite(operation.floating_profit)) {
+  profit.setAttribute("data-label", "Resultado abierto");
+  if (operation.kind === "position" && Number.isFinite(operation.floating_profit)) {
     profit.textContent = money(operation.floating_profit, latestCurrency, true);
     if (operation.floating_profit > 0) profit.classList.add("positive");
     else if (operation.floating_profit < 0) profit.classList.add("negative");
+  } else if (operation.kind === "order") {
+    profit.textContent = "No aplica";
+    profit.classList.add("na");
   } else {
     profit.textContent = "—";
   }
   row.appendChild(profit);
-  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
-  if (openedAt) {
-    const ageSeconds = Math.max(0, (Date.now() - openedAt.getTime()) / 1000);
-    row.appendChild(detailCell(dateTimeFormatter.format(openedAt), `hace ${elapsed(ageSeconds)}`));
-  } else {
-    row.appendChild(textCell("—"));
-  }
-  return row;
+  row.appendChild(textCell(
+    openedAt ? dateTimeFormatter.format(openedAt) : "No informada",
+    "",
+    "Hora",
+  ));
+
+  const detailRow = document.createElement("tr");
+  detailRow.className = "detail-row";
+  detailRow.hidden = true;
+  const detailCellEl = document.createElement("td");
+  detailCellEl.colSpan = 6;
+  const list = document.createElement("dl");
+  const addDetail = (term, value) => {
+    const dt = document.createElement("dt");
+    dt.textContent = term;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    list.append(dt, dd);
+  };
+  addDetail("Ticket", `#${operation.ticket}`);
+  addDetail("Magic", String(operation.magic_number));
+  addDetail("Precio de apertura", price(operation.price_open));
+  addDetail("Precio actual", price(operation.price_current));
+  addDetail("Stop loss", price(operation.stop_loss));
+  addDetail("Take profit", price(operation.take_profit));
+  addDetail("Comentario", operation.comment || "Sin comentario");
+  addDetail("Hora", openedAt
+    ? dateTimeFormatter.format(openedAt)
+    : "La fuente todavía no expone una hora validada.");
+  detailCellEl.appendChild(list);
+  detailRow.appendChild(detailCellEl);
+
+  const buttonCell = document.createElement("td");
+  buttonCell.setAttribute("data-label", "");
+  const button = document.createElement("button");
+  button.className = "detail-toggle";
+  button.type = "button";
+  button.setAttribute("aria-expanded", "false");
+  button.textContent = "Ver detalle";
+  button.addEventListener("click", () => {
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    button.setAttribute("aria-expanded", String(!expanded));
+    button.textContent = expanded ? "Ver detalle" : "Ocultar detalle";
+    detailRow.hidden = expanded;
+  });
+  buttonCell.appendChild(button);
+  row.appendChild(buttonCell);
+  return [row, detailRow];
 }
 
-function textCell(value, className = "") {
+function textCell(value, className = "", dataLabel = "") {
   const cell = document.createElement("td");
   cell.className = className;
+  if (dataLabel) cell.setAttribute("data-label", dataLabel);
   cell.textContent = value;
   return cell;
 }
 
-function detailCell(primary, secondary, className = "") {
+function detailCell(primary, secondary, className = "", dataLabel = "") {
   const cell = document.createElement("td");
   cell.className = `cell-detail ${className}`.trim();
+  if (dataLabel) cell.setAttribute("data-label", dataLabel);
   const strong = document.createElement("strong");
   strong.textContent = primary;
   const small = document.createElement("small");
@@ -700,7 +705,6 @@ function loadStoredFilters() {
     activityElements.magicFilter.value = stored.activityMagic || "";
     activityElements.kindFilter.value = stored.activityKind || "";
     activityElements.resultFilter.value = stored.activityResult || "";
-    groupByBotInput.checked = Boolean(stored.groupByBot);
   } catch (_) {
     // almacenamiento no disponible
   }
@@ -713,7 +717,6 @@ function saveStoredFilters() {
       activityMagic: activityElements.magicFilter.value,
       activityKind: activityElements.kindFilter.value,
       activityResult: activityElements.resultFilter.value,
-      groupByBot: groupByBotInput.checked,
     }));
   } catch (_) {
     // almacenamiento no disponible
@@ -721,7 +724,6 @@ function saveStoredFilters() {
 }
 
 magicFilter.addEventListener("input", () => { renderOperations(); saveStoredFilters(); });
-groupByBotInput.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
   magicFilter.focus();

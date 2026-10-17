@@ -117,20 +117,18 @@
         <article class="panel operations-panel">
           <div class="operations-heading">
             <div>
-              <p class="eyebrow">MUESTREO ACTUAL</p>
-              <h2>Operaciones activas</h2>
-              <p class="operations-copy">Posiciones abiertas y órdenes pendientes informadas por MT5.</p>
+              <p class="eyebrow">POSICIONES Y ÓRDENES</p>
+              <h2>Operaciones abiertas</h2>
+              <p class="operations-copy">Posiciones y órdenes que la fuente informa en la última lectura. No permite operar.</p>
+              <p class="operations-note" id="operations-note" hidden>La telemetría todavía no expone una hora validada para cada operación.</p>
             </div>
             <div class="operations-controls">
               <label class="filter-field" for="magic-filter">
-                <span>Bot / estrategia (magic number)</span>
+                <span>Bot (Magic)</span>
                 <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
                 <datalist id="magic-options"></datalist>
               </label>
-              <label class="group-toggle" for="group-by-bot">
-                <input id="group-by-bot" type="checkbox">
-                Agrupar por bot
-              </label>
+              <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
             </div>
           </div>
 
@@ -138,23 +136,19 @@
             <div><span>Mostradas</span><strong id="visible-operations">0</strong></div>
             <div><span>Posiciones</span><strong id="visible-positions">0</strong></div>
             <div><span>Órdenes</span><strong id="visible-orders">0</strong></div>
-            <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
           </div>
 
           <div class="operations-table-wrap">
             <table class="operations-table">
-              <caption class="sr-only">Operaciones activas informadas por la fuente</caption>
+              <caption class="sr-only">Operaciones abiertas informadas por la fuente</caption>
               <thead>
                 <tr>
-                  <th scope="col">Estado</th>
-                  <th scope="col">Ticket / Magic</th>
-                  <th scope="col">Símbolo</th>
-                  <th scope="col">Tipo</th>
+                  <th scope="col">Operación</th>
+                  <th scope="col">Instrumento</th>
                   <th scope="col" class="numeric">Volumen</th>
-                  <th scope="col" class="numeric">Apertura / Actual</th>
-                  <th scope="col" class="numeric">SL / TP</th>
-                  <th scope="col" class="numeric">P&amp;L</th>
+                  <th scope="col" class="numeric">Resultado abierto</th>
                   <th scope="col">Hora</th>
+                  <th scope="col"><span class="sr-only">Detalle</span></th>
                 </tr>
               </thead>
               <tbody id="operations-body"></tbody>

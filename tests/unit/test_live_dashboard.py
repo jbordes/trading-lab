@@ -514,6 +514,24 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
             server.shutdown()
             thread.join(timeout=5)
 
+    def test_project_and_dashboard_routes_serve_their_pages(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
+                self.assertIn("text/html", response.headers["Content-Type"])
+                self.assertIn(b"TradingLab", response.read())
+            with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
+                self.assertIn(b"Monitor MT5", response.read())
+            with urllib.request.urlopen(f"{base_url}/dashboard/", timeout=2) as response:
+                self.assertIn(b"Monitor MT5", response.read())
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
             DemoSnapshotSource(),
@@ -536,7 +554,7 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
                 self.assertEqual(payload["capture"]["success_count"], 1)
                 self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
 
-            with urllib.request.urlopen(base_url, timeout=2) as response:
+            with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
                 page = response.read().decode()
                 self.assertIn('id="operations-view"', page)
                 self.assertIn('id="magic-filter"', page)

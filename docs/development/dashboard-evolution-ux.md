@@ -20,11 +20,21 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 
 - Página de proyecto en `/` (qué es TradingLab, pipeline, estado y límites) y panel en `/dashboard`, con navegación cruzada.
 - Tema claro y oscuro con tokens `light-dark()`: paleta cálida tipo reporte y oscuro neutro sin negro puro, validada en WCAG AA; elección persistida sin flash al recargar; superficies planas separadas por bordes de 1px, sin gradientes, sombras ni mayúsculas sostenidas.
-- Resumen curado: equity protagonista con resultado abierto (signo, color y palabra), balance y margen secundarios, franja de origen con fuente, `source_id` y versión del colector, y nota honesta de riesgo sin estimaciones.
-- Operaciones con tabla de cinco columnas y detalle expandible por operación; "No informada" en timestamps no validados; filas apiladas sin scroll horizontal en viewports chicos; agrupación por bot diferida al roadmap.
-- Actividad y estado de la fuente: salud del receptor local (aceptados, duplicados, secuencias faltantes, retenidos, historial) separada de la actualización de la vista, con resumen en lenguaje llano y advertencias solo donde corresponden.
+- Resumen curado: equity protagonista en tono neutral, resultado abierto con signo,
+  color y palabra, balance y margen secundarios, franja de origen con fuente,
+  `source_id` y versión del collector, y nota honesta de riesgo sin estimaciones.
+- Operaciones con tabla de cinco columnas y detalle expandible por operación;
+  Magic Number visible, filtros por Magic y tipo, estado del detalle y foco
+  conservados entre actualizaciones; "No informada" en timestamps no validados y
+  filas apiladas sin scroll horizontal en viewports chicos.
+- Actividad y estado de la fuente: primero una conclusión en lenguaje llano; el
+  diagnóstico desplegable separa la salud global del receptor de la actualización
+  de la vista y conserva los contadores técnicos cuando hacen falta.
 - Salud de fuente en `/api/state` (`source_health` aditivo, schema v3): el navegador sigue haciendo una única llamada y el token no sale del backend.
-- Se conservan del pulido previo: números como tablero financiero, gráfico honesto, frescura visible, polling encadenado con backoff, historial incremental, ETag/304, accesibilidad de tabs y tablas, y la demo determinista con fallo simulado.
+- Se conservan del pulido previo: números como tablero financiero, historial
+  incremental, ETag/304, accesibilidad de tabs y tablas y demo determinista. El
+  gráfico usa ahora el tiempo observado en el eje horizontal y corta la línea en
+  interrupciones; la frescura sigue avanzando aunque el servicio local no responda.
 - El panel de riesgo ilustrativo con valores simulados fue reemplazado por la nota honesta de contrato pendiente: nada de estimaciones sin fórmula aprobada.
 
 ## 3. Evolución por incremento
@@ -35,7 +45,8 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 - Semántica de riesgo propia, distinta de profit/loss: uso del límite en porcentaje, estados verde/ámbar/rojo por umbrales del contrato, y siempre texto además de color.
 - El "día" como objeto visible: barra de progreso hacia el límite y tiempo real hasta el reset (timezone Madrid).
 - Scope por bot/portfolio: si el contrato lo exige, la agrupación por bot deja de ser un filtro de comodidad y pasa a ser navegación. Una vista "Riesgo" dedicada se justifica cuando haya que comparar límites entre varios bots.
-- Los valores simulados del prototipo (`DEMO_RISK` en `app.js`) se reemplazan por datos del snapshot calculados con fórmula aprobada.
+- La nota de contrato pendiente se reemplaza por datos del snapshot calculados con
+  fórmula aprobada.
 
 ### Incremento 2 — Persistencia mínima
 
@@ -57,12 +68,15 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 
 ## 4. Decisiones de diseño tomadas
 
-- **Dark único**: es un terminal; sin light mode hasta que exista una necesidad real.
+- **Tema claro y oscuro**: ambos usan los mismos tokens semánticos y respetan la
+  preferencia del sistema; la elección manual se conserva localmente.
 - **Locale `es-AR`** con hora 24 h, agrupación de miles consistente y signo explícito en resultados.
 - **Fuente del sistema**: sin fuentes descargadas; el sistema operativo provee la tipografía (sin `@font-face` ni dependencias).
 - **Sin dependencias externas ni build**: HTML/CSS/JS/SVG servidos por la biblioteca estándar; ECharts se incorpora solo en el incremento 3 como archivo local fijado.
 - **Navegación**: Resumen, Operaciones, Actividad y (incremento 3) Riesgo — estable a lo largo del tiempo.
-- **Filtros que no recargan**: match exacto por Magic Number, agrupación por bot, filtro por resultado; vista y filtros persisten entre recargas.
+- **Filtros que no recargan**: match exacto por Magic Number y selección de
+  posiciones u órdenes; se persisten por fuente para no arrastrar silenciosamente
+  un filtro entre cuentas. La agrupación por bot sigue diferida.
 
 ## 5. Lo que NO se construye antes de su gate
 

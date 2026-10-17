@@ -421,6 +421,70 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no qued√
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_chart_uses_observation_time_and_breaks_capture_gaps(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js no est√° disponible para el smoke test del frontend")
+        app_js = Path(__file__).parents[2] / "src/tradinglab/dashboard/static/app.js"
+        smoke_test = r"""
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("function renderChart(");
+const body = source.indexOf("{", start);
+let depth = 0;
+let definition = "";
+for (let index = body; index < source.length; index += 1) {
+  if (source[index] === "{") depth += 1;
+  if (source[index] === "}") depth -= 1;
+  if (depth === 0) { definition = source.slice(start, index + 1); break; }
+}
+if (!definition) throw new Error("No se encontr√≥ renderChart");
+function element() {
+  return {
+    textContent: "", hidden: false, attributes: {},
+    classList: { add() {}, remove() {} },
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+  };
+}
+globalThis.chartEmpty = element();
+globalThis.balanceLine = element();
+globalThis.equityLine = element();
+globalThis.balanceReference = element();
+globalThis.chart = element();
+globalThis.chartHigh = element();
+globalThis.chartLow = element();
+globalThis.chartStart = element();
+globalThis.chartEnd = element();
+globalThis.chartSpan = element();
+globalThis.latestCurrency = "USD";
+globalThis.toDate = (value) => new Date(value);
+globalThis.money = (value) => String(value);
+globalThis.elapsed = (value) => `${value} s`;
+globalThis.timeFormatter = { format: (value) => value.toISOString() };
+eval(definition);
+renderChart([
+  { observed_at: "2026-10-17T10:00:00Z", balance: 100, equity: 100 },
+  { observed_at: "2026-10-17T10:00:05Z", balance: 101, equity: 101 },
+  { observed_at: "2026-10-17T10:02:00Z", balance: 102, equity: 102 },
+  { observed_at: "2026-10-17T10:02:05Z", balance: 103, equity: 103 },
+], 5);
+const path = equityLine.attributes.d;
+if ((path.match(/M/g) || []).length !== 2) throw new Error(`Gap no visible: ${path}`);
+if (!chart.attributes["aria-label"].includes("interrupciones")) {
+  throw new Error("El texto accesible no informa el gap");
+}
+"""
+
+        result = subprocess.run(
+            [node, "-e", smoke_test, str(app_js)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_state_keeps_v3_contract_and_adds_source_health(self) -> None:
         service = LiveDashboardService(
             DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
@@ -556,6 +620,18 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no qued√
                 self.assertNotRegex(text, r"<script(?! src=)")
                 self.assertNotRegex(text, r"\son\w+=")
                 self.assertNotIn("style=", text)
+
+    def test_dashboard_markup_exposes_mobile_and_keyboard_controls(self) -> None:
+        dashboard = (
+            ROOT / "src" / "tradinglab" / "dashboard" / "static" / "dashboard.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('class="skip-link"', dashboard)
+        self.assertIn('id="kind-filter"', dashboard)
+        self.assertIn('class="technical-health"', dashboard)
+        for view in ("overview", "operations", "activity"):
+            self.assertIn(f'aria-controls="{view}-view"', dashboard)
+            self.assertIn(f'id="{view}-view"', dashboard)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

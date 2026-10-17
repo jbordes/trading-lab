@@ -7,7 +7,6 @@ const ids = [
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const statusDot = document.getElementById("status-dot");
 const metricsPanel = document.querySelector(".metrics");
-const equityCard = document.getElementById("equity-card");
 const sourceDescription = document.getElementById("source-description");
 const operationsNote = document.getElementById("operations-note");
 const errorHuman = document.getElementById("error-human");
@@ -27,6 +26,7 @@ const equityLine = document.getElementById("equity-line");
 const balanceReference = document.getElementById("balance-reference");
 const grid = document.getElementById("grid");
 const magicFilter = document.getElementById("magic-filter");
+const kindFilter = document.getElementById("kind-filter");
 const magicOptions = document.getElementById("magic-options");
 const operationsBody = document.getElementById("operations-body");
 const operationsEmpty = document.getElementById("operations-empty");
@@ -35,6 +35,7 @@ const visibleOperations = document.getElementById("visible-operations");
 const visiblePositions = document.getElementById("visible-positions");
 const visibleOrders = document.getElementById("visible-orders");
 const clearFilter = document.getElementById("clear-filter");
+const healthOverview = document.getElementById("health-overview");
 let latestOperations = [];
 let latestCurrency = "USD";
 let latestActivity = [];
@@ -46,6 +47,12 @@ let activeView = "overview";
 let lastHistory = [];
 let telemetryMode = false;
 let lastPollSince = null;
+let latestObservedDate = null;
+let serviceReachable = true;
+let latestStatus = "starting";
+let currentFilterScope = "uninitialized";
+let refreshInFlight = null;
+const expandedOperationTickets = new Set();
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
@@ -219,6 +226,7 @@ function renderSummary(value, currency, status) {
 }
 
 function renderState(state) {
+  latestStatus = state.status;
   setText(elements.status, statusLabels[state.status] || "Lectura degradada");
   statusDot.className = `status-dot ${state.status}`;
   const errorText = state.error || "";
@@ -230,27 +238,22 @@ function renderState(state) {
   errorBox.hidden = !errorText;
   renderCapture(state);
   renderSourceHealth(state);
+  renderHealthOverview(state);
   if (!state.latest) return;
 
   const value = state.latest;
   latestIntervalSeconds = state.interval_seconds || 5;
   const observedAt = toDate(value.observed_at);
-  const ageSeconds = observedAt
-    ? Math.max(0, (Date.now() - observedAt.getTime()) / 1000)
-    : Infinity;
-  const staleData = ageSeconds > 2 * latestIntervalSeconds;
-  const criticalAge = ageSeconds > 10 * latestIntervalSeconds;
-  setText(elements.freshness, observedAt
-    ? `Actualizado hace ${elapsed(ageSeconds)}`
-    : "sin lectura válida");
-  elements.freshness.title = observedAt ? `Última lectura ${timeFormatter.format(observedAt)}` : "";
-  elements.freshness.classList.toggle("aged", staleData && !criticalAge);
-  elements.freshness.classList.toggle("stale", criticalAge);
-  metricsPanel.classList.toggle("stale", staleData);
+  latestObservedDate = observedAt;
+  updateFreshness();
+  const currency = value.currency || "USD";
+  renderSummary(value, currency, state.status);
+  const health = state.source_health || {};
+  const filterScope = health.source_id || value.source || "local";
+  if (filterScope !== currentFilterScope) loadStoredFilters(filterScope);
   if (value.observed_at === lastObservedAt) return;
   lastObservedAt = value.observed_at;
   lastPollSince = value.observed_at;
-  const currency = value.currency || "USD";
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
   elements["account-identity"].textContent = value.account_reference && value.server
@@ -263,8 +266,6 @@ function renderState(state) {
   elements["profit-line"].className = value.floating_profit > 0
     ? "profit-line positive-text"
     : value.floating_profit < 0 ? "profit-line negative-text" : "profit-line";
-  equityCard.classList.toggle("positive", value.floating_profit > 0);
-  equityCard.classList.toggle("negative", value.floating_profit < 0);
   elements["margin-free"].textContent = money(value.margin_free, currency);
   elements["margin-level"].textContent = value.margin_level === null
     ? "—"
@@ -273,11 +274,9 @@ function renderState(state) {
   elements.orders.textContent = number(value.active_orders);
   elements.margin.textContent = money(value.margin, currency);
   setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
-  const health = state.source_health || {};
   const sourceId = health.source_id ? ` · ${health.source_id}` : "";
   const collector = health.collector_version ? ` · Colector ${health.collector_version}` : "";
   setText(sourceDescription, `${sourceLabel(value.source)}${sourceId}${collector}`);
-  renderSummary(value, currency, state.status);
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
   operationsBadge.textContent = number(latestOperations.length);
   if (activeView === "operations") renderOperations();
@@ -310,6 +309,34 @@ function renderCapture(state) {
   const duration = Number.isFinite(capture.last_duration_ms) ? `${number(capture.last_duration_ms)} ms` : "—";
   const maxDuration = Number.isFinite(capture.max_duration_ms) ? `${number(capture.max_duration_ms)} ms` : "—";
   setText(captureElements.results, `${number(capture.success_count || 0)} éxitos · ${number(capture.failure_count || 0)} fallos · duración última ${duration} · máxima ${maxDuration}`);
+}
+
+function renderHealthOverview(state) {
+  const health = state.source_health || {};
+  const receiver = health.receiver || {};
+  const hasObservations = receiver.missing_sequences > 0
+    || receiver.history_status === "truncated"
+    || receiver.history_status === "error";
+  let message = "Comprobando la fuente de datos…";
+  let tone = "";
+  if (state.status === "connected" && health.availability === "available" && !hasObservations) {
+    message = "La cuenta está actualizada y el receptor local no informa problemas.";
+    tone = "positive";
+  } else if (state.status === "connected" && health.availability === "not_applicable") {
+    message = "Los datos de demostración están actualizados.";
+    tone = "positive";
+  } else if (state.status === "connected" && health.availability === "unavailable") {
+    message = "La cuenta está actualizada, pero no se pudo consultar el diagnóstico del receptor.";
+    tone = "warning";
+  } else if (state.status === "connected" && hasObservations) {
+    message = "La cuenta está actualizada, pero la fuente requiere revisión.";
+    tone = "warning";
+  } else if (state.status === "degraded") {
+    message = "La lectura está degradada. Se muestran los últimos datos válidos.";
+    tone = "warning";
+  }
+  setText(healthOverview, message);
+  healthOverview.className = `health-overview ${tone}`.trim();
 }
 
 function renderSourceHealth(state) {
@@ -452,13 +479,45 @@ function elapsed(seconds) {
   return `${Math.round(seconds / 3600)} h`;
 }
 
+function updateFreshness() {
+  if (!latestObservedDate) {
+    setText(elements.freshness, "Esperando primera captura");
+    return;
+  }
+  const ageSeconds = Math.max(0, (Date.now() - latestObservedDate.getTime()) / 1000);
+  const staleData = !serviceReachable || ageSeconds > 2 * latestIntervalSeconds;
+  const criticalAge = !serviceReachable || ageSeconds > 10 * latestIntervalSeconds;
+  setText(
+    elements.freshness,
+    serviceReachable
+      ? `Actualizado hace ${elapsed(ageSeconds)}`
+      : `Última lectura válida hace ${elapsed(ageSeconds)}`,
+  );
+  elements.freshness.title = `Última lectura ${timeFormatter.format(latestObservedDate)}`;
+  elements.freshness.classList.toggle("aged", staleData && !criticalAge);
+  elements.freshness.classList.toggle("stale", criticalAge);
+  metricsPanel.classList.toggle("stale", staleData);
+  if (criticalAge && latestStatus === "connected") {
+    setText(elements.status, serviceReachable ? "Datos desactualizados" : "Sin conexión local");
+    statusDot.className = "status-dot degraded";
+  }
+}
+
 function renderOperations() {
   const filter = magicFilter.value.trim();
-  const signature = `${latestCurrency}|${filter}|${JSON.stringify(latestOperations)}`;
+  const kind = kindFilter.value;
+  const currentOperationKeys = new Set(
+    latestOperations.map((operation) => `${operation.kind}-${operation.ticket}`),
+  );
+  for (const ticket of expandedOperationTickets) {
+    if (!currentOperationKeys.has(ticket)) expandedOperationTickets.delete(ticket);
+  }
+  const signature = `${latestCurrency}|${filter}|${kind}|${JSON.stringify(latestOperations)}`;
   if (signature === latestOperationsSignature) return;
   latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
-    !filter || String(operation.magic_number) === filter
+    (!filter || String(operation.magic_number) === filter)
+    && (kind === "all" || operation.kind === kind)
   ));
   const magicNumbers = [...new Set(latestOperations.map((item) => String(item.magic_number)))];
   magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
@@ -472,21 +531,27 @@ function renderOperations() {
     }));
   }
 
+  const focusedTicket = document.activeElement?.dataset.operationTicket || null;
   operationsBody.replaceChildren(...filtered.flatMap(operationRow));
+  if (focusedTicket) {
+    operationsBody.querySelector(`[data-operation-ticket="${CSS.escape(focusedTicket)}"]`)?.focus();
+  }
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
     ? "La fuente no informa operaciones abiertas."
-    : "Ninguna operación coincide con ese Magic.";
+    : "Ninguna operación coincide con los filtros elegidos.";
   operationsNote.hidden = !(telemetryMode && latestOperations.length > 0);
   visibleOperations.textContent = filter
     ? `${number(filtered.length)} de ${number(latestOperations.length)}`
     : number(filtered.length);
   visiblePositions.textContent = number(filtered.filter((item) => item.kind === "position").length);
   visibleOrders.textContent = number(filtered.filter((item) => item.kind === "order").length);
-  clearFilter.disabled = !filter;
+  clearFilter.disabled = !filter && kind === "all";
 }
 
 function operationRow(operation) {
+  const ticket = String(operation.ticket);
+  const operationKey = `${operation.kind}-${ticket}`;
   const row = document.createElement("tr");
   const kind = operation.kind === "position" ? "Posición" : "Orden";
   const kindCell = document.createElement("td");
@@ -500,7 +565,10 @@ function operationRow(operation) {
   typeText.textContent = operationTypes[operation.operation_type] || operation.operation_type;
   kindCell.appendChild(typeText);
   row.appendChild(kindCell);
-  row.appendChild(detailCell(operation.symbol, operation.comment || "Sin comentario", "", "Instrumento"));
+  const operationContext = operation.comment
+    ? `Magic ${operation.magic_number} · ${operation.comment}`
+    : `Magic ${operation.magic_number}`;
+  row.appendChild(detailCell(operation.symbol, operationContext, "", "Instrumento"));
   row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
 
   const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
@@ -526,7 +594,8 @@ function operationRow(operation) {
 
   const detailRow = document.createElement("tr");
   detailRow.className = "detail-row";
-  detailRow.hidden = true;
+  detailRow.id = `operation-detail-${operationKey}`;
+  detailRow.hidden = !expandedOperationTickets.has(operationKey);
   const detailCellEl = document.createElement("td");
   detailCellEl.colSpan = 6;
   const list = document.createElement("dl");
@@ -555,13 +624,17 @@ function operationRow(operation) {
   const button = document.createElement("button");
   button.className = "detail-toggle";
   button.type = "button";
-  button.setAttribute("aria-expanded", "false");
-  button.textContent = "Ver detalle";
+  button.dataset.operationTicket = operationKey;
+  button.setAttribute("aria-controls", detailRow.id);
+  button.setAttribute("aria-expanded", String(!detailRow.hidden));
+  button.textContent = detailRow.hidden ? "Ver detalle" : "Ocultar detalle";
   button.addEventListener("click", () => {
     const expanded = button.getAttribute("aria-expanded") === "true";
     button.setAttribute("aria-expanded", String(!expanded));
     button.textContent = expanded ? "Ver detalle" : "Ocultar detalle";
     detailRow.hidden = expanded;
+    if (expanded) expandedOperationTickets.delete(operationKey);
+    else expandedOperationTickets.add(operationKey);
   });
   buttonCell.appendChild(button);
   row.appendChild(buttonCell);
@@ -605,10 +678,14 @@ function renderChart(history, intervalSeconds) {
     chartEnd.textContent = "";
     chartSpan.textContent = "";
   };
-  if (history.length < 2) {
+  const timeline = history
+    .map((item) => ({ ...item, at: toDate(item.observed_at) }))
+    .filter((item) => item.at && Number.isFinite(item.balance) && Number.isFinite(item.equity))
+    .sort((left, right) => left.at - right.at);
+  if (timeline.length < 2) {
     chartEmpty.hidden = false;
-    balanceLine.setAttribute("points", "");
-    equityLine.setAttribute("points", "");
+    balanceLine.setAttribute("d", "");
+    equityLine.setAttribute("d", "");
     balanceReference.classList.add("is-hidden");
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
     clearLabels();
@@ -617,36 +694,42 @@ function renderChart(history, intervalSeconds) {
   chartEmpty.hidden = true;
   let minimum = Infinity;
   let maximum = -Infinity;
-  for (const item of history) {
+  for (const item of timeline) {
     minimum = Math.min(minimum, item.balance, item.equity);
     maximum = Math.max(maximum, item.balance, item.equity);
   }
   const padding = Math.max((maximum - minimum) * 0.15, Math.abs(maximum) * 0.0001, 1);
   const low = minimum - padding;
   const high = maximum + padding;
-  const toPoints = (key) => history.map((item, index) => {
-    const x = 25 + (index / (history.length - 1)) * 950;
+  const startAt = timeline[0].at;
+  const endAt = timeline[timeline.length - 1].at;
+  const timeRange = Math.max(1, endAt.getTime() - startAt.getTime());
+  const gapThreshold = intervalSeconds * 2.5 * 1000;
+  let gaps = 0;
+  const toPath = (key) => timeline.map((item, index) => {
+    const x = 25 + ((item.at.getTime() - startAt.getTime()) / timeRange) * 950;
     const y = 295 - ((item[key] - low) / (high - low)) * 270;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    const followsGap = index > 0 && item.at.getTime() - timeline[index - 1].at.getTime() > gapThreshold;
+    if (key === "balance" && followsGap) gaps += 1;
+    return `${index === 0 || followsGap ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  balanceLine.setAttribute("points", toPoints("balance"));
-  equityLine.setAttribute("points", toPoints("equity"));
-  const startAt = toDate(history[0].observed_at);
-  const endAt = toDate(history[history.length - 1].observed_at);
-  const referenceY = 295 - ((history[0].balance - low) / (high - low)) * 270;
+  balanceLine.setAttribute("d", toPath("balance"));
+  equityLine.setAttribute("d", toPath("equity"));
+  const referenceY = 295 - ((timeline[0].balance - low) / (high - low)) * 270;
   balanceReference.setAttribute("y1", String(referenceY));
   balanceReference.setAttribute("y2", String(referenceY));
   balanceReference.classList.remove("is-hidden");
   chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
   chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
-  chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";
-  chartEnd.textContent = endAt ? timeFormatter.format(endAt) : "";
-  const spanSeconds = startAt && endAt
-    ? Math.max(0, (endAt.getTime() - startAt.getTime()) / 1000)
-    : Math.max(0, (history.length - 1) * intervalSeconds);
+  chartStart.textContent = timeFormatter.format(startAt);
+  chartEnd.textContent = timeFormatter.format(endAt);
+  const spanSeconds = Math.max(0, timeRange / 1000);
   const span = elapsed(spanSeconds);
-  chartSpan.textContent = `Ventana ${span}`;
-  chart.setAttribute("aria-label", `Evolución de balance y equity, ventana ${span}`);
+  chartSpan.textContent = gaps ? `Ventana ${span} · ${gaps} interrupción${gaps === 1 ? "" : "es"}` : `Ventana ${span}`;
+  chart.setAttribute(
+    "aria-label",
+    `Evolución de balance y equity, ventana ${span}${gaps ? `, ${gaps} interrupciones de captura` : ""}`,
+  );
 }
 
 function drawGrid() {
@@ -665,8 +748,7 @@ function drawGrid() {
 
 let retryMultiplier = 1;
 
-async function refresh() {
-  if (document.hidden) return;
+async function performRefresh() {
   const controller = new AbortController();
   const timeout = window.setTimeout(
     () => controller.abort(),
@@ -676,19 +758,32 @@ async function refresh() {
     const query = lastPollSince ? `?since=${encodeURIComponent(lastPollSince)}` : "";
     const response = await fetch(`/api/state${query}`, { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    serviceReachable = true;
     renderState(await response.json());
     retryMultiplier = 1;
   } catch (_) {
+    serviceReachable = false;
     setText(elements.status, "Sin conexión local");
     statusDot.className = "status-dot degraded";
-    elements.freshness.classList.add("stale");
+    updateFreshness();
     setText(errorHuman, "No se pudo consultar el servicio local.");
     errorTechnicalDetails.hidden = true;
     errorBox.hidden = false;
+    setText(healthOverview, "No se puede consultar el servicio local. Se muestran los últimos datos válidos.");
+    healthOverview.className = "health-overview warning";
     retryMultiplier = Math.min(retryMultiplier * 2, 6);
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function refresh() {
+  if (document.hidden) return Promise.resolve();
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = performRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -696,6 +791,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 drawGrid();
+window.setInterval(updateFreshness, 1000);
 function activateView(view) {
   document.querySelectorAll(".view-tab").forEach((tab) => {
     const active = tab.dataset.view === view;
@@ -735,28 +831,40 @@ window.addEventListener("hashchange", () => {
 });
 const FILTER_STORE = "tradinglab-dashboard-filters";
 
-function loadStoredFilters() {
+function loadStoredFilters(scope) {
+  currentFilterScope = scope;
+  expandedOperationTickets.clear();
+  lastObservedAt = null;
   try {
     const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
-    magicFilter.value = stored.magic || "";
+    const selected = stored.scopes?.[scope] || {};
+    magicFilter.value = selected.magic || "";
+    kindFilter.value = ["all", "position", "order"].includes(selected.kind)
+      ? selected.kind
+      : "all";
   } catch (_) {
-    // almacenamiento no disponible
+    magicFilter.value = "";
+    kindFilter.value = "all";
   }
+  latestOperationsSignature = "";
 }
 
 function saveStoredFilters() {
   try {
-    localStorage.setItem(FILTER_STORE, JSON.stringify({
-      magic: magicFilter.value,
-    }));
+    const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
+    const scopes = stored.scopes && typeof stored.scopes === "object" ? stored.scopes : {};
+    scopes[currentFilterScope] = { magic: magicFilter.value, kind: kindFilter.value };
+    localStorage.setItem(FILTER_STORE, JSON.stringify({ scopes }));
   } catch (_) {
     // almacenamiento no disponible
   }
 }
 
 magicFilter.addEventListener("input", () => { renderOperations(); saveStoredFilters(); });
+kindFilter.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
+  kindFilter.value = "all";
   magicFilter.focus();
   renderOperations();
   saveStoredFilters();
@@ -767,7 +875,6 @@ function scheduleRefresh() {
   }, latestIntervalSeconds * 1000 * retryMultiplier);
 }
 
-loadStoredFilters();
 const initialView = location.hash.slice(1);
 if (["overview", "operations", "activity"].includes(initialView)) {
   history.replaceState(null, "", `#${initialView}`);

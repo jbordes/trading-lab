@@ -12,7 +12,8 @@
   </head>
   <body>
     <noscript><p class="noscript-note">El dashboard requiere JavaScript para mostrar datos en vivo.</p></noscript>
-    <main class="shell">
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <main class="shell" id="contenido">
       <nav class="site-nav" aria-label="Navegación principal">
         <a class="brand" href="/"><strong>TradingLab</strong><span>Panel de la cuenta</span></a>
         <div class="site-nav-links">
@@ -23,7 +24,6 @@
       </nav>
       <header class="topbar">
         <div>
-          <p class="eyebrow">PANEL DE LA CUENTA</p>
           <h1>Panel de la cuenta</h1>
           <p class="subtitle" id="account-identity">—</p>
         </div>
@@ -31,7 +31,7 @@
           <span id="status-dot" class="status-dot"></span>
           <div>
             <strong id="status" aria-live="polite">Conectando</strong>
-            <small id="freshness">Esperando primera captura</small>
+            <small id="freshness" aria-live="polite">Esperando primera captura</small>
           </div>
         </div>
       </header>
@@ -42,12 +42,12 @@
       </div>
 
       <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
-        <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-selected="true" data-view="overview">Resumen</button>
-        <button class="view-tab" type="button" role="tab" id="tab-operations" aria-selected="false" tabindex="-1" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
-        <button class="view-tab" type="button" role="tab" id="tab-activity" aria-selected="false" tabindex="-1" data-view="activity">Actividad <span id="activity-badge">0</span></button>
+        <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-controls="overview-view" aria-selected="true" data-view="overview">Resumen</button>
+        <button class="view-tab" type="button" role="tab" id="tab-operations" aria-controls="operations-view" aria-selected="false" tabindex="-1" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
+        <button class="view-tab" type="button" role="tab" id="tab-activity" aria-controls="activity-view" aria-selected="false" tabindex="-1" data-view="activity">Actividad <span id="activity-badge">0</span></button>
       </nav>
 
-      <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview">
+      <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview" tabindex="0">
       <section class="metrics" aria-label="Estado de cuenta">
         <article class="metric-card metric-hero" id="equity-card">
           <span>Equity</span><strong id="equity">—</strong><small id="profit-line" class="profit-line">—</small>
@@ -67,7 +67,7 @@
           <p class="eyebrow">ORIGEN</p>
           <p class="source-description" id="source-description">—</p>
         </div>
-        <a class="button-primary" href="#activity" id="source-health-link">Ver estado de la fuente</a>
+        <a class="source-health-link" href="#activity" id="source-health-link">Estado de la fuente</a>
       </section>
 
       <section class="content-grid">
@@ -82,8 +82,8 @@
           <div class="chart-wrap">
             <svg id="chart" viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Evolución reciente de balance y equity">
               <g id="grid"></g>
-              <polyline id="balance-line" class="line balance-line" points=""></polyline>
-              <polyline id="equity-line" class="line equity-line" points=""></polyline>
+              <path id="balance-line" class="line balance-line" d=""></path>
+              <path id="equity-line" class="line equity-line" d=""></path>
               <line id="balance-reference" class="reference-line is-hidden" x1="25" x2="975" y1="0" y2="0"></line>
             </svg>
             <p id="chart-high" class="chart-label chart-label-high"></p>
@@ -113,7 +113,7 @@
       </section>
       </section>
 
-      <section id="operations-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-operations" hidden>
+      <section id="operations-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-operations" tabindex="0" hidden>
         <article class="panel operations-panel">
           <div class="operations-heading">
             <div>
@@ -127,6 +127,14 @@
                 <span>Bot (Magic)</span>
                 <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
                 <datalist id="magic-options"></datalist>
+              </label>
+              <label class="filter-field" for="kind-filter">
+                <span>Tipo</span>
+                <select id="kind-filter">
+                  <option value="all">Posiciones y órdenes</option>
+                  <option value="position">Solo posiciones</option>
+                  <option value="order">Solo órdenes pendientes</option>
+                </select>
               </label>
               <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
             </div>
@@ -158,7 +166,7 @@
         </article>
       </section>
 
-      <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
+      <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" tabindex="0" hidden>
         <article class="panel operations-panel activity-panel">
           <div class="operations-heading">
             <div>
@@ -168,42 +176,44 @@
             </div>
           </div>
 
-          <section class="health-grid" aria-label="Estado de la fuente">
-            <div class="health-block">
-              <h3>Fuente</h3>
-              <p id="source-health-label" class="health-value">—</p>
-              <p id="source-health-id" class="health-meta"></p>
-              <p id="source-health-version" class="health-meta"></p>
-              <p id="source-health-checked" class="health-meta"></p>
-            </div>
-            <div class="health-block">
-              <h3>Receptor local</h3>
-              <p id="receiver-summary" class="health-summary">—</p>
-              <dl class="receiver-counters">
-                <div><dt>Mensajes aceptados</dt><dd id="rc-accepted">—</dd></div>
-                <div><dt>Duplicados</dt><dd id="rc-duplicates">—</dd></div>
-                <div><dt>Secuencias faltantes</dt><dd id="rc-gaps">—</dd></div>
-                <div><dt>Mensajes retenidos</dt><dd id="rc-retained">—</dd></div>
-                <div><dt>Sesiones retenidas</dt><dd id="rc-sessions">—</dd></div>
-                <div><dt>Historial</dt><dd id="rc-history">—</dd></div>
-              </dl>
-            </div>
-          </section>
-          <p class="health-note">Los contadores son del receptor local completo, acumulados desde su inicio; no describen una cuenta aislada. El historial corresponde al último mensaje retenido por el receptor.</p>
+          <p id="health-overview" class="health-overview" aria-live="polite">Comprobando la fuente de datos…</p>
 
-          <section class="view-health" aria-label="Actualización de la vista">
-            <h3>Actualización de la vista</h3>
-            <dl class="receiver-counters">
-              <div><dt>Estado</dt><dd id="capture-health">Iniciando</dd></div>
-              <div><dt>Última lectura exitosa</dt><dd id="capture-last-success">—</dd></div>
-              <div><dt>Fallos consecutivos</dt><dd id="capture-streak">—</dd></div>
-              <div><dt>Intentos</dt><dd id="capture-attempts">0</dd></div>
-            </dl>
-            <details>
-              <summary>Detalle técnico</summary>
+          <details class="technical-health">
+            <summary>Ver diagnóstico técnico</summary>
+            <section class="health-grid" aria-label="Estado de la fuente">
+              <div class="health-block">
+                <h3>Fuente</h3>
+                <p id="source-health-label" class="health-value">—</p>
+                <p id="source-health-id" class="health-meta"></p>
+                <p id="source-health-version" class="health-meta"></p>
+                <p id="source-health-checked" class="health-meta"></p>
+              </div>
+              <div class="health-block">
+                <h3>Receptor local</h3>
+                <p id="receiver-summary" class="health-summary">—</p>
+                <dl class="receiver-counters">
+                  <div><dt>Mensajes aceptados</dt><dd id="rc-accepted">—</dd></div>
+                  <div><dt>Duplicados</dt><dd id="rc-duplicates">—</dd></div>
+                  <div><dt>Secuencias faltantes</dt><dd id="rc-gaps">—</dd></div>
+                  <div><dt>Mensajes retenidos</dt><dd id="rc-retained">—</dd></div>
+                  <div><dt>Sesiones retenidas</dt><dd id="rc-sessions">—</dd></div>
+                  <div><dt>Historial</dt><dd id="rc-history">—</dd></div>
+                </dl>
+              </div>
+            </section>
+            <p class="health-note">Los contadores son del receptor local completo, acumulados desde su inicio; no describen una cuenta aislada. El historial corresponde al último mensaje retenido por el receptor.</p>
+
+            <section class="view-health" aria-label="Actualización de la vista">
+              <h3>Actualización de la vista</h3>
+              <dl class="receiver-counters">
+                <div><dt>Estado</dt><dd id="capture-health">Iniciando</dd></div>
+                <div><dt>Última lectura exitosa</dt><dd id="capture-last-success">—</dd></div>
+                <div><dt>Fallos consecutivos</dt><dd id="capture-streak">—</dd></div>
+                <div><dt>Intentos</dt><dd id="capture-attempts">0</dd></div>
+              </dl>
               <p id="capture-results" class="health-meta"></p>
-            </details>
-          </section>
+            </section>
+          </details>
 
           <section class="recent-activity" aria-label="Actividad reciente">
             <h3>Actividad reciente</h3>

@@ -18,6 +18,7 @@ STATIC_ROUTES = {
     "/dashboard": ("dashboard.html", "text/html; charset=utf-8"),
     "/dashboard/": ("dashboard.html", "text/html; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/assets/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
 

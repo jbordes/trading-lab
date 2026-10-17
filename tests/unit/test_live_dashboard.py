@@ -528,9 +528,24 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
                 self.assertIn(b"Monitor MT5", response.read())
             with urllib.request.urlopen(f"{base_url}/dashboard/", timeout=2) as response:
                 self.assertIn(b"Monitor MT5", response.read())
+            with urllib.request.urlopen(f"{base_url}/assets/theme.js", timeout=2) as response:
+                self.assertIn("javascript", response.headers["Content-Type"])
+                self.assertIn(b"data-theme-toggle", response.read())
         finally:
             server.shutdown()
             thread.join(timeout=5)
+
+    def test_theme_script_precedes_stylesheet_without_inline(self) -> None:
+        static = ROOT / "src" / "tradinglab" / "dashboard" / "static"
+        for name in ("index.html", "dashboard.html"):
+            with self.subTest(name=name):
+                text = (static / name).read_text(encoding="utf-8")
+                theme_at = text.index('<script src="/assets/theme.js"></script>')
+                css_at = text.index('<link rel="stylesheet" href="/assets/styles.css">')
+                self.assertLess(theme_at, css_at)
+                self.assertNotRegex(text, r"<script(?! src=)")
+                self.assertNotRegex(text, r"\son\w+=")
+                self.assertNotIn("style=", text)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

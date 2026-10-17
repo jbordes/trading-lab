@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-14
 
-**Estado:** incremento 0C en implementación
+**Estado:** collector MT5 adoptado; promoción operativa pendiente
 
 **Arquitectura:** [Dashboard local de riesgo](../architecture/live-risk-dashboard.md)
 
@@ -14,6 +14,8 @@
 - Sin métricas cuya fórmula no haya aprobado el socio.
 - Sin base ni modelo amplio antes de comprobar su necesidad.
 - Historial, errores y frescura visibles; nunca ocultar datos obsoletos.
+- Un collector y un `source_id` por identidad MT5; nunca selección automática de
+  terminales mediante Python.
 
 ## Incremento 0B — Vista MT5 local
 
@@ -45,19 +47,22 @@ Implementado:
    incremental solapada, reconciliación completa periódica, deduplicación y
    límite en memoria.
 4. Estado de captura con duración, intentos, éxitos, fallos y último éxito.
+5. Investigación multterminal: el descubrimiento automático eligió una terminal
+   implícita; dos conexiones concurrentes dentro del mismo proceso cruzaron su
+   estado. Procesos separados con ruta explícita no se cruzaron.
 
 Pendiente para cerrar el incremento:
 
 1. Comparar precios, volumen, SL/TP, resultado y timestamps con el terminal
    durante una sesión controlada.
-2. Ejecutar una prueba prolongada y decidir con evidencia si conviene mantener la
-   sesión IPC abierta.
-3. Incorporar una instancia separada con contraseña de inversor antes de usar
+2. Conservar la API Python solo para diagnósticos de una terminal por proceso,
+   con ruta e identidad verificadas.
+3. Incorporar una identidad separada con contraseña de inversor antes de usar
    cuentas reales.
 4. Evaluar agrupación por bot después de validar el muestreo operativo, sin
    reemplazar el detalle por operación.
 
-## Spike complementario — Telemetría push MT5
+## Collector MT5 — Fuente operativa primaria
 
 Implementado en la rama del [spike](mt5-telemetry-collector-spike.md): guardas de
 demo/loopback, cola acotada, validación estricta y recuperación de deals mediante
@@ -68,16 +73,18 @@ métricas; pruebas sintéticas y compilación no equivalen a validación en term
 El receptor incorpora límites de conexiones, plazo de red y contenido retenido,
 con eliminación de índices de sesiones al desalojar sus mensajes. Los seis
 puntos de revisión están implementados para el piloto; no implican cierre de
-la comparación real ni autorización de despliegue o merge.
+la validación final con operaciones reales ni autorización de despliegue en una
+cuenta real.
 
 La prueba nativa determinista fue compilada y ejecutada en MT5-Juampi el
 2026-10-17 con 0 errores, 0 warnings y 0 fallos. Se ejecutó sin red, lecturas de
 cuenta ni funciones de trading; valida las simulaciones, no el piloto real.
 
-Pendiente: comparar contra Python una apertura/cierre entre muestras, costes,
-reinicio y caída del receptor. Medir latencia, ventana necesaria y saturación
-antes de agregar paginación o persistencia. Validar la zona horaria del servidor;
-no asumir tiempos UTC.
+ADR-0004 adopta este collector como fuente operativa primaria. La comparación
+amplia contra Python deja de ser un gate: queda pendiente una validación acotada
+de apertura/cierre, costes, Magic Number, completitud y timestamps para comprobar
+el contrato. También se medirá la ventana necesaria y se validará la zona horaria
+del servidor antes de agregar paginación o persistencia.
 
 ## Incremento 0D — Telemetría push visible
 
@@ -94,10 +101,25 @@ Implementado en el primer corte:
 
 Pendiente para cerrar el incremento:
 
-1. ejecutar receptor, EA y dashboard juntos en la terminal demo aislada;
-2. comparar una muestra push con la captura Python del mismo instante;
-3. validar la zona horaria del servidor antes de mostrar timestamps y deals;
-4. medir desconexión, reconexión y frescura durante una prueba prolongada.
+1. validar campos y operaciones reales contra MT5 o una captura Python aislada;
+2. validar la zona horaria del servidor antes de mostrar timestamps y deals;
+3. medir frescura y estabilidad durante una prueba prolongada.
+
+Ya se comprobó en la terminal demo aislada el recorrido collector-receptor-
+dashboard, la paridad de los campos seguros de cuenta, la degradación durante una
+caída y la recuperación automática al reanudar el receptor.
+
+## Incremento 0E — Promoción del collector
+
+1. Hacer que el arranque operativo del dashboard exija telemetría y un
+   `source_id` explícito; no usar descubrimiento automático de MT5.
+2. Mantener el modo Python únicamente en la herramienta diagnóstica, exigiendo
+   ruta e identidad esperadas y una terminal por proceso.
+3. Definir el procedimiento reproducible para compilar, instalar, configurar,
+   verificar y retirar un collector por terminal con aprobación humana.
+4. Diseñar la selección de varias fuentes sin asumir todavía una base, cola o
+   despliegue remoto.
+5. Completar la validación acotada con operaciones antes de usar cuentas reales.
 
 ## Incremento 1 — Contrato de control operativo
 

@@ -55,6 +55,14 @@
     window
       .matchMedia("(prefers-color-scheme: dark)")
       .addEventListener("change", updateButtons);
-    window.addEventListener("storage", updateButtons);
+    window.addEventListener("storage", (event) => {
+      if (event.key !== STORAGE_KEY) return;
+      if (event.newValue === "light" || event.newValue === "dark") {
+        root.dataset.theme = event.newValue;
+      } else if (!event.newValue) {
+        delete root.dataset.theme;
+      }
+      updateButtons();
+    });
   });
 })();

@@ -44,8 +44,6 @@ let latestOperationsSignature = "";
 let latestMagicKey = "";
 let activeView = "overview";
 let lastHistory = [];
-let latestSource = "MT5";
-let latestSourceLabel = "Fuente local";
 let telemetryMode = false;
 let lastPollSince = null;
 
@@ -254,8 +252,6 @@ function renderState(state) {
   lastPollSince = value.observed_at;
   const currency = value.currency || "USD";
   latestCurrency = currency;
-  latestSource = value.source.toUpperCase();
-  latestSourceLabel = sourceLabel(value.source);
   telemetryMode = value.source === "mt5-telemetry";
   elements["account-identity"].textContent = value.account_reference && value.server
     ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
@@ -613,7 +609,7 @@ function renderChart(history, intervalSeconds) {
     chartEmpty.hidden = false;
     balanceLine.setAttribute("points", "");
     equityLine.setAttribute("points", "");
-    balanceReference.hidden = true;
+    balanceReference.classList.add("is-hidden");
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
     clearLabels();
     return;
@@ -640,7 +636,7 @@ function renderChart(history, intervalSeconds) {
   const referenceY = 295 - ((history[0].balance - low) / (high - low)) * 270;
   balanceReference.setAttribute("y1", String(referenceY));
   balanceReference.setAttribute("y2", String(referenceY));
-  balanceReference.hidden = false;
+  balanceReference.classList.remove("is-hidden");
   chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
   chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
   chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";

@@ -139,7 +139,7 @@ def _receiver_health(payload: object) -> ReceiverHealth:
             raise DashboardReadError("El receptor devolvió contadores inválidos")
         counters[field] = value
     history_status = payload.get("history_status")
-    if history_status not in _HISTORY_STATUSES:
+    if not isinstance(history_status, str) or history_status not in _HISTORY_STATUSES:
         raise DashboardReadError("El receptor devolvió un estado de historial inválido")
     return ReceiverHealth(
         accepted=counters["accepted"],

@@ -514,7 +514,14 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no quedÃ
                 self.assertEqual(payload["source_health"]["availability"], "not_applicable")
         finally:
             server.shutdown()
+            server.server_close()
             thread.join(timeout=5)
+
+    def test_hidden_attribute_wins_over_responsive_layout(self) -> None:
+        styles = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[hidden] { display: none !important; }", styles)
 
     def test_project_and_dashboard_routes_serve_their_pages(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
@@ -535,6 +542,7 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no quedÃ
                 self.assertIn(b"data-theme-toggle", response.read())
         finally:
             server.shutdown()
+            server.server_close()
             thread.join(timeout=5)
 
     def test_theme_script_precedes_stylesheet_without_inline(self) -> None:

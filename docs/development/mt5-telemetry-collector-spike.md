@@ -2,15 +2,17 @@
 
 **Fecha:** 2026-10-16
 
-**Estado:** infraestructura local implementada y prueba nativa aprobada; piloto demo pendiente
+**Estado:** piloto demo integrado aprobado; adoptado como fuente operativa primaria
 
-**Decisión:** [ADR-0003](../adr/0003-mt5-push-telemetry-spike.md)
+**Decisiones:** [ADR-0003](../adr/0003-mt5-push-telemetry-spike.md) y
+[ADR-0004](../adr/0004-mt5-collector-primary-source.md)
 
 ## Objetivo
 
-Comprobar si un colector MQL5 propio complementa la API Python cuando el terminal
-está en otra VPS o se necesita reaccionar a actividad con menor demora. El spike
-no reemplaza la fuente Python ni implementa métricas de riesgo.
+Mantener un collector MQL5 propio como fuente operativa identificada por terminal,
+sin ejecutar operaciones y con pocos segundos de demora. La API Python queda como
+herramienta auxiliar para diagnóstico o reconciliación aislada. Este componente
+no implementa métricas de riesgo.
 
 ```text
 Terminal demo MT5
@@ -338,20 +340,22 @@ por bytes y semántica de replay tras desalojo. No acceden a MT5.
 3. Autorizar únicamente `http://127.0.0.1:8766` en una terminal demo.
 4. Configurar localmente `ExpectedDemoLogin` y `ExpectedDemoServer` de la demo
    autorizada y adjuntar el EA a un solo gráfico.
-5. Ejecutar simultáneamente el dashboard con fuente Python.
-6. Comparar cuenta, posiciones, órdenes, Magic Numbers, timestamps y latencia.
+5. Ejecutar el dashboard con la fuente de telemetría y el `source_id` esperado.
+6. Validar cuenta, posiciones, órdenes, Magic Numbers, costes, timestamps y
+   latencia contra el terminal o una captura Python aislada.
 7. Interrumpir el receptor durante más de 12 intervalos: comprobar descartes
    `queue_full`, reanudarlo y verificar avance, drenaje e idempotencia. Repetir con
    token incorrecto y restaurarlo: no debe quedar atascado en un mensaje rechazado.
 8. Reiniciar el EA y comprobar la nueva sesión.
 9. Retirar el EA y revocar/eliminar el token de prueba.
 
-## Gate de decisión
+## Gate de promoción operativa
 
-No se diseñará un endpoint remoto hasta documentar:
+La topología ya fue decidida por ADR-0004. No se usará una cuenta real ni se
+diseñará un endpoint remoto hasta documentar:
 
-- brechas reales de la API Python;
-- latencia y completitud de ambos mecanismos;
+- corrección y completitud del contrato del collector con operaciones reales;
+- latencia y comportamiento prolongado del collector;
 - comportamiento ante desconexiones;
 - consumo del terminal y tamaño de payload;
 - frecuencia necesaria para cuenta, operaciones, riesgo y velas;

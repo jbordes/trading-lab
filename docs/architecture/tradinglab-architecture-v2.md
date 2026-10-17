@@ -90,7 +90,12 @@ El workbook deja de ser el entregable prioritario de incubación. El primer cort
 
 El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza un snapshot mínimo, un buffer acotado y adaptadores separados. MT5 se valida primero; StocksTrader REST se incorpora después para cuentas propias de esa plataforma. Las métricas se implementan únicamente desde contratos aprobados por los socios.
 
-La decisión y el diseño se detallan en [ADR-0002](../adr/0002-local-live-risk-dashboard.md) y [Dashboard local de riesgo](live-risk-dashboard.md).
+Las decisiones y el diseño se detallan en
+[ADR-0002](../adr/0002-local-live-risk-dashboard.md),
+[ADR-0004](../adr/0004-mt5-collector-primary-source.md) y
+[Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza un collector
+MQL5 por terminal como fuente operativa; la API Python queda limitada a
+diagnóstico o reconciliación aislada con identidad explícita.
 
 ## 3. Principios de diseño
 

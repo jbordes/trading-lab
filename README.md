@@ -50,34 +50,24 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
-Con el extra MT5 instalado y un terminal demo autenticado:
-
-```text
-uv sync --locked --extra mt5
-uv run python scripts/live_dashboard.py
-```
-
-La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
-La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una instancia separada con acceso de inversor.
-La vista `Actividad` muestra deals y órdenes históricas recientes junto con duración, éxitos y fallos de la captura.
-
-El colector MQL5 push se mantiene como spike independiente y no se instala en una
-terminal sin revisión y aprobación humana. Su receptor local puede iniciarse con:
+La fuente MT5 operativa es el collector MQL5. Con el receptor local iniciado, el
+mismo token disponible fuera de Git y un `SourceId` configurado en el EA:
 
 ```text
 uv run python scripts/telemetry_receiver.py
-```
-
-Con el mismo `TRADINGLAB_TELEMETRY_TOKEN` disponible en ambos procesos, otra
-terminal puede mostrar la última muestra push validada:
-
-```text
 uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01
 ```
 
+La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
+La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una identidad separada con acceso de inversor.
+La vista `Actividad` muestra la salud de captura. Los deals enviados por el
+collector se incorporarán allí después de validar la zona horaria del servidor.
+
 El adaptador solo consulta `http://127.0.0.1:8766`, no entrega el token al
 navegador y marca la vista como degradada si pasan 30 segundos sin una muestra
-nueva. El `SourceId` debe coincidir con el configurado en el EA.
+nueva. El `SourceId` debe coincidir con el configurado en el EA. La API Python se
+reserva para diagnóstico de una sola terminal por proceso, siempre con ruta e
+identidad explícitas; no es la fuente multterminal del dashboard.
 
 ## Validación del repositorio
 

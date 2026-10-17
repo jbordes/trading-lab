@@ -4,7 +4,8 @@
 
 **Estado:** vigente para el piloto
 
-**Decisión:** [ADR-0002](../adr/0002-local-live-risk-dashboard.md)
+**Decisiones:** [ADR-0002](../adr/0002-local-live-risk-dashboard.md) y
+[ADR-0004](../adr/0004-mt5-collector-primary-source.md)
 
 ## Objetivo
 
@@ -15,21 +16,26 @@ El Excel deja de ser el producto prioritario. Podrá reaparecer como exportació
 ## Flujo inicial
 
 ```text
-Terminal MT5
+Terminal MT5 + collector MQL5
     |
-    | account_info / positions_get / orders_get
-    | history_deals_get / history_orders_get
+    | snapshot identificado + ventana reciente de deals
     v
-Mt5SnapshotSource -- snapshot mínimo --> buffer acotado en memoria
-                                            |
-                                            v
-                                  HTTP solo 127.0.0.1
-                                            |
-                                            v
-                                  dashboard sin build
+receptor autenticado en 127.0.0.1
+    |
+    | último snapshot validado del source_id esperado
+    v
+TelemetrySnapshotSource --> buffer acotado en memoria
+                                  |
+                                  v
+                        HTTP solo 127.0.0.1
+                                  |
+                                  v
+                        dashboard sin build
 ```
 
-El navegador consulta el estado local cada dos segundos. La fuente lee MT5 cada cinco segundos por defecto. Ambos intervalos son independientes y el intervalo de captura es configurable.
+El navegador consulta el estado local cada dos segundos. El collector captura MT5
+cada cinco segundos por defecto y el dashboard consulta el receptor de forma
+independiente. Los intervalos son configurables y no prometen tiempo real estricto.
 
 ## Contrato mínimo del snapshot
 
@@ -44,7 +50,8 @@ La primera frontera compartida contiene únicamente:
   representados como texto para conservar identificadores de 64 bits;
 - símbolo, tipo, volumen, precios, SL/TP, resultado flotante, hora y comentario de
   cada operación disponible;
-- actividad reciente normalizada desde deals y órdenes históricas;
+- estado y ventana acotada de deals recientes; su proyección en la UI queda
+  pendiente de validar la escala horaria del servidor;
 - estado de captura con intentos, éxitos, fallos consecutivos, duración y último
   instante correcto.
 
@@ -55,13 +62,11 @@ repetir todas las operaciones en cada punto.
 
 ## Actividad reciente y estado de captura
 
-Al iniciar, la fuente recupera hasta 24 horas de deals y órdenes históricas. Las
-lecturas posteriores parten dos minutos antes del último cursor observado para
-tolerar llegadas tardías y deduplican por tipo de registro y ticket. Se retienen
-como máximo 200 eventos en memoria. Cada cinco minutos se reconcilia nuevamente
-la ventana completa para no depender de semánticas temporales no documentadas de
-las órdenes históricas. Un reinicio también reconstruye la ventana desde MT5; no
-se crea todavía una base histórica propia.
+En cada captura el collector relee una ventana completa de deals del servidor MT5;
+por defecto cubre una hora y como máximo 200 filas. Informa de forma explícita si
+la ventana está completa, truncada o falló. El receptor reemplaza la vista previa
+por la última ventana validada y no crea todavía una base histórica propia. Los
+deals aún no se muestran en la UI hasta validar la escala horaria del servidor.
 
 El servicio mide cada intento con un reloj monotónico y publica conteos de éxito
 y fallo, fallos consecutivos, duración de la última captura, máximo observado y
@@ -72,17 +77,20 @@ no son métricas de trading.
 
 ### MT5
 
-El adaptador Python es específico de Windows y se conecta al terminal autorizado. Su interfaz pública no incluye `order_send` ni equivalentes. Cada lectura cierra la conexión mediante `shutdown()` aun ante errores. Para una barrera efectiva del lado de la plataforma se usará una contraseña de inversor cuando el broker la admita.
+El [collector de telemetría](../development/mt5-telemetry-collector-spike.md) es la
+fuente MT5 operativa primaria. Se ejecuta dentro de cada terminal, no contiene
+funciones de trading y valida la cuenta y servidor aprobados antes de capturar o
+enviar. Un `source_id` representa una sola identidad y el adaptador del dashboard
+rechaza cualquier fuente distinta de la esperada.
 
-El diagnóstico inmutable ya implementado se conserva para inventario, reconciliación y evidencia; la vista en vivo no lo reemplaza.
+La API Python queda reservada para diagnóstico y reconciliación de una terminal
+por proceso. Debe recibir la ruta explícita y verificar ejecutable, carpeta de
+datos, cuenta y servidor; `initialize()` sin ruta no es una fuente autorizada. No
+se implementará un supervisor Python multterminal mientras el collector cubra el
+flujo operativo. Para una barrera efectiva en cuentas reales se usará acceso de
+inversor cuando el broker lo admita.
 
-El [spike de telemetría push](../development/mt5-telemetry-collector-spike.md)
-evalúa un segundo adaptador para terminales ubicados en otra VPS. Su receptor es
-un proceso loopback separado y no modifica la frontera HTTP read-only del
-dashboard. Solo una comparación contra la captura Python podrá justificar una
-topología remota posterior.
-
-El spike incorpora una ventana móvil de ejecuciones (`deals`) para recuperar
+El collector incorpora una ventana móvil de ejecuciones (`deals`) para recuperar
 actividad entre muestras: una hora y hasta 200 filas por defecto, con estados
 explícitos completo/truncado/error. La vista recibida se reemplaza al reconciliar,
 no se acumulan solapamientos. Es memoria temporal, sin emparejar trades ni
@@ -131,8 +139,8 @@ de Python. No descarga scripts de terceros ni necesita Node. La vista Resumen
 muestra valores directos y una curva reciente de balance/equity. La vista
 Operaciones lista posiciones abiertas y órdenes pendientes y permite filtrar por
 Magic Number sin recargar la página. La vista Actividad muestra la salud de la
-captura y la ventana móvil de deals y órdenes históricas con filtros por tipo y
-Magic Number.
+captura. La ventana de deals recibida por telemetría se incorporará con filtros
+por tipo y Magic Number después de validar la escala horaria del servidor.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 
@@ -149,7 +157,8 @@ Apache ECharts queda seleccionado como candidato para la etapa que incluya histo
 ## Criterios de aceptación del incremento
 
 1. Modo demo usable sin MT5 ni secretos.
-2. Modo MT5 consulta cuenta, posiciones y órdenes mediante la frontera read-only.
+2. Modo MT5 recibe cuenta, posiciones y órdenes desde el collector read-only de
+   la terminal y exige el `source_id` configurado.
 3. La aplicación solo escucha en loopback.
 4. Balance, equity, flotante, margen y conteos se actualizan sin recargar la página.
 5. Un fallo conserva la última muestra válida y se muestra como estado degradado.
@@ -158,7 +167,7 @@ Apache ECharts queda seleccionado como candidato para la etapa que incluya histo
    Numbers sin pérdida de precisión.
 8. El filtro por Magic Number funciona en el navegador y no envía consultas ni
    acciones al terminal.
-9. La actividad reciente se actualiza mediante una ventana incremental solapada,
-   se reconcilia periódicamente, se deduplica y permanece acotada en memoria.
+9. El collector reconcilia una ventana reciente completa, informa truncamiento o
+   error y el receptor conserva únicamente una vista acotada en memoria.
 10. El estado de captura hace visibles duración, último éxito y fallos sin ocultar
     la última muestra válida.

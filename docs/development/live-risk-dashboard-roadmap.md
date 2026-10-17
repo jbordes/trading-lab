@@ -124,8 +124,10 @@ Implementado:
 
 Pendiente:
 
-4. Definir el procedimiento reproducible para compilar, instalar, configurar,
-   verificar y retirar un collector por terminal con aprobación humana.
+4. Validar en una segunda terminal el procedimiento manual reproducible ya
+   documentado para compilar, instalar, configurar, verificar, actualizar y
+   retirar un collector con aprobación humana. Automatizar solo después de
+   conocer sus excepciones reales.
 5. Diseñar cómo presentar y alternar varias fuentes en una misma interfaz sin
    asumir todavía una base, cola o despliegue remoto.
 6. Completar la validación acotada con operaciones antes de usar cuentas reales.

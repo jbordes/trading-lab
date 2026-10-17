@@ -337,6 +337,11 @@ por bytes y semántica de replay tras desalojo. No acceden a MT5.
 
 ### Procedimiento supervisado
 
+El procedimiento operativo completo, incluida la coexistencia multterminal,
+actualización, rollback, retiro y evidencia mínima, está en
+[Operación supervisada del collector MT5](mt5-collector-operations.md). La lista
+siguiente conserva el alcance específico del piloto:
+
 1. Revisar la fuente y compilarla con MetaEditor sin warnings.
 2. Iniciar el receptor con un token efímero.
 3. Autorizar únicamente `http://127.0.0.1:8766` en una terminal demo.

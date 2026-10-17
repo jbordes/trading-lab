@@ -1,30 +1,20 @@
 "use strict";
 
 const ids = [
-  "status", "freshness", "source", "account", "server", "currency", "balance",
-  "equity", "profit", "margin-free", "margin-level", "positions", "orders", "margin"
+  "status", "freshness", "account-identity", "balance",
+  "equity", "profit-line", "margin-free", "margin-level", "positions", "orders", "margin", "last-reading"
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const statusDot = document.getElementById("status-dot");
-const identityPanel = document.querySelector(".identity");
 const metricsPanel = document.querySelector(".metrics");
-const sourcePill = document.getElementById("source-pill");
-const groupByBotInput = document.getElementById("group-by-bot");
+const equityCard = document.getElementById("equity-card");
+const sourceDescription = document.getElementById("source-description");
+const operationsNote = document.getElementById("operations-note");
 const errorHuman = document.getElementById("error-human");
 const errorTechnical = document.getElementById("error-technical");
 const errorTechnicalDetails = document.getElementById("error-technical-details");
 const plainSummary = document.getElementById("plain-summary");
-const riskBadge = document.getElementById("risk-badge");
-const dddMeter = document.getElementById("ddd-meter");
-const dddValue = document.getElementById("ddd-value");
-const dddFill = document.getElementById("ddd-fill");
-const dddCaption = document.getElementById("ddd-caption");
-const maxddMeter = document.getElementById("maxdd-meter");
-const maxddValue = document.getElementById("maxdd-value");
-const maxddFill = document.getElementById("maxdd-fill");
-const maxddCaption = document.getElementById("maxdd-caption");
 const errorBox = document.getElementById("error");
-const profitCard = document.getElementById("profit-card");
 const chartEmpty = document.getElementById("chart-empty");
 const chart = document.getElementById("chart");
 const chartHigh = document.getElementById("chart-high");
@@ -48,44 +38,50 @@ const clearFilter = document.getElementById("clear-filter");
 let latestOperations = [];
 let latestCurrency = "USD";
 let latestActivity = [];
-let latestActivityDataKey = "";
-let latestActivitySignature = "";
-let latestActivityWindowHours = 24;
 let latestIntervalSeconds = 5;
 let lastObservedAt = null;
 let latestOperationsSignature = "";
 let latestMagicKey = "";
-let latestActivityMagicKey = "";
 let activeView = "overview";
 let lastHistory = [];
-let latestSource = "MT5";
+let telemetryMode = false;
 let lastPollSince = null;
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
-  body: document.getElementById("activity-body"),
-  empty: document.getElementById("activity-empty"),
-  magicFilter: document.getElementById("activity-magic-filter"),
-  magicOptions: document.getElementById("activity-magic-options"),
-  kindFilter: document.getElementById("activity-kind-filter"),
-  resultFilter: document.getElementById("activity-result-filter"),
-  windowPnl: document.getElementById("window-pnl-value"),
-  clearFilter: document.getElementById("clear-activity-filter"),
-  visible: document.getElementById("visible-activity"),
-  deals: document.getElementById("visible-deals"),
-  orders: document.getElementById("visible-history-orders"),
-  copy: document.getElementById("activity-copy"),
+  content: document.getElementById("activity-content"),
 };
 
 const captureElements = {
   health: document.getElementById("capture-health"),
-  streak: document.getElementById("capture-streak"),
   lastSuccess: document.getElementById("capture-last-success"),
-  age: document.getElementById("capture-age"),
-  duration: document.getElementById("capture-duration"),
-  maxDuration: document.getElementById("capture-max-duration"),
+  streak: document.getElementById("capture-streak"),
   attempts: document.getElementById("capture-attempts"),
   results: document.getElementById("capture-results"),
+};
+
+const sourceHealthElements = {
+  label: document.getElementById("source-health-label"),
+  id: document.getElementById("source-health-id"),
+  version: document.getElementById("source-health-version"),
+  checked: document.getElementById("source-health-checked"),
+};
+
+const receiverElements = {
+  summary: document.getElementById("receiver-summary"),
+  accepted: document.getElementById("rc-accepted"),
+  duplicates: document.getElementById("rc-duplicates"),
+  gaps: document.getElementById("rc-gaps"),
+  retained: document.getElementById("rc-retained"),
+  sessions: document.getElementById("rc-sessions"),
+  history: document.getElementById("rc-history"),
+};
+
+const HISTORY_STATUS_LABELS = {
+  complete: "Completo",
+  truncated: "Truncado",
+  error: "Con error",
+  unavailable: "Sin datos",
 };
 
 const operationTypes = {
@@ -194,6 +190,16 @@ const captureHealthLabels = {
   starting: "Iniciando",
 };
 
+const SOURCE_LABELS = {
+  demo: "Demo local · datos simulados",
+  "mt5-telemetry": "MT5 · telemetría",
+  mt5: "MT5 · lectura directa",
+};
+
+function sourceLabel(source) {
+  return SOURCE_LABELS[source] || "Fuente local";
+}
+
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
@@ -203,66 +209,13 @@ function toDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// PROTOTIPO incremento 1: el panel de riesgo muestra la estructura final con
-// valores ilustrativos SOLO para la fuente demo. Los números reales llegarán
-// desde el snapshot cuando el contrato DDD/Max DD se apruebe con el socio.
-const DEMO_RISK = {
-  ddd: { usedPercent: 19, value: -0.95, limit: 5, caption: "reset a medianoche (Madrid)" },
-  maxdd: { usedPercent: 62, value: -12.3, limit: 20, caption: "acumulado desde el inicio de la incubación" },
-};
-
-const madridPartsFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-});
-
-function madridResetLabel() {
-  const parts = madridPartsFormatter.formatToParts(new Date());
-  const hour = Number(parts.find((part) => part.type === "hour").value);
-  const minute = Number(parts.find((part) => part.type === "minute").value);
-  const second = Number(parts.find((part) => part.type === "second").value);
-  const remaining = (24 * 3600 - (hour * 3600 + minute * 60 + second)) % (24 * 3600);
-  return `faltan ${elapsed(remaining)}`;
-}
-
-function setRiskMeter(meter, valueEl, fillEl, captionEl, metric) {
-  setText(valueEl, `${decimal(metric.value)} %`);
-  const percent = Math.min(100, metric.usedPercent);
-  fillEl.style.width = `${percent}%`;
-  meter.classList.toggle("warn", percent >= 50 && percent < 80);
-  meter.classList.toggle("critical", percent >= 80);
-  setText(captionEl, `Usado el ${Math.round(percent)} % del límite (${decimal(metric.limit)} %) · ${metric.caption}`);
-}
-
-function clearRiskMeter(meter, valueEl, fillEl, captionEl) {
-  setText(valueEl, "—");
-  fillEl.style.width = "0%";
-  meter.classList.remove("warn", "critical");
-  setText(captionEl, "Fórmula y límites pendientes de validación con el socio.");
-}
-
-function renderRisk(source) {
-  if (source === "demo") {
-    setText(riskBadge, "Contrato pendiente · valores ilustrativos");
-    const ddd = { ...DEMO_RISK.ddd, caption: `${DEMO_RISK.ddd.caption} · ${madridResetLabel()}` };
-    setRiskMeter(dddMeter, dddValue, dddFill, dddCaption, ddd);
-    setRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption, DEMO_RISK.maxdd);
-  } else {
-    setText(riskBadge, "Contrato pendiente");
-    clearRiskMeter(dddMeter, dddValue, dddFill, dddCaption);
-    clearRiskMeter(maxddMeter, maxddValue, maxddFill, maxddCaption);
-  }
-}
-
 function renderSummary(value, currency, status) {
   const plural = (count, singular, pluralForm) => `${count} ${count === 1 ? singular : pluralForm}`;
   const positions = plural(value.open_positions || 0, "posición abierta", "posiciones abiertas");
   const orders = plural(value.active_orders || 0, "orden activa", "órdenes activas");
   const profit = money(value.floating_profit || 0, currency, true);
-  const riskPhrase = value.source === "demo"
-    ? "riesgo dentro del límite (valores ilustrativos)"
-    : "métricas de riesgo pendientes de contrato";
   const capturePhrase = status === "connected" ? "" : " · captura degradada, los datos pueden estar atrasados";
-  setText(plainSummary, `Cuenta ${latestSource} · ${positions} · ${orders} · resultado abierto ${profit} · ${riskPhrase}${capturePhrase}`);
+  setText(plainSummary, `${sourceLabel(value.source)} · ${positions} · ${orders} · resultado abierto ${profit} · métricas de riesgo pendientes de contrato${capturePhrase}`);
 }
 
 function renderState(state) {
@@ -270,12 +223,13 @@ function renderState(state) {
   statusDot.className = `status-dot ${state.status}`;
   const errorText = state.error || "";
   if (errorText) {
-    setText(errorHuman, "No pudimos leer el terminal. Se conserva la última muestra válida.");
+    setText(errorHuman, "No pudimos leer la fuente de datos. Se conserva la última muestra válida.");
     setText(errorTechnical, errorText);
     errorTechnicalDetails.hidden = false;
   }
   errorBox.hidden = !errorText;
   renderCapture(state);
+  renderSourceHealth(state);
   if (!state.latest) return;
 
   const value = state.latest;
@@ -287,27 +241,30 @@ function renderState(state) {
   const staleData = ageSeconds > 2 * latestIntervalSeconds;
   const criticalAge = ageSeconds > 10 * latestIntervalSeconds;
   setText(elements.freshness, observedAt
-    ? `hace ${elapsed(ageSeconds)} · cada ${elapsed(latestIntervalSeconds)}`
+    ? `Actualizado hace ${elapsed(ageSeconds)}`
     : "sin lectura válida");
   elements.freshness.title = observedAt ? `Última lectura ${timeFormatter.format(observedAt)}` : "";
   elements.freshness.classList.toggle("aged", staleData && !criticalAge);
   elements.freshness.classList.toggle("stale", criticalAge);
-  identityPanel.classList.toggle("stale", staleData);
   metricsPanel.classList.toggle("stale", staleData);
   if (value.observed_at === lastObservedAt) return;
   lastObservedAt = value.observed_at;
   lastPollSince = value.observed_at;
   const currency = value.currency || "USD";
   latestCurrency = currency;
-  latestSource = value.source.toUpperCase();
-  setText(sourcePill, latestSource);
-  elements.source.textContent = latestSource;
-  elements.account.textContent = value.account_reference;
-  elements.server.textContent = value.server;
-  elements.currency.textContent = value.currency || "—";
+  telemetryMode = value.source === "mt5-telemetry";
+  elements["account-identity"].textContent = value.account_reference && value.server
+    ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
+    : "Cuenta sin identificar";
   elements.balance.textContent = money(value.balance, currency);
   elements.equity.textContent = money(value.equity, currency);
-  elements.profit.textContent = money(value.floating_profit, currency, true);
+  const profitWord = value.floating_profit > 0 ? "ganancia" : value.floating_profit < 0 ? "pérdida" : "sin resultado";
+  setText(elements["profit-line"], `Resultado abierto: ${money(value.floating_profit || 0, currency, true)} (${profitWord})`);
+  elements["profit-line"].className = value.floating_profit > 0
+    ? "profit-line positive-text"
+    : value.floating_profit < 0 ? "profit-line negative-text" : "profit-line";
+  equityCard.classList.toggle("positive", value.floating_profit > 0);
+  equityCard.classList.toggle("negative", value.floating_profit < 0);
   elements["margin-free"].textContent = money(value.margin_free, currency);
   elements["margin-level"].textContent = value.margin_level === null
     ? "—"
@@ -315,20 +272,17 @@ function renderState(state) {
   elements.positions.textContent = number(value.open_positions);
   elements.orders.textContent = number(value.active_orders);
   elements.margin.textContent = money(value.margin, currency);
-  renderRisk(value.source);
+  setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
+  const health = state.source_health || {};
+  const sourceId = health.source_id ? ` · ${health.source_id}` : "";
+  const collector = health.collector_version ? ` · Colector ${health.collector_version}` : "";
+  setText(sourceDescription, `${sourceLabel(value.source)}${sourceId}${collector}`);
   renderSummary(value, currency, state.status);
-  profitCard.classList.toggle("positive", value.floating_profit > 0);
-  profitCard.classList.toggle("negative", value.floating_profit < 0);
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
   operationsBadge.textContent = number(latestOperations.length);
   if (activeView === "operations") renderOperations();
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
-  latestActivityWindowHours = value.activity_window_hours || 24;
-  const nextActivityKey = JSON.stringify(nextActivity);
-  if (nextActivityKey !== latestActivityDataKey) {
-    latestActivity = nextActivity;
-    latestActivityDataKey = nextActivityKey;
-  }
+  latestActivity = nextActivity;
   activityElements.badge.textContent = number(latestActivity.length);
   if (activeView === "activity") renderActivity();
   if (state.history_truncated) {
@@ -348,109 +302,148 @@ function renderCapture(state) {
   captureElements.health.className = state.status === "connected"
     ? "positive-text"
     : state.status === "starting" ? "" : "negative-text";
-  setText(captureElements.streak, failures === 0
-    ? "Sin fallos consecutivos"
-    : `${number(failures)} fallo${failures === 1 ? "" : "s"} consecutivo${failures === 1 ? "" : "s"}`);
   const lastSuccessAt = capture.last_success_at ? toDate(capture.last_success_at) : null;
   setText(captureElements.lastSuccess, lastSuccessAt ? timeFormatter.format(lastSuccessAt) : "—");
-  const ageSeconds = lastSuccessAt
-    ? Math.max(0, (Date.now() - lastSuccessAt.getTime()) / 1000)
-    : null;
-  setText(captureElements.age, ageSeconds === null ? "Edad —" : `Edad ${elapsed(ageSeconds)}`);
-  setText(captureElements.duration, Number.isFinite(capture.last_duration_ms)
-    ? `${number(capture.last_duration_ms)} ms`
-    : "—");
-  setText(captureElements.maxDuration, Number.isFinite(capture.max_duration_ms)
-    ? `Máximo ${number(capture.max_duration_ms)} ms`
-    : "Máximo —");
+  setText(captureElements.streak, failures === 0 ? "Sin fallos" : number(failures));
+  captureElements.streak.className = failures === 0 ? "" : "negative-text";
   setText(captureElements.attempts, number(capture.attempt_count || 0));
-  setText(captureElements.results, `${number(capture.success_count || 0)} correctos · ${number(capture.failure_count || 0)} fallidos`);
+  const duration = Number.isFinite(capture.last_duration_ms) ? `${number(capture.last_duration_ms)} ms` : "—";
+  const maxDuration = Number.isFinite(capture.max_duration_ms) ? `${number(capture.max_duration_ms)} ms` : "—";
+  setText(captureElements.results, `${number(capture.success_count || 0)} éxitos · ${number(capture.failure_count || 0)} fallos · duración última ${duration} · máxima ${maxDuration}`);
+}
+
+function renderSourceHealth(state) {
+  const health = state.source_health || {};
+  const label = state.latest ? sourceLabel(state.latest.source) : "Fuente local";
+  setText(sourceHealthElements.label, label);
+  const availability = health.availability;
+  if (availability === "available" && health.receiver) {
+    const receiver = health.receiver;
+    setText(sourceHealthElements.id, health.source_id ? `Identificador: ${health.source_id}` : "");
+    setText(sourceHealthElements.version, health.collector_version
+      ? `Colector: ${health.collector_version}`
+      : "Colector: no informado todavía");
+    const checkedAt = health.checked_at ? toDate(health.checked_at) : null;
+    setText(sourceHealthElements.checked, checkedAt
+      ? `Última verificación: ${timeFormatter.format(checkedAt)}`
+      : "");
+    const observations = [];
+    if (receiver.missing_sequences > 0) {
+      observations.push(`${number(receiver.missing_sequences)} secuencias faltantes`);
+    }
+    if (receiver.history_status === "truncated" || receiver.history_status === "error") {
+      observations.push("historial incompleto");
+    }
+    setText(receiverElements.summary, observations.length
+      ? `Receptor local con observaciones: ${observations.join(" y ")}.`
+      : receiver.accepted === 0
+        ? "El receptor está disponible pero todavía no recibió mensajes."
+        : "Receptor local disponible y sin observaciones.");
+    receiverElements.summary.className = observations.length ? "health-summary warn-text" : "health-summary";
+    receiverElements.summary.title = health.error || "";
+    setText(receiverElements.accepted, number(receiver.accepted));
+    setText(receiverElements.duplicates, number(receiver.duplicates));
+    setText(receiverElements.gaps, number(receiver.missing_sequences));
+    receiverElements.gaps.className = receiver.missing_sequences > 0 ? "warn-text" : "";
+    setText(receiverElements.retained, number(receiver.retained));
+    setText(receiverElements.sessions, number(receiver.retained_sessions));
+    setText(receiverElements.history, HISTORY_STATUS_LABELS[receiver.history_status] || receiver.history_status);
+    receiverElements.history.className = receiver.history_status === "truncated" || receiver.history_status === "error"
+      ? "warn-text"
+      : "";
+    return;
+  }
+  if (availability === "unavailable") {
+    setText(sourceHealthElements.id, health.source_id ? `Identificador: ${health.source_id}` : "");
+    setText(sourceHealthElements.version, health.collector_version
+      ? `Colector: ${health.collector_version}`
+      : "Colector: no informado todavía");
+    setText(sourceHealthElements.checked, "");
+    setText(receiverElements.summary, "No pudimos consultar el estado del receptor.");
+    receiverElements.summary.className = "health-summary warn-text";
+    receiverElements.summary.title = health.error || "";
+  } else {
+    setText(sourceHealthElements.id, "Sin receptor de telemetría: esta fuente no aplica.");
+    setText(sourceHealthElements.version, "");
+    setText(sourceHealthElements.checked, "");
+    setText(receiverElements.summary, "La salud del receptor no aplica para esta fuente.");
+    receiverElements.summary.className = "health-summary";
+    receiverElements.summary.title = "";
+  }
+  ["accepted", "duplicates", "gaps", "retained", "sessions", "history"].forEach((key) => {
+    setText(receiverElements[key], "—");
+    receiverElements[key].className = "";
+  });
 }
 
 function renderActivity() {
-  const magic = activityElements.magicFilter.value.trim();
-  const kind = activityElements.kindFilter.value;
-  const result = activityElements.resultFilter.value;
-  const signature = `${magic}|${kind}|${result}|${latestActivityWindowHours}|${latestCurrency}|${latestSource}|${latestActivityDataKey}`;
-  if (signature === latestActivitySignature) return;
-  latestActivitySignature = signature;
-  const filtered = latestActivity.filter((item) => {
-    if (magic && String(item.magic_number) !== magic) return false;
-    if (kind && item.category !== kind) return false;
-    if (result) {
-      const net = netOf(item) || 0;
-      if (result === "profit" && net <= 0) return false;
-      if (result === "loss" && net >= 0) return false;
-    }
-    return true;
-  });
-  const magicNumbers = [...new Set(latestActivity.map((item) => String(item.magic_number)))];
-  magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  const magicKey = magicNumbers.join(",");
-  if (magicKey !== latestActivityMagicKey) {
-    latestActivityMagicKey = magicKey;
-    activityElements.magicOptions.replaceChildren(...magicNumbers.map((value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      return option;
-    }));
+  activityElements.content.replaceChildren(...buildActivityContent(latestActivity));
+}
+
+function buildActivityContent(events) {
+  if (telemetryMode) {
+    const block = document.createElement("div");
+    block.className = "activity-info";
+    const text = document.createElement("p");
+    text.textContent = "Todavía no mostramos operaciones cerradas en la telemetría. Estamos validando la zona horaria del servidor de MetaTrader 5 y los resultados antes de publicarlos.";
+    const link = document.createElement("a");
+    link.href = "#operations";
+    link.textContent = "Ver operaciones abiertas";
+    block.append(text, link);
+    return [block];
   }
-  activityElements.body.replaceChildren(...filtered.map(activityRow));
-  activityElements.empty.hidden = filtered.length > 0;
-  activityElements.empty.textContent = latestActivity.length === 0
-    ? `${latestSource} no informa actividad dentro de la ventana actual.`
-    : "Ningún evento coincide con los filtros.";
-  activityElements.visible.textContent = (magic || kind || result)
-    ? `${number(filtered.length)} de ${number(latestActivity.length)}`
-    : number(filtered.length);
-  activityElements.deals.textContent = number(filtered.filter((item) => item.category === "deal").length);
-  activityElements.orders.textContent = number(filtered.filter((item) => item.category === "order").length);
-  activityElements.copy.textContent = `Operaciones cerradas (deals) y órdenes de las últimas ${number(latestActivityWindowHours)} horas.`;
-  const windowNet = latestActivity.reduce((total, item) => total + (netOf(item) || 0), 0);
-  setText(activityElements.windowPnl, money(windowNet, latestCurrency, true));
-  activityElements.windowPnl.className = windowNet > 0 ? "positive" : windowNet < 0 ? "negative" : "";
-  activityElements.clearFilter.disabled = !magic && !kind && !result;
-}
-
-function netOf(activity) {
-  const components = [activity.profit, activity.commission, activity.swap, activity.fee]
-    .filter((value) => Number.isFinite(value));
-  return components.length ? components.reduce((total, value) => total + value, 0) : null;
-}
-
-function activityRow(activity) {
-  const row = document.createElement("tr");
-  const occurredAt = toDate(activity.occurred_at);
-  row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—"));
-  const eventCell = document.createElement("td");
-  const badge = document.createElement("span");
-  badge.className = `operation-kind ${activity.category}`;
-  badge.textContent = activity.category === "deal" ? "Deal" : "Orden";
-  eventCell.appendChild(badge);
-  const eventText = document.createElement("small");
-  eventText.className = "activity-event";
-  const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
-  const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
-  eventText.textContent = stateName ? `${eventName} · ${stateName}` : eventName;
-  eventCell.appendChild(eventText);
-  row.appendChild(eventCell);
-  row.appendChild(detailCell(`#${activity.ticket}`, `Magic ${activity.magic_number}`, "mono"));
-  row.appendChild(detailCell(activity.symbol, activity.comment || "Sin comentario"));
-  row.appendChild(detailCell(decimal(activity.volume), price(activity.price), "numeric"));
-
-  const netResult = netOf(activity);
-  const breakdown = netResult !== null
-    ? `P&L ${money(activity.profit || 0, latestCurrency)} · costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
-    : "Sin resultado monetario";
-  row.appendChild(detailCell(
-    netResult === null ? "—" : money(netResult, latestCurrency, true),
-    breakdown,
-    `numeric ${netResult === null ? "" : netResult > 0 ? "positive-text" : netResult < 0 ? "negative-text" : ""}`,
-  ));
-  const reference = activity.position_id ? `Posición ${activity.position_id}` : "Sin posición";
-  const order = activity.order_ticket ? `Orden ${activity.order_ticket}` : "";
-  row.appendChild(detailCell(reference, order));
-  return row;
+  if (events.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "operations-empty";
+    empty.textContent = "Esta fuente no informa actividad reciente en esta versión.";
+    return [empty];
+  }
+  const nodes = [];
+  const chip = document.createElement("p");
+  chip.className = "activity-demo-chip";
+  chip.textContent = "Datos de demostración: los eventos son sintéticos y sirven para validar la interfaz.";
+  nodes.push(chip);
+  const table = document.createElement("table");
+  table.className = "operations-table activity-table";
+  const caption = document.createElement("caption");
+  caption.className = "sr-only";
+  caption.textContent = "Actividad reciente informada por la fuente";
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  ["Hora", "Evento", "Instrumento", "Magic", "Resultado"].forEach((label, index) => {
+    const th = document.createElement("th");
+    th.setAttribute("scope", "col");
+    if (index === 4) th.className = "numeric";
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  const tbody = document.createElement("tbody");
+  events.forEach((activity) => {
+    const row = document.createElement("tr");
+    const occurredAt = toDate(activity.occurred_at);
+    row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—", "", "Hora"));
+    const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
+    const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
+    row.appendChild(textCell(stateName ? `${eventName} · ${stateName}` : eventName, "", "Evento"));
+    row.appendChild(textCell(activity.symbol, "", "Instrumento"));
+    row.appendChild(textCell(String(activity.magic_number), "", "Magic"));
+    const profitCell = document.createElement("td");
+    profitCell.className = "numeric";
+    profitCell.setAttribute("data-label", "Resultado");
+    if (Number.isFinite(activity.profit)) {
+      profitCell.textContent = money(activity.profit, latestCurrency, true);
+      if (activity.profit > 0) profitCell.classList.add("positive-text");
+      else if (activity.profit < 0) profitCell.classList.add("negative-text");
+    } else {
+      profitCell.textContent = "—";
+    }
+    row.appendChild(profitCell);
+    tbody.appendChild(row);
+  });
+  table.append(caption, thead, tbody);
+  nodes.push(table);
+  return nodes;
 }
 
 function elapsed(seconds) {
@@ -461,8 +454,7 @@ function elapsed(seconds) {
 
 function renderOperations() {
   const filter = magicFilter.value.trim();
-  const grouped = groupByBotInput.checked;
-  const signature = `${latestCurrency}|${filter}|${grouped}|${JSON.stringify(latestOperations)}`;
+  const signature = `${latestCurrency}|${filter}|${JSON.stringify(latestOperations)}`;
   if (signature === latestOperationsSignature) return;
   latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
@@ -480,11 +472,12 @@ function renderOperations() {
     }));
   }
 
-  operationsBody.replaceChildren(...operationRows(filtered, grouped));
+  operationsBody.replaceChildren(...filtered.flatMap(operationRow));
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
-    ? `${latestSource} no informa operaciones activas.`
-    : "Ninguna operación coincide con ese magic number.";
+    ? "La fuente no informa operaciones abiertas."
+    : "Ninguna operación coincide con ese Magic.";
+  operationsNote.hidden = !(telemetryMode && latestOperations.length > 0);
   visibleOperations.textContent = filter
     ? `${number(filtered.length)} de ${number(latestOperations.length)}`
     : number(filtered.length);
@@ -493,99 +486,100 @@ function renderOperations() {
   clearFilter.disabled = !filter;
 }
 
-function operationRows(operations, grouped) {
-  if (!grouped) return operations.map(operationRow);
-  const groups = new Map();
-  for (const operation of operations) {
-    const magic = String(operation.magic_number);
-    if (!groups.has(magic)) groups.set(magic, []);
-    groups.get(magic).push(operation);
-  }
-  const magics = [...groups.keys()].sort(
-    (left, right) => left.localeCompare(right, undefined, { numeric: true }),
-  );
-  const rows = [];
-  for (const magic of magics) {
-    const list = groups.get(magic);
-    rows.push(groupRow(magic, list));
-    rows.push(...list.map(operationRow));
-  }
-  return rows;
-}
-
-function groupRow(magic, operations) {
-  const row = document.createElement("tr");
-  row.className = "group-row";
-  const labelCell = document.createElement("td");
-  labelCell.colSpan = 7;
-  const label = document.createElement("strong");
-  label.className = "group-magic";
-  label.textContent = `Bot · Magic ${magic}`;
-  const count = document.createElement("span");
-  count.className = "group-count";
-  count.textContent = `${operations.length} operación${operations.length === 1 ? "" : "es"}`;
-  labelCell.append(label, count);
-  const profitSum = operations.reduce(
-    (total, operation) => total + (Number.isFinite(operation.floating_profit) ? operation.floating_profit : 0),
-    0,
-  );
-  row.setAttribute("aria-label", `Bot Magic ${magic}: ${operations.length} operación${operations.length === 1 ? "" : "es"}, P&L ${money(profitSum, latestCurrency, true)}`);
-  const profitCell = document.createElement("td");
-  profitCell.className = "numeric operation-profit";
-  if (profitSum > 0) profitCell.classList.add("positive");
-  else if (profitSum < 0) profitCell.classList.add("negative");
-  profitCell.textContent = money(profitSum, latestCurrency, true);
-  const timeCell = document.createElement("td");
-  row.append(labelCell, profitCell, timeCell);
-  return row;
-}
-
 function operationRow(operation) {
   const row = document.createElement("tr");
   const kind = operation.kind === "position" ? "Posición" : "Orden";
   const kindCell = document.createElement("td");
+  kindCell.setAttribute("data-label", "Operación");
   const badge = document.createElement("span");
   badge.className = `operation-kind ${operation.kind}`;
   badge.textContent = kind;
   kindCell.appendChild(badge);
+  const typeText = document.createElement("small");
+  typeText.className = "cell-detail-text";
+  typeText.textContent = operationTypes[operation.operation_type] || operation.operation_type;
+  kindCell.appendChild(typeText);
   row.appendChild(kindCell);
-  row.appendChild(detailCell(`#${operation.ticket}`, `Magic ${operation.magic_number}`, "mono"));
-  row.appendChild(detailCell(operation.symbol, operation.comment || "Sin comentario"));
-  row.appendChild(textCell(operationTypes[operation.operation_type] || operation.operation_type));
-  row.appendChild(textCell(decimal(operation.volume), "numeric"));
-  row.appendChild(detailCell(price(operation.price_open), price(operation.price_current), "numeric"));
-  row.appendChild(detailCell(price(operation.stop_loss), price(operation.take_profit), "numeric"));
+  row.appendChild(detailCell(operation.symbol, operation.comment || "Sin comentario", "", "Instrumento"));
+  row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
 
+  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
   const profit = document.createElement("td");
   profit.className = "numeric operation-profit";
-  if (Number.isFinite(operation.floating_profit)) {
+  profit.setAttribute("data-label", "Resultado abierto");
+  if (operation.kind === "position" && Number.isFinite(operation.floating_profit)) {
     profit.textContent = money(operation.floating_profit, latestCurrency, true);
     if (operation.floating_profit > 0) profit.classList.add("positive");
     else if (operation.floating_profit < 0) profit.classList.add("negative");
+  } else if (operation.kind === "order") {
+    profit.textContent = "No aplica";
+    profit.classList.add("na");
   } else {
     profit.textContent = "—";
   }
   row.appendChild(profit);
-  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
-  if (openedAt) {
-    const ageSeconds = Math.max(0, (Date.now() - openedAt.getTime()) / 1000);
-    row.appendChild(detailCell(dateTimeFormatter.format(openedAt), `hace ${elapsed(ageSeconds)}`));
-  } else {
-    row.appendChild(textCell("—"));
-  }
-  return row;
+  row.appendChild(textCell(
+    openedAt ? dateTimeFormatter.format(openedAt) : "No informada",
+    "",
+    "Hora",
+  ));
+
+  const detailRow = document.createElement("tr");
+  detailRow.className = "detail-row";
+  detailRow.hidden = true;
+  const detailCellEl = document.createElement("td");
+  detailCellEl.colSpan = 6;
+  const list = document.createElement("dl");
+  const addDetail = (term, value) => {
+    const dt = document.createElement("dt");
+    dt.textContent = term;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    list.append(dt, dd);
+  };
+  addDetail("Ticket", `#${operation.ticket}`);
+  addDetail("Magic", String(operation.magic_number));
+  addDetail("Precio de apertura", price(operation.price_open));
+  addDetail("Precio actual", price(operation.price_current));
+  addDetail("Stop loss", price(operation.stop_loss));
+  addDetail("Take profit", price(operation.take_profit));
+  addDetail("Comentario", operation.comment || "Sin comentario");
+  addDetail("Hora", openedAt
+    ? dateTimeFormatter.format(openedAt)
+    : "La fuente todavía no expone una hora validada.");
+  detailCellEl.appendChild(list);
+  detailRow.appendChild(detailCellEl);
+
+  const buttonCell = document.createElement("td");
+  buttonCell.setAttribute("data-label", "");
+  const button = document.createElement("button");
+  button.className = "detail-toggle";
+  button.type = "button";
+  button.setAttribute("aria-expanded", "false");
+  button.textContent = "Ver detalle";
+  button.addEventListener("click", () => {
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    button.setAttribute("aria-expanded", String(!expanded));
+    button.textContent = expanded ? "Ver detalle" : "Ocultar detalle";
+    detailRow.hidden = expanded;
+  });
+  buttonCell.appendChild(button);
+  row.appendChild(buttonCell);
+  return [row, detailRow];
 }
 
-function textCell(value, className = "") {
+function textCell(value, className = "", dataLabel = "") {
   const cell = document.createElement("td");
   cell.className = className;
+  if (dataLabel) cell.setAttribute("data-label", dataLabel);
   cell.textContent = value;
   return cell;
 }
 
-function detailCell(primary, secondary, className = "") {
+function detailCell(primary, secondary, className = "", dataLabel = "") {
   const cell = document.createElement("td");
   cell.className = `cell-detail ${className}`.trim();
+  if (dataLabel) cell.setAttribute("data-label", dataLabel);
   const strong = document.createElement("strong");
   strong.textContent = primary;
   const small = document.createElement("small");
@@ -615,7 +609,7 @@ function renderChart(history, intervalSeconds) {
     chartEmpty.hidden = false;
     balanceLine.setAttribute("points", "");
     equityLine.setAttribute("points", "");
-    balanceReference.hidden = true;
+    balanceReference.classList.add("is-hidden");
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
     clearLabels();
     return;
@@ -642,7 +636,7 @@ function renderChart(history, intervalSeconds) {
   const referenceY = 295 - ((history[0].balance - low) / (high - low)) * 270;
   balanceReference.setAttribute("y1", String(referenceY));
   balanceReference.setAttribute("y2", String(referenceY));
-  balanceReference.hidden = false;
+  balanceReference.classList.remove("is-hidden");
   chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
   chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
   chartStart.textContent = startAt ? timeFormatter.format(startAt) : "";
@@ -745,10 +739,6 @@ function loadStoredFilters() {
   try {
     const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
     magicFilter.value = stored.magic || "";
-    activityElements.magicFilter.value = stored.activityMagic || "";
-    activityElements.kindFilter.value = stored.activityKind || "";
-    activityElements.resultFilter.value = stored.activityResult || "";
-    groupByBotInput.checked = Boolean(stored.groupByBot);
   } catch (_) {
     // almacenamiento no disponible
   }
@@ -758,10 +748,6 @@ function saveStoredFilters() {
   try {
     localStorage.setItem(FILTER_STORE, JSON.stringify({
       magic: magicFilter.value,
-      activityMagic: activityElements.magicFilter.value,
-      activityKind: activityElements.kindFilter.value,
-      activityResult: activityElements.resultFilter.value,
-      groupByBot: groupByBotInput.checked,
     }));
   } catch (_) {
     // almacenamiento no disponible
@@ -769,22 +755,10 @@ function saveStoredFilters() {
 }
 
 magicFilter.addEventListener("input", () => { renderOperations(); saveStoredFilters(); });
-groupByBotInput.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
   magicFilter.focus();
   renderOperations();
-  saveStoredFilters();
-});
-activityElements.magicFilter.addEventListener("input", () => { renderActivity(); saveStoredFilters(); });
-activityElements.kindFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
-activityElements.resultFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
-activityElements.clearFilter.addEventListener("click", () => {
-  activityElements.magicFilter.value = "";
-  activityElements.kindFilter.value = "";
-  activityElements.resultFilter.value = "";
-  activityElements.magicFilter.focus();
-  renderActivity();
   saveStoredFilters();
 });
 function scheduleRefresh() {

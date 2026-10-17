@@ -14,20 +14,18 @@ El dashboard es el primer producto de observabilidad del piloto (mod. 2.4): la v
 2. **Dos audiencias, una pantalla**: el trader (detalle operativo, trazabilidad) y el socio no técnico (riesgo en castellano llano).
 3. **El diseño es un contrato más**: cada valor derivado debe poder remitir a su fuente (run, deployment, evidence bundle) cuando exista el catálogo.
 
-## 2. Estado del prototipo (octubre 2026)
+## 2. Estado del prototipo (actualizado 17 de octubre de 2026)
 
-A partir de tres análisis previos (UX, diseño visual, performance en navegador) se aplicaron en fases:
+A partir de tres análisis previos (UX, diseño visual, performance en navegador) se aplicaron en fases y, en octubre de 2026, un rediseño completo según el ADR-0005:
 
-- Corrección del doble encoding UTF-8 y guarda de mojibake en el harness.
-- Números como tablero financiero: signo y color en P&L, ceros neutros, agrupación de miles, locale `es-AR`, formatters `Intl` cacheados.
-- Gráfico honesto: sin letterbox, etiquetas de máximo/mínimo, horas de inicio/fin, ventana temporal, línea de referencia del balance inicial.
-- Frescura visible: chip relativo con tinte al envejecer, atenuación de datos obsoletos, banner de error con mensaje humano y detalle técnico colapsado.
-- Menos churn: guard por `observed_at`, polling encadenado a la cadencia del servidor con timeout y backoff, firmas de render por datos y filtro, sin re-render de vistas ocultas.
-- Historial incremental (`?since=`) con cache de estáticos (ETag/304), HTTP/1.1 y gzip condicional en el servidor local.
-- Panel de riesgo con estructura del incremento 1 y valores ilustrativos solo para la demo (badge "Contrato pendiente · valores ilustrativos", alcance deshabilitado, reloj del reset diario).
-- Vista de operaciones agrupable por bot (prototipo del pendiente 4 de 0C), vista de actividad con resultado neto de la ventana y filtro por resultado.
-- Accesibilidad: patrón real de tabs con navegación por flechas, `aria-live` acotado, `caption` y `scope` en tablas.
-- Fuente demo determinista más realista: balance con deriva, seis operaciones y fallo de captura simulado cada 24 lecturas para validar los estados degradados.
+- Página de proyecto en `/` (qué es TradingLab, pipeline, estado y límites) y panel en `/dashboard`, con navegación cruzada.
+- Tema claro y oscuro con tokens `light-dark()`: paleta cálida tipo reporte y oscuro neutro sin negro puro, validada en WCAG AA; elección persistida sin flash al recargar; superficies planas separadas por bordes de 1px, sin gradientes, sombras ni mayúsculas sostenidas.
+- Resumen curado: equity protagonista con resultado abierto (signo, color y palabra), balance y margen secundarios, franja de origen con fuente, `source_id` y versión del colector, y nota honesta de riesgo sin estimaciones.
+- Operaciones con tabla de cinco columnas y detalle expandible por operación; "No informada" en timestamps no validados; filas apiladas sin scroll horizontal en viewports chicos; agrupación por bot diferida al roadmap.
+- Actividad y estado de la fuente: salud del receptor local (aceptados, duplicados, secuencias faltantes, retenidos, historial) separada de la actualización de la vista, con resumen en lenguaje llano y advertencias solo donde corresponden.
+- Salud de fuente en `/api/state` (`source_health` aditivo, schema v3): el navegador sigue haciendo una única llamada y el token no sale del backend.
+- Se conservan del pulido previo: números como tablero financiero, gráfico honesto, frescura visible, polling encadenado con backoff, historial incremental, ETag/304, accesibilidad de tabs y tablas, y la demo determinista con fallo simulado.
+- El panel de riesgo ilustrativo con valores simulados fue reemplazado por la nota honesta de contrato pendiente: nada de estimaciones sin fórmula aprobada.
 
 ## 3. Evolución por incremento
 

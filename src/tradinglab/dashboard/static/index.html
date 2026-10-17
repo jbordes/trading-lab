@@ -1,267 +1,89 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-AR">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
-    <title>TradingLab Live</title>
+    <meta name="color-scheme" content="dark light">
+    <title>TradingLab</title>
     <link rel="icon" href="data:,">
+    <script src="/assets/theme.js"></script>
     <link rel="stylesheet" href="/assets/styles.css">
-    <script src="/assets/app.js" defer></script>
   </head>
   <body>
-    <noscript><p class="noscript-note">El dashboard requiere JavaScript para mostrar datos en vivo.</p></noscript>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">TRADINGLAB 2.0</p>
-          <h1>Monitor MT5 <span id="source-pill" class="source-pill">—</span></h1>
-          <p class="subtitle">Observación local · Solo lectura</p>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <main class="shell" id="contenido">
+      <nav class="site-nav" aria-label="Navegación principal">
+        <a class="brand" href="/"><strong>TradingLab</strong><span>Laboratorio de estrategias de trading</span></a>
+        <div class="site-nav-links">
+          <a href="/" aria-current="page">Proyecto</a>
+          <a href="/dashboard">Panel de la cuenta</a>
+          <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
         </div>
-        <div class="connection">
-          <span id="status-dot" class="status-dot"></span>
-          <div>
-            <strong id="status" aria-live="polite">Conectando</strong>
-            <small id="freshness">Esperando primera captura</small>
-          </div>
-        </div>
-      </header>
-
-      <div id="error" class="error" role="alert" hidden>
-        <span id="error-human"></span>
-        <details id="error-technical-details" hidden><summary>Detalle técnico</summary><span id="error-technical"></span></details>
-      </div>
-
-      <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
-        <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-selected="true" data-view="overview">Resumen</button>
-        <button class="view-tab" type="button" role="tab" id="tab-operations" aria-selected="false" tabindex="-1" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
-        <button class="view-tab" type="button" role="tab" id="tab-activity" aria-selected="false" tabindex="-1" data-view="activity">Actividad <span id="activity-badge">0</span></button>
       </nav>
 
-      <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview">
-      <section class="identity panel">
-        <div><span>Fuente</span><strong id="source">—</strong></div>
-        <div><span>Cuenta</span><strong id="account">—</strong></div>
-        <div><span>Servidor</span><strong id="server">—</strong></div>
-        <div><span>Moneda</span><strong id="currency">—</strong></div>
+      <section class="hero">
+        <p class="eyebrow">TRADINGLAB 2.0</p>
+        <h1>Investigamos, preparamos, validamos e incubamos estrategias de trading.</h1>
+        <p>
+          Un laboratorio para llevar ideas de StrategyQuant X a MetaTrader 5 con
+          trazabilidad y reproducibilidad: cada bot que se ejecuta puede
+          relacionarse con su estrategia, su configuración y sus resultados.
+        </p>
+        <a class="button-primary" href="/dashboard">Abrir el panel de la cuenta</a>
       </section>
 
-      <section class="metrics" aria-label="Estado de cuenta">
-        <article class="metric-card accent-blue">
-          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
-        </article>
-        <article class="metric-card accent-cyan">
-          <span>Equity</span><strong id="equity">—</strong><small>Valor actual</small>
-        </article>
-        <article class="metric-card" id="profit-card">
-          <span>Resultado abierto (P&amp;L)</span><strong id="profit">—</strong><small>Ganancia/pérdida no realizada</small>
-        </article>
-        <article class="metric-card">
-          <span>Margen libre</span><strong id="margin-free">—</strong><small>Disponible tras margen en uso</small>
-        </article>
+      <section class="project-section" aria-labelledby="como-trabajamos">
+        <h2 id="como-trabajamos">Cómo trabajamos</h2>
+        <ol class="steps">
+          <li><strong>1 · Selección</strong><span>Una estrategia candidata de SQX, con su configuración y resultados.</span></li>
+          <li><strong>2 · Preparación</strong><span>Adaptación versionada a código MQL5, con receta y componentes compartidos.</span></li>
+          <li><strong>3 · Compilación</strong><span>Construcción reproducible con MetaEditor: hashes, logs y manifiesto.</span></li>
+          <li><strong>4 · Validación</strong><span>Controles técnicos y comparación con la estrategia de origen antes de aprobar.</span></li>
+          <li><strong>5 · Incubación</strong><span>Observación controlada en una cuenta demo, con evidencia de vuelta al laboratorio.</span></li>
+        </ol>
       </section>
 
-      <p id="plain-summary" class="plain-summary"></p>
-
-      <section class="panel risk-panel" aria-label="Control de riesgo">
-        <div class="panel-heading">
-          <div><p class="eyebrow">CONTROL DE RIESGO</p><h2>Riesgo del día</h2></div>
-          <div class="risk-heading-right">
-            <label class="risk-scope" for="risk-scope-select">
-              <span>Alcance</span>
-              <select id="risk-scope-select" disabled title="El alcance (cuenta o por bot) se define en el contrato DDD/Max DD con el socio.">
-                <option>Cuenta</option>
-                <option>Por bot / estrategia</option>
-              </select>
-            </label>
-            <span class="pending-badge" id="risk-badge">Contrato pendiente</span>
-          </div>
-        </div>
-        <div class="risk-meters">
-          <div class="risk-meter" id="ddd-meter">
-            <div class="risk-meter-head">
-              <span>Drawdown diario (DDD)</span>
-              <strong id="ddd-value">—</strong>
-            </div>
-            <div class="risk-bar"><div class="risk-bar-fill" id="ddd-fill"></div></div>
-            <p class="risk-caption" id="ddd-caption">Fórmula y límites pendientes de validación con el socio.</p>
-          </div>
-          <div class="risk-meter" id="maxdd-meter">
-            <div class="risk-meter-head">
-              <span>Drawdown máximo total</span>
-              <strong id="maxdd-value">—</strong>
-            </div>
-            <div class="risk-bar"><div class="risk-bar-fill" id="maxdd-fill"></div></div>
-            <p class="risk-caption" id="maxdd-caption">Fórmula y límites pendientes de validación con el socio.</p>
-          </div>
-        </div>
+      <section class="project-section" aria-labelledby="como-se-organiza">
+        <h2 id="como-se-organiza">Cómo se organiza</h2>
+        <ul class="pillars">
+          <li><strong>Git</strong><span>Código, configuración, documentación y decisiones.</span></li>
+          <li><strong>Catálogo</strong><span>Proyectos, estrategias, builds, ejecuciones y métricas.</span></li>
+          <li><strong>Storage</strong><span>Artefactos inmutables con hash y procedencia.</span></li>
+          <li><strong>Herramientas</strong><span>CLI, receptor de telemetría y adaptadores.</span></li>
+        </ul>
       </section>
 
-      <section class="content-grid">
-        <article class="panel chart-panel">
-          <div class="panel-heading">
-            <div><p class="eyebrow">VENTANA LOCAL</p><h2>Balance y equity</h2></div>
-            <div class="panel-heading-right">
-              <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
-              <span id="chart-span" class="chart-span"></span>
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <svg id="chart" viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Evolución reciente de balance y equity">
-              <g id="grid"></g>
-              <polyline id="balance-line" class="line balance-line" points=""></polyline>
-              <polyline id="equity-line" class="line equity-line" points=""></polyline>
-              <line id="balance-reference" class="reference-line" x1="25" x2="975" y1="0" y2="0" hidden></line>
-            </svg>
-            <p id="chart-high" class="chart-label chart-label-high"></p>
-            <p id="chart-low" class="chart-label chart-label-low"></p>
-            <p id="chart-start" class="chart-label chart-label-start"></p>
-            <p id="chart-end" class="chart-label chart-label-end"></p>
-            <p id="chart-empty" class="chart-empty">Recolectando observaciones…</p>
-          </div>
-        </article>
-
-        <aside class="side-stack">
-          <article class="panel compact-panel">
-            <p class="eyebrow">ACTIVIDAD</p>
-            <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
-            <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
-            <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
-            <div class="activity-row"><span>Nivel de margen</span><strong id="margin-level">—</strong></div>
-          </article>
-        </aside>
-      </section>
+      <section class="project-section" aria-labelledby="estado-actual">
+        <h2 id="estado-actual">Estado actual</h2>
+        <p class="status-note">
+          <strong>Octubre de 2026.</strong> El colector MQL5 es la fuente operativa
+          de MetaTrader 5 (un colector y un identificador por cuenta). El panel de
+          la cuenta muestra posiciones, órdenes y salud de la fuente en vivo, en
+          modo demo o con telemetría. Las métricas de riesgo (DDD y Max DD) siguen
+          pendientes de contrato con el socio: no mostramos estimaciones.
+        </p>
       </section>
 
-      <section id="operations-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-operations" hidden>
-        <article class="panel operations-panel">
-          <div class="operations-heading">
-            <div>
-              <p class="eyebrow">MUESTREO ACTUAL</p>
-              <h2>Operaciones activas</h2>
-              <p class="operations-copy">Posiciones abiertas y órdenes pendientes informadas por MT5.</p>
-            </div>
-            <div class="operations-controls">
-              <label class="filter-field" for="magic-filter">
-                <span>Bot / estrategia (magic number)</span>
-                <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
-                <datalist id="magic-options"></datalist>
-              </label>
-              <label class="group-toggle" for="group-by-bot">
-                <input id="group-by-bot" type="checkbox">
-                Agrupar por bot
-              </label>
-            </div>
-          </div>
-
-          <div class="operation-stats">
-            <div><span>Mostradas</span><strong id="visible-operations">0</strong></div>
-            <div><span>Posiciones</span><strong id="visible-positions">0</strong></div>
-            <div><span>Órdenes</span><strong id="visible-orders">0</strong></div>
-            <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
-          </div>
-
-          <div class="operations-table-wrap">
-            <table class="operations-table">
-              <caption class="sr-only">Operaciones activas informadas por la fuente</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Estado</th>
-                  <th scope="col">Ticket / Magic</th>
-                  <th scope="col">Símbolo</th>
-                  <th scope="col">Tipo</th>
-                  <th scope="col" class="numeric">Volumen</th>
-                  <th scope="col" class="numeric">Apertura / Actual</th>
-                  <th scope="col" class="numeric">SL / TP</th>
-                  <th scope="col" class="numeric">P&amp;L</th>
-                  <th scope="col">Hora</th>
-                </tr>
-              </thead>
-              <tbody id="operations-body"></tbody>
-            </table>
-            <p id="operations-empty" class="operations-empty">Esperando operaciones…</p>
-          </div>
-        </article>
+      <section class="project-section" aria-labelledby="limites">
+        <h2 id="limites">Límites del laboratorio</h2>
+        <ul>
+          <li>Solo lectura: el laboratorio no ejecuta operaciones de trading.</li>
+          <li>Cuentas demo antes que cuentas reales.</li>
+          <li>Las métricas se muestran únicamente con fórmulas aprobadas.</li>
+          <li>Los datos permanecen en la máquina local.</li>
+        </ul>
       </section>
 
-      <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
-        <section class="capture-grid" aria-label="Estado de captura">
-          <article class="panel capture-card">
-            <span>Captura</span><strong id="capture-health">Iniciando</strong><small id="capture-streak">Sin lecturas</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Último éxito</span><strong id="capture-last-success">—</strong><small id="capture-age">Edad —</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Duración</span><strong id="capture-duration">—</strong><small id="capture-max-duration">Máximo —</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Intentos</span><strong id="capture-attempts">0</strong><small id="capture-results">0 correctos · 0 fallidos</small>
-          </article>
-        </section>
-
-        <article class="panel operations-panel activity-panel">
-          <div class="operations-heading">
-            <div>
-              <p class="eyebrow">HISTORIAL MÓVIL</p>
-              <h2>Actividad reciente</h2>
-              <p id="activity-copy" class="operations-copy">Operaciones cerradas (deals) y órdenes de las últimas 24 horas.</p>
-              <p class="window-pnl">Resultado neto de la ventana: <strong id="window-pnl-value">—</strong></p>
-            </div>
-            <div class="activity-filters">
-              <label class="filter-field" for="activity-magic-filter">
-                <span>Magic number</span>
-                <input id="activity-magic-filter" type="search" list="activity-magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
-                <datalist id="activity-magic-options"></datalist>
-              </label>
-              <label class="filter-field" for="activity-kind-filter">
-                <span>Tipo de evento</span>
-                <select id="activity-kind-filter">
-                  <option value="">Todos</option>
-                  <option value="deal">Deals</option>
-                  <option value="order">Órdenes históricas</option>
-                </select>
-              </label>
-              <label class="filter-field" for="activity-result-filter">
-                <span>Resultado</span>
-                <select id="activity-result-filter">
-                  <option value="">Todos los resultados</option>
-                  <option value="profit">Con ganancia</option>
-                  <option value="loss">Con pérdida</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
-          <div class="operation-stats">
-            <div><span>Mostrados</span><strong id="visible-activity">0</strong></div>
-            <div><span>Deals</span><strong id="visible-deals">0</strong></div>
-            <div><span>Órdenes</span><strong id="visible-history-orders">0</strong></div>
-            <button id="clear-activity-filter" class="clear-filter" type="button">Limpiar filtros</button>
-          </div>
-
-          <div class="operations-table-wrap">
-            <table class="operations-table activity-table">
-              <caption class="sr-only">Actividad reciente informada por la fuente</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Hora</th>
-                  <th scope="col">Evento</th>
-                  <th scope="col">Ticket / Magic</th>
-                  <th scope="col">Símbolo</th>
-                  <th scope="col" class="numeric">Volumen / Precio</th>
-                  <th scope="col" class="numeric">Resultado neto</th>
-                  <th scope="col">Referencia</th>
-                </tr>
-              </thead>
-              <tbody id="activity-body"></tbody>
-            </table>
-            <p id="activity-empty" class="operations-empty">Recuperando actividad reciente…</p>
-          </div>
-        </article>
+      <section class="project-section" aria-labelledby="documentacion">
+        <h2 id="documentacion">Documentación</h2>
+        <ul>
+          <li><a href="https://github.com/jbordes/trading-lab">Repositorio en GitHub</a></li>
+          <li><a href="https://github.com/jbordes/trading-lab/blob/main/docs/architecture/tradinglab-architecture-v2.md">Arquitectura vigente</a></li>
+          <li><a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/live-risk-dashboard-roadmap.md">Roadmap del panel de la cuenta</a></li>
+        </ul>
       </section>
 
-      <footer>Los datos permanecen en memoria y no se ejecutan operaciones de trading.</footer>
+      <footer>Revisado el 17 de octubre de 2026 · TradingLab 2.0</footer>
     </main>
   </body>
 </html>

@@ -101,7 +101,11 @@ def main(argv: list[str] | None = None) -> int:
     else:  # pragma: no cover - argparse requires one of the two modes
         raise AssertionError("modo de dashboard no resuelto")
 
-    service = LiveDashboardService(source, interval_seconds=args.interval)
+    service = LiveDashboardService(
+        source,
+        interval_seconds=args.interval,
+        health_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
+    )
     server = create_server(service, port=args.port)
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")

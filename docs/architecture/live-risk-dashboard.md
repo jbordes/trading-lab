@@ -137,12 +137,23 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 ## Presentación
 
 La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
-de Python. No descarga scripts de terceros ni necesita Node. La vista Resumen
-muestra valores directos y una curva reciente de balance/equity. La vista
-Operaciones lista posiciones abiertas y órdenes pendientes y permite filtrar por
-Magic Number sin recargar la página. La vista Actividad muestra la salud de la
-captura. La ventana de deals recibida por telemetría se incorporará con filtros
-por tipo y Magic Number después de validar la escala horaria del servidor.
+de Python. No descarga scripts de terceros ni necesita Node. `/` presenta la
+página del proyecto (qué es TradingLab, pipeline, estado y límites) y `/dashboard`
+el panel de la cuenta. Ambas comparten un tema claro y otro oscuro con tokens
+`light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
+sigue la preferencia del sistema, sin flash al recargar.
+
+El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
+principal con el resultado abierto, balance y margen libre secundarios, una curva
+reciente de balance/equity y una franja de origen con la fuente, su identificador
+y la versión del colector. Operaciones lista posiciones abiertas y órdenes
+pendientes con filtro por Magic Number y detalle expandible por operación; los
+timestamps no validados se muestran como "No informada". Actividad presenta el
+estado de la fuente (salud del receptor local de telemetría: aceptados,
+duplicados, secuencias faltantes, retenidos y estado del historial) separado de
+la actualización de la vista, y la actividad reciente según la fuente. La ventana
+de deals recibida por telemetría se incorporará con filtros por tipo y Magic
+Number después de validar la escala horaria del servidor.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 

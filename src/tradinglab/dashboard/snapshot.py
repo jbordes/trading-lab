@@ -95,6 +95,54 @@ class LiveSnapshot:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class ReceiverHealth:
+    """Counters of the local telemetry receiver, accumulated since its start."""
+
+    accepted: int
+    duplicates: int
+    missing_sequences: int
+    retained: int
+    retained_sessions: int
+    history_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceHealth:
+    """Whether the backend could read the source health, never account freshness."""
+
+    availability: str  # "available" | "unavailable" | "not_applicable"
+    source_id: str | None
+    collector_version: str | None
+    checked_at: str | None
+    error: str | None
+    receiver: ReceiverHealth | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "availability": self.availability,
+            "source_id": self.source_id,
+            "collector_version": self.collector_version,
+            "checked_at": self.checked_at,
+            "error": self.error,
+            "receiver": asdict(self.receiver) if self.receiver else None,
+        }
+
+
+class SourceHealthProvider(Protocol):
+    """Optional boundary for sources that can report their own health."""
+
+    def health(self, observed_at: datetime) -> SourceHealth: ...
+
+
+def utc_iso(value: datetime) -> str:
+    """Serialize an aware instant as ISO 8601 UTC ending in Z."""
+
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("El instante debe incluir zona horaria")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 class Mt5LiveClient(Protocol):
     """Read-only portion of the MetaTrader5 module used by the local dashboard."""
 

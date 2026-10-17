@@ -19,7 +19,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from tradinglab.dashboard.service import LiveDashboardService  # noqa: E402
 from tradinglab.dashboard.snapshot import (  # noqa: E402
     DemoSnapshotSource,
+    LiveSnapshot,
     Mt5SnapshotSource,
+    ReceiverHealth,
+    SourceHealth,
 )
 from tradinglab.dashboard.web import create_server  # noqa: E402
 
@@ -43,6 +46,26 @@ HistoricalOrder = namedtuple(
     "HistoricalOrder",
     "ticket position_id magic symbol type state volume_initial price_open time_done_msc time_done time_setup_msc time_setup comment",
 )
+
+
+class FakeHealthProvider:
+    def __init__(self, *, fail: bool = False, receiver: ReceiverHealth | None = None) -> None:
+        self.fail = fail
+        self.receiver = receiver
+        self.calls = 0
+
+    def health(self, observed_at: datetime) -> SourceHealth:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("salud rota")
+        return SourceHealth(
+            availability="available",
+            source_id="demo-terminal-01",
+            collector_version="0.1.0",
+            checked_at="2026-10-14T19:30:05Z",
+            error=None,
+            receiver=self.receiver,
+        )
 
 
 class FakeMt5:
@@ -358,32 +381,34 @@ function functionSource(name) {
   }
   throw new Error(`Función incompleta: ${name}`);
 }
-eval(`${functionSource("netOf")}\n${functionSource("activityRow")}`);
+eval(`${functionSource("buildActivityContent")}`);
 function nodeStub() {
   return {
-    children: [], className: "", textContent: "",
-    appendChild(child) { this.children.push(child); },
+    children: [], className: "", textContent: "", value: "", checked: false,
+    classList: { add() {}, toggle() {}, remove() {} },
+    setAttribute() {}, appendChild(child) { this.children.push(child); },
     append(...children) { this.children.push(...children); },
   };
 }
 globalThis.document = { createElement: () => nodeStub() };
+globalThis.telemetryMode = false;
 globalThis.toDate = (value) => new Date(value);
 globalThis.dateTimeFormatter = { format: () => "15/10/2026, 01:00:00" };
 globalThis.activityTypes = { sell_out: "Venta · salida" };
 globalThis.activityStates = {};
 globalThis.latestCurrency = "USD";
 globalThis.textCell = () => nodeStub();
-globalThis.detailCell = () => nodeStub();
-globalThis.decimal = String;
-globalThis.price = String;
 globalThis.money = (value) => String(value);
-const row = activityRow({
+const nodes = buildActivityContent([{
   occurred_at: "2026-10-15T01:00:00Z", category: "deal",
   event_type: "sell_out", event_state: null, ticket: "1", magic_number: "11122",
-  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1,
-  profit: 10, commission: -1, swap: 0, fee: 0, position_id: "2", order_ticket: "3",
-});
-if (row.children.length !== 7) throw new Error("La fila de actividad quedó incompleta");
+  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1, profit: 10,
+}]);
+const table = nodes.find((node) => node.tagName === "table") || nodes[1];
+const tbody = table.children[2];
+const row = tbody.children[0];
+if (row.children.length !== 5) throw new Error("La fila de actividad quedó incompleta");
+if (row.children[4].textContent !== "10") throw new Error("El resultado no quedó en la fila");
 """
 
         result = subprocess.run(
@@ -395,6 +420,142 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_state_keeps_v3_contract_and_adds_source_health(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["schema_version"], "live-dashboard-state-v3")
+        self.assertIn("status", state)
+        self.assertIn("latest", state)
+        self.assertIn("history", state)
+        self.assertIn("capture", state)
+        health = state["source_health"]
+        self.assertEqual(health["availability"], "not_applicable")
+        self.assertIsNone(health["source_id"])
+        self.assertIsNone(health["collector_version"])
+        self.assertIsNone(health["checked_at"])
+        self.assertIsNone(health["error"])
+        self.assertIsNone(health["receiver"])
+
+    def test_health_failure_does_not_degrade_capture(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=FakeHealthProvider(fail=True),
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["status"], "connected")
+        self.assertEqual(state["source_health"]["availability"], "unavailable")
+        self.assertIsNone(state["source_health"]["receiver"])
+
+    def test_capture_failure_still_publishes_health(self) -> None:
+        class FailingSource(DemoSnapshotSource):
+            def collect(self, observed_at: datetime) -> LiveSnapshot:
+                raise RuntimeError("captura rota")
+
+        receiver = ReceiverHealth(
+            accepted=5,
+            duplicates=0,
+            missing_sequences=0,
+            retained=1,
+            retained_sessions=1,
+            history_status="complete",
+        )
+        service = LiveDashboardService(
+            FailingSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=FakeHealthProvider(receiver=receiver),
+        )
+        service.poll_once()
+
+        state = service.state()
+
+        self.assertEqual(state["status"], "degraded")
+        self.assertEqual(state["source_health"]["availability"], "available")
+        self.assertEqual(state["source_health"]["receiver"]["accepted"], 5)
+
+    def test_health_is_polled_independently_every_cycle(self) -> None:
+        provider = FakeHealthProvider()
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: self.observed_at,
+            health_provider=provider,
+        )
+
+        service.poll_once()
+        service.poll_once()
+
+        self.assertEqual(provider.calls, 2)
+
+    def test_http_state_includes_source_health(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
+        )
+        service.poll_once()
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
+                payload = json.loads(response.read())
+                self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
+                self.assertEqual(payload["source_health"]["availability"], "not_applicable")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_hidden_attribute_wins_over_responsive_layout(self) -> None:
+        styles = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[hidden] { display: none !important; }", styles)
+
+    def test_project_and_dashboard_routes_serve_their_pages(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        server = create_server(service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
+                self.assertIn("text/html", response.headers["Content-Type"])
+                self.assertIn(b"TradingLab", response.read())
+            with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
+                self.assertIn(b"Panel de la cuenta", response.read())
+            with urllib.request.urlopen(f"{base_url}/dashboard/", timeout=2) as response:
+                self.assertIn(b"Panel de la cuenta", response.read())
+            with urllib.request.urlopen(f"{base_url}/assets/theme.js", timeout=2) as response:
+                self.assertIn("javascript", response.headers["Content-Type"])
+                self.assertIn(b"data-theme-toggle", response.read())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_theme_script_precedes_stylesheet_without_inline(self) -> None:
+        static = ROOT / "src" / "tradinglab" / "dashboard" / "static"
+        for name in ("index.html", "dashboard.html"):
+            with self.subTest(name=name):
+                text = (static / name).read_text(encoding="utf-8")
+                theme_at = text.index('<script src="/assets/theme.js"></script>')
+                css_at = text.index('<link rel="stylesheet" href="/assets/styles.css">')
+                self.assertLess(theme_at, css_at)
+                self.assertNotRegex(text, r"<script(?! src=)")
+                self.assertNotRegex(text, r"\son\w+=")
+                self.assertNotIn("style=", text)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
@@ -418,7 +579,7 @@ if (row.children.length !== 7) throw new Error("La fila de actividad quedó inco
                 self.assertEqual(payload["capture"]["success_count"], 1)
                 self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
 
-            with urllib.request.urlopen(base_url, timeout=2) as response:
+            with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
                 page = response.read().decode()
                 self.assertIn('id="operations-view"', page)
                 self.assertIn('id="magic-filter"', page)

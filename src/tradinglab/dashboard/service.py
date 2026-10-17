@@ -8,7 +8,12 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from tradinglab.dashboard.snapshot import LiveSnapshot, SnapshotSource
+from tradinglab.dashboard.snapshot import (
+    LiveSnapshot,
+    SnapshotSource,
+    SourceHealth,
+    SourceHealthProvider,
+)
 
 
 class LiveDashboardService:
@@ -22,6 +27,7 @@ class LiveDashboardService:
         history_limit: int = 720,
         clock: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
+        health_provider: SourceHealthProvider | None = None,
     ) -> None:
         if interval_seconds < 2.0:
             raise ValueError("El intervalo mínimo es de 2 segundos")
@@ -31,6 +37,15 @@ class LiveDashboardService:
         self._interval_seconds = interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._timer = timer or time.perf_counter
+        self._health_provider = health_provider
+        self._source_health = SourceHealth(
+            availability="not_applicable",
+            source_id=None,
+            collector_version=None,
+            checked_at=None,
+            error=None,
+            receiver=None,
+        )
         self._history: deque[dict[str, object]] = deque(maxlen=history_limit)
         self._latest: LiveSnapshot | None = None
         self._status = "starting"
@@ -60,16 +75,40 @@ class LiveDashboardService:
                 self._status = "degraded"
                 self._error = _safe_message(exc)
                 self._record_attempt(attempted_at, duration_ms, succeeded=False)
+        else:
+            duration_ms = _milliseconds(self._timer() - started)
+            with self._lock:
+                history_sample = snapshot.as_history_dict()
+                if not self._history or self._history[-1] != history_sample:
+                    self._history.append(history_sample)
+                self._latest = snapshot
+                self._status = "connected"
+                self._error = None
+                self._record_attempt(attempted_at, duration_ms, succeeded=True)
+        self._poll_health(attempted_at)
+
+    def _poll_health(self, checked_at: datetime) -> None:
+        """Refresh source health independently of the account capture.
+
+        A health failure never changes capture status, error or counters; it
+        only updates the published ``source_health`` object.
+        """
+
+        if self._health_provider is None:
             return
-        duration_ms = _milliseconds(self._timer() - started)
+        try:
+            health = self._health_provider.health(checked_at)
+        except Exception as exc:  # health must never disturb the capture boundary
+            health = SourceHealth(
+                availability="unavailable",
+                source_id=None,
+                collector_version=None,
+                checked_at=_utc_iso(checked_at),
+                error=_safe_message(exc),
+                receiver=None,
+            )
         with self._lock:
-            history_sample = snapshot.as_history_dict()
-            if not self._history or self._history[-1] != history_sample:
-                self._history.append(history_sample)
-            self._latest = snapshot
-            self._status = "connected"
-            self._error = None
-            self._record_attempt(attempted_at, duration_ms, succeeded=True)
+            self._source_health = health
 
     def state(self, history_since: str | None = None) -> dict[str, object]:
         """Return an immutable JSON-ready copy of the current dashboard state.
@@ -99,6 +138,7 @@ class LiveDashboardService:
                 "latest": latest,
                 "history": history,
                 "history_truncated": truncated,
+                "source_health": self._source_health.as_dict(),
                 "interval_seconds": self._interval_seconds,
                 "capture": {
                     "attempt_count": self._attempt_count,

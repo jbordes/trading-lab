@@ -62,10 +62,15 @@ uv run python scripts/telemetry_receiver.py
 uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01
 ```
 
-La aplicación queda disponible únicamente en `http://127.0.0.1:8765`.
-La vista `Operaciones` permite filtrar posiciones abiertas y órdenes pendientes por Magic Number. Para cuentas reales se utilizará una identidad separada con acceso de inversor.
-La vista `Actividad` muestra la salud de captura. Los deals enviados por el
-collector se incorporarán allí después de validar la zona horaria del servidor.
+La aplicación queda disponible únicamente en `http://127.0.0.1:8765`: `/` es la
+página del proyecto y `/dashboard` el panel de la cuenta, con tema claro y
+oscuro. La vista `Operaciones` permite filtrar posiciones abiertas y órdenes
+pendientes por Magic Number, con detalle expandible por operación. Para cuentas
+reales se utilizará una identidad separada con acceso de inversor.
+La vista `Actividad` muestra el estado de la fuente (salud del receptor local:
+aceptados, duplicados, secuencias faltantes, retenidos e historial) separado de
+la actualización de la vista. Los deals enviados por el collector se
+incorporarán después de validar la zona horaria del servidor.
 
 El adaptador solo consulta `http://127.0.0.1:8766`, no entrega el token al
 navegador y marca la vista como degradada si pasan 30 segundos sin una muestra

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="es-AR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Panel de la cuenta · TradingLab</title>
+    <link rel="icon" href="data:,">
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <noscript><p class="noscript-note">El dashboard requiere JavaScript para mostrar datos en vivo.</p></noscript>
+    <main class="shell">
+      <nav class="site-nav" aria-label="Navegación principal">
+        <a class="brand" href="/"><strong>TradingLab</strong><span>Panel de la cuenta</span></a>
+        <div class="site-nav-links">
+          <a href="/">Proyecto</a>
+          <a href="/dashboard" aria-current="page">Panel de la cuenta</a>
+          <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
+        </div>
+      </nav>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PANEL DE LA CUENTA</p>
+          <h1>Panel de la cuenta</h1>
+          <p class="subtitle" id="account-identity">—</p>
+        </div>
+        <div class="connection">
+          <span id="status-dot" class="status-dot"></span>
+          <div>
+            <strong id="status" aria-live="polite">Conectando</strong>
+            <small id="freshness">Esperando primera captura</small>
+          </div>
+        </div>
+      </header>
+
+      <div id="error" class="error" role="alert" hidden>
+        <span id="error-human"></span>
+        <details id="error-technical-details" hidden><summary>Detalle técnico</summary><span id="error-technical"></span></details>
+      </div>
+
+      <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
+        <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-selected="true" data-view="overview">Resumen</button>
+        <button class="view-tab" type="button" role="tab" id="tab-operations" aria-selected="false" tabindex="-1" data-view="operations">Operaciones <span id="operations-badge">0</span></button>
+        <button class="view-tab" type="button" role="tab" id="tab-activity" aria-selected="false" tabindex="-1" data-view="activity">Actividad <span id="activity-badge">0</span></button>
+      </nav>
+
+      <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview">
+      <section class="metrics" aria-label="Estado de cuenta">
+        <article class="metric-card metric-hero" id="equity-card">
+          <span>Equity</span><strong id="equity">—</strong><small id="profit-line" class="profit-line">—</small>
+        </article>
+        <article class="metric-card">
+          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
+        </article>
+        <article class="metric-card">
+          <span>Margen libre</span><strong id="margin-free">—</strong><small>Disponible para operar</small>
+        </article>
+      </section>
+
+      <p id="plain-summary" class="plain-summary"></p>
+
+      <section class="panel source-strip" aria-label="Origen de los datos">
+        <div>
+          <p class="eyebrow">ORIGEN</p>
+          <p class="source-description" id="source-description">—</p>
+        </div>
+        <a class="button-primary" href="#activity" id="source-health-link">Ver estado de la fuente</a>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">VENTANA LOCAL</p><h2>Balance y equity</h2></div>
+            <div class="panel-heading-right">
+              <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
+              <span id="chart-span" class="chart-span"></span>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="chart" viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Evolución reciente de balance y equity">
+              <g id="grid"></g>
+              <polyline id="balance-line" class="line balance-line" points=""></polyline>
+              <polyline id="equity-line" class="line equity-line" points=""></polyline>
+              <line id="balance-reference" class="reference-line is-hidden" x1="25" x2="975" y1="0" y2="0"></line>
+            </svg>
+            <p id="chart-high" class="chart-label chart-label-high"></p>
+            <p id="chart-low" class="chart-label chart-label-low"></p>
+            <p id="chart-start" class="chart-label chart-label-start"></p>
+            <p id="chart-end" class="chart-label chart-label-end"></p>
+            <p id="chart-empty" class="chart-empty">Recolectando observaciones…</p>
+          </div>
+        </article>
+
+        <aside class="side-stack">
+          <article class="panel compact-panel">
+            <p class="eyebrow">CONTEXTO</p>
+            <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
+            <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
+            <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
+            <div class="activity-row"><span>Nivel de margen</span><strong id="margin-level">—</strong></div>
+            <div class="activity-row"><span>Última lectura</span><strong id="last-reading">—</strong></div>
+          </article>
+          <article class="panel compact-panel risk-note">
+            <p class="eyebrow">RIESGO</p>
+            <h2>DDD y Max DD</h2>
+            <p>Contrato pendiente: no mostramos estimaciones hasta acordar las fórmulas con el socio.</p>
+            <p><a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver la guía de métricas</a></p>
+          </article>
+        </aside>
+      </section>
+      </section>
+
+      <section id="operations-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-operations" hidden>
+        <article class="panel operations-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">POSICIONES Y ÓRDENES</p>
+              <h2>Operaciones abiertas</h2>
+              <p class="operations-copy">Posiciones y órdenes que la fuente informa en la última lectura. No permite operar.</p>
+              <p class="operations-note" id="operations-note" hidden>La telemetría todavía no expone una hora validada para cada operación.</p>
+            </div>
+            <div class="operations-controls">
+              <label class="filter-field" for="magic-filter">
+                <span>Bot (Magic)</span>
+                <input id="magic-filter" type="search" list="magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
+                <datalist id="magic-options"></datalist>
+              </label>
+              <button id="clear-filter" class="clear-filter" type="button">Limpiar filtro</button>
+            </div>
+          </div>
+
+          <div class="operation-stats">
+            <div><span>Mostradas</span><strong id="visible-operations">0</strong></div>
+            <div><span>Posiciones</span><strong id="visible-positions">0</strong></div>
+            <div><span>Órdenes</span><strong id="visible-orders">0</strong></div>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table">
+              <caption class="sr-only">Operaciones abiertas informadas por la fuente</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Operación</th>
+                  <th scope="col">Instrumento</th>
+                  <th scope="col" class="numeric">Volumen</th>
+                  <th scope="col" class="numeric">Resultado abierto</th>
+                  <th scope="col">Hora</th>
+                  <th scope="col"><span class="sr-only">Detalle</span></th>
+                </tr>
+              </thead>
+              <tbody id="operations-body"></tbody>
+            </table>
+            <p id="operations-empty" class="operations-empty">Esperando operaciones…</p>
+          </div>
+        </article>
+      </section>
+
+      <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
+        <article class="panel operations-panel activity-panel">
+          <div class="operations-heading">
+            <div>
+              <p class="eyebrow">SALUD Y EVENTOS</p>
+              <h2>Actividad y estado de la fuente</h2>
+              <p class="operations-copy">Salud del receptor de telemetría, actualización de la vista y eventos recientes.</p>
+            </div>
+          </div>
+
+          <section class="health-grid" aria-label="Estado de la fuente">
+            <div class="health-block">
+              <h3>Fuente</h3>
+              <p id="source-health-label" class="health-value">—</p>
+              <p id="source-health-id" class="health-meta"></p>
+              <p id="source-health-version" class="health-meta"></p>
+              <p id="source-health-checked" class="health-meta"></p>
+            </div>
+            <div class="health-block">
+              <h3>Receptor local</h3>
+              <p id="receiver-summary" class="health-summary">—</p>
+              <dl class="receiver-counters">
+                <div><dt>Mensajes aceptados</dt><dd id="rc-accepted">—</dd></div>
+                <div><dt>Duplicados</dt><dd id="rc-duplicates">—</dd></div>
+                <div><dt>Secuencias faltantes</dt><dd id="rc-gaps">—</dd></div>
+                <div><dt>Mensajes retenidos</dt><dd id="rc-retained">—</dd></div>
+                <div><dt>Sesiones retenidas</dt><dd id="rc-sessions">—</dd></div>
+                <div><dt>Historial</dt><dd id="rc-history">—</dd></div>
+              </dl>
+            </div>
+          </section>
+          <p class="health-note">Los contadores son del receptor local completo, acumulados desde su inicio; no describen una cuenta aislada. El historial corresponde al último mensaje retenido por el receptor.</p>
+
+          <section class="view-health" aria-label="Actualización de la vista">
+            <h3>Actualización de la vista</h3>
+            <dl class="receiver-counters">
+              <div><dt>Estado</dt><dd id="capture-health">Iniciando</dd></div>
+              <div><dt>Última lectura exitosa</dt><dd id="capture-last-success">—</dd></div>
+              <div><dt>Fallos consecutivos</dt><dd id="capture-streak">—</dd></div>
+              <div><dt>Intentos</dt><dd id="capture-attempts">0</dd></div>
+            </dl>
+            <details>
+              <summary>Detalle técnico</summary>
+              <p id="capture-results" class="health-meta"></p>
+            </details>
+          </section>
+
+          <section class="recent-activity" aria-label="Actividad reciente">
+            <h3>Actividad reciente</h3>
+            <div id="activity-content"></div>
+          </section>
+        </article>
+      </section>
+
+      <footer>Los datos permanecen en memoria y no se ejecutan operaciones de trading.</footer>
+    </main>
+  </body>
+</html>

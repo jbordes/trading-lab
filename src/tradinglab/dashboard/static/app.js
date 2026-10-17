@@ -38,14 +38,10 @@ const clearFilter = document.getElementById("clear-filter");
 let latestOperations = [];
 let latestCurrency = "USD";
 let latestActivity = [];
-let latestActivityDataKey = "";
-let latestActivitySignature = "";
-let latestActivityWindowHours = 24;
 let latestIntervalSeconds = 5;
 let lastObservedAt = null;
 let latestOperationsSignature = "";
 let latestMagicKey = "";
-let latestActivityMagicKey = "";
 let activeView = "overview";
 let lastHistory = [];
 let latestSource = "MT5";
@@ -55,29 +51,39 @@ let lastPollSince = null;
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
-  body: document.getElementById("activity-body"),
-  empty: document.getElementById("activity-empty"),
-  magicFilter: document.getElementById("activity-magic-filter"),
-  magicOptions: document.getElementById("activity-magic-options"),
-  kindFilter: document.getElementById("activity-kind-filter"),
-  resultFilter: document.getElementById("activity-result-filter"),
-  windowPnl: document.getElementById("window-pnl-value"),
-  clearFilter: document.getElementById("clear-activity-filter"),
-  visible: document.getElementById("visible-activity"),
-  deals: document.getElementById("visible-deals"),
-  orders: document.getElementById("visible-history-orders"),
-  copy: document.getElementById("activity-copy"),
+  content: document.getElementById("activity-content"),
 };
 
 const captureElements = {
   health: document.getElementById("capture-health"),
-  streak: document.getElementById("capture-streak"),
   lastSuccess: document.getElementById("capture-last-success"),
-  age: document.getElementById("capture-age"),
-  duration: document.getElementById("capture-duration"),
-  maxDuration: document.getElementById("capture-max-duration"),
+  streak: document.getElementById("capture-streak"),
   attempts: document.getElementById("capture-attempts"),
   results: document.getElementById("capture-results"),
+};
+
+const sourceHealthElements = {
+  label: document.getElementById("source-health-label"),
+  id: document.getElementById("source-health-id"),
+  version: document.getElementById("source-health-version"),
+  checked: document.getElementById("source-health-checked"),
+};
+
+const receiverElements = {
+  summary: document.getElementById("receiver-summary"),
+  accepted: document.getElementById("rc-accepted"),
+  duplicates: document.getElementById("rc-duplicates"),
+  gaps: document.getElementById("rc-gaps"),
+  retained: document.getElementById("rc-retained"),
+  sessions: document.getElementById("rc-sessions"),
+  history: document.getElementById("rc-history"),
+};
+
+const HISTORY_STATUS_LABELS = {
+  complete: "Completo",
+  truncated: "Truncado",
+  error: "Con error",
+  unavailable: "Sin datos",
 };
 
 const operationTypes = {
@@ -225,6 +231,7 @@ function renderState(state) {
   }
   errorBox.hidden = !errorText;
   renderCapture(state);
+  renderSourceHealth(state);
   if (!state.latest) return;
 
   const value = state.latest;
@@ -279,12 +286,7 @@ function renderState(state) {
   operationsBadge.textContent = number(latestOperations.length);
   if (activeView === "operations") renderOperations();
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
-  latestActivityWindowHours = value.activity_window_hours || 24;
-  const nextActivityKey = JSON.stringify(nextActivity);
-  if (nextActivityKey !== latestActivityDataKey) {
-    latestActivity = nextActivity;
-    latestActivityDataKey = nextActivityKey;
-  }
+  latestActivity = nextActivity;
   activityElements.badge.textContent = number(latestActivity.length);
   if (activeView === "activity") renderActivity();
   if (state.history_truncated) {
@@ -304,109 +306,148 @@ function renderCapture(state) {
   captureElements.health.className = state.status === "connected"
     ? "positive-text"
     : state.status === "starting" ? "" : "negative-text";
-  setText(captureElements.streak, failures === 0
-    ? "Sin fallos consecutivos"
-    : `${number(failures)} fallo${failures === 1 ? "" : "s"} consecutivo${failures === 1 ? "" : "s"}`);
   const lastSuccessAt = capture.last_success_at ? toDate(capture.last_success_at) : null;
   setText(captureElements.lastSuccess, lastSuccessAt ? timeFormatter.format(lastSuccessAt) : "—");
-  const ageSeconds = lastSuccessAt
-    ? Math.max(0, (Date.now() - lastSuccessAt.getTime()) / 1000)
-    : null;
-  setText(captureElements.age, ageSeconds === null ? "Edad —" : `Edad ${elapsed(ageSeconds)}`);
-  setText(captureElements.duration, Number.isFinite(capture.last_duration_ms)
-    ? `${number(capture.last_duration_ms)} ms`
-    : "—");
-  setText(captureElements.maxDuration, Number.isFinite(capture.max_duration_ms)
-    ? `Máximo ${number(capture.max_duration_ms)} ms`
-    : "Máximo —");
+  setText(captureElements.streak, failures === 0 ? "Sin fallos" : number(failures));
+  captureElements.streak.className = failures === 0 ? "" : "negative-text";
   setText(captureElements.attempts, number(capture.attempt_count || 0));
-  setText(captureElements.results, `${number(capture.success_count || 0)} correctos · ${number(capture.failure_count || 0)} fallidos`);
+  const duration = Number.isFinite(capture.last_duration_ms) ? `${number(capture.last_duration_ms)} ms` : "—";
+  const maxDuration = Number.isFinite(capture.max_duration_ms) ? `${number(capture.max_duration_ms)} ms` : "—";
+  setText(captureElements.results, `${number(capture.success_count || 0)} éxitos · ${number(capture.failure_count || 0)} fallos · duración última ${duration} · máxima ${maxDuration}`);
+}
+
+function renderSourceHealth(state) {
+  const health = state.source_health || {};
+  const label = state.latest ? sourceLabel(state.latest.source) : "Fuente local";
+  setText(sourceHealthElements.label, label);
+  const availability = health.availability;
+  if (availability === "available" && health.receiver) {
+    const receiver = health.receiver;
+    setText(sourceHealthElements.id, health.source_id ? `Identificador: ${health.source_id}` : "");
+    setText(sourceHealthElements.version, health.collector_version
+      ? `Colector: ${health.collector_version}`
+      : "Colector: no informado todavía");
+    const checkedAt = health.checked_at ? toDate(health.checked_at) : null;
+    setText(sourceHealthElements.checked, checkedAt
+      ? `Última verificación: ${timeFormatter.format(checkedAt)}`
+      : "");
+    const observations = [];
+    if (receiver.missing_sequences > 0) {
+      observations.push(`${number(receiver.missing_sequences)} secuencias faltantes`);
+    }
+    if (receiver.history_status === "truncated" || receiver.history_status === "error") {
+      observations.push("historial incompleto");
+    }
+    setText(receiverElements.summary, observations.length
+      ? `Receptor local con observaciones: ${observations.join(" y ")}.`
+      : receiver.accepted === 0
+        ? "El receptor está disponible pero todavía no recibió mensajes."
+        : "Receptor local disponible y sin observaciones.");
+    receiverElements.summary.className = observations.length ? "health-summary warn-text" : "health-summary";
+    receiverElements.summary.title = health.error || "";
+    setText(receiverElements.accepted, number(receiver.accepted));
+    setText(receiverElements.duplicates, number(receiver.duplicates));
+    setText(receiverElements.gaps, number(receiver.missing_sequences));
+    receiverElements.gaps.className = receiver.missing_sequences > 0 ? "warn-text" : "";
+    setText(receiverElements.retained, number(receiver.retained));
+    setText(receiverElements.sessions, number(receiver.retained_sessions));
+    setText(receiverElements.history, HISTORY_STATUS_LABELS[receiver.history_status] || receiver.history_status);
+    receiverElements.history.className = receiver.history_status === "truncated" || receiver.history_status === "error"
+      ? "warn-text"
+      : "";
+    return;
+  }
+  if (availability === "unavailable") {
+    setText(sourceHealthElements.id, health.source_id ? `Identificador: ${health.source_id}` : "");
+    setText(sourceHealthElements.version, health.collector_version
+      ? `Colector: ${health.collector_version}`
+      : "Colector: no informado todavía");
+    setText(sourceHealthElements.checked, "");
+    setText(receiverElements.summary, "No pudimos consultar el estado del receptor.");
+    receiverElements.summary.className = "health-summary warn-text";
+    receiverElements.summary.title = health.error || "";
+  } else {
+    setText(sourceHealthElements.id, "Sin receptor de telemetría: esta fuente no aplica.");
+    setText(sourceHealthElements.version, "");
+    setText(sourceHealthElements.checked, "");
+    setText(receiverElements.summary, "La salud del receptor no aplica para esta fuente.");
+    receiverElements.summary.className = "health-summary";
+    receiverElements.summary.title = "";
+  }
+  ["accepted", "duplicates", "gaps", "retained", "sessions", "history"].forEach((key) => {
+    setText(receiverElements[key], "—");
+    receiverElements[key].className = "";
+  });
 }
 
 function renderActivity() {
-  const magic = activityElements.magicFilter.value.trim();
-  const kind = activityElements.kindFilter.value;
-  const result = activityElements.resultFilter.value;
-  const signature = `${magic}|${kind}|${result}|${latestActivityWindowHours}|${latestCurrency}|${latestSource}|${latestActivityDataKey}`;
-  if (signature === latestActivitySignature) return;
-  latestActivitySignature = signature;
-  const filtered = latestActivity.filter((item) => {
-    if (magic && String(item.magic_number) !== magic) return false;
-    if (kind && item.category !== kind) return false;
-    if (result) {
-      const net = netOf(item) || 0;
-      if (result === "profit" && net <= 0) return false;
-      if (result === "loss" && net >= 0) return false;
-    }
-    return true;
-  });
-  const magicNumbers = [...new Set(latestActivity.map((item) => String(item.magic_number)))];
-  magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  const magicKey = magicNumbers.join(",");
-  if (magicKey !== latestActivityMagicKey) {
-    latestActivityMagicKey = magicKey;
-    activityElements.magicOptions.replaceChildren(...magicNumbers.map((value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      return option;
-    }));
+  activityElements.content.replaceChildren(...buildActivityContent(latestActivity));
+}
+
+function buildActivityContent(events) {
+  if (telemetryMode) {
+    const block = document.createElement("div");
+    block.className = "activity-info";
+    const text = document.createElement("p");
+    text.textContent = "Todavía no mostramos operaciones cerradas en la telemetría. Estamos validando la zona horaria del servidor de MetaTrader 5 y los resultados antes de publicarlos.";
+    const link = document.createElement("a");
+    link.href = "#operations";
+    link.textContent = "Ver operaciones abiertas";
+    block.append(text, link);
+    return [block];
   }
-  activityElements.body.replaceChildren(...filtered.map(activityRow));
-  activityElements.empty.hidden = filtered.length > 0;
-  activityElements.empty.textContent = latestActivity.length === 0
-    ? `${latestSource} no informa actividad dentro de la ventana actual.`
-    : "Ningún evento coincide con los filtros.";
-  activityElements.visible.textContent = (magic || kind || result)
-    ? `${number(filtered.length)} de ${number(latestActivity.length)}`
-    : number(filtered.length);
-  activityElements.deals.textContent = number(filtered.filter((item) => item.category === "deal").length);
-  activityElements.orders.textContent = number(filtered.filter((item) => item.category === "order").length);
-  activityElements.copy.textContent = `Operaciones cerradas (deals) y órdenes de las últimas ${number(latestActivityWindowHours)} horas.`;
-  const windowNet = latestActivity.reduce((total, item) => total + (netOf(item) || 0), 0);
-  setText(activityElements.windowPnl, money(windowNet, latestCurrency, true));
-  activityElements.windowPnl.className = windowNet > 0 ? "positive" : windowNet < 0 ? "negative" : "";
-  activityElements.clearFilter.disabled = !magic && !kind && !result;
-}
-
-function netOf(activity) {
-  const components = [activity.profit, activity.commission, activity.swap, activity.fee]
-    .filter((value) => Number.isFinite(value));
-  return components.length ? components.reduce((total, value) => total + value, 0) : null;
-}
-
-function activityRow(activity) {
-  const row = document.createElement("tr");
-  const occurredAt = toDate(activity.occurred_at);
-  row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—"));
-  const eventCell = document.createElement("td");
-  const badge = document.createElement("span");
-  badge.className = `operation-kind ${activity.category}`;
-  badge.textContent = activity.category === "deal" ? "Deal" : "Orden";
-  eventCell.appendChild(badge);
-  const eventText = document.createElement("small");
-  eventText.className = "activity-event";
-  const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
-  const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
-  eventText.textContent = stateName ? `${eventName} · ${stateName}` : eventName;
-  eventCell.appendChild(eventText);
-  row.appendChild(eventCell);
-  row.appendChild(detailCell(`#${activity.ticket}`, `Magic ${activity.magic_number}`, "mono"));
-  row.appendChild(detailCell(activity.symbol, activity.comment || "Sin comentario"));
-  row.appendChild(detailCell(decimal(activity.volume), price(activity.price), "numeric"));
-
-  const netResult = netOf(activity);
-  const breakdown = netResult !== null
-    ? `P&L ${money(activity.profit || 0, latestCurrency)} · costes ${money((activity.commission || 0) + (activity.swap || 0) + (activity.fee || 0), latestCurrency)}`
-    : "Sin resultado monetario";
-  row.appendChild(detailCell(
-    netResult === null ? "—" : money(netResult, latestCurrency, true),
-    breakdown,
-    `numeric ${netResult === null ? "" : netResult > 0 ? "positive-text" : netResult < 0 ? "negative-text" : ""}`,
-  ));
-  const reference = activity.position_id ? `Posición ${activity.position_id}` : "Sin posición";
-  const order = activity.order_ticket ? `Orden ${activity.order_ticket}` : "";
-  row.appendChild(detailCell(reference, order));
-  return row;
+  if (events.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "operations-empty";
+    empty.textContent = "Esta fuente no informa actividad reciente en esta versión.";
+    return [empty];
+  }
+  const nodes = [];
+  const chip = document.createElement("p");
+  chip.className = "activity-demo-chip";
+  chip.textContent = "Datos de demostración: los eventos son sintéticos y sirven para validar la interfaz.";
+  nodes.push(chip);
+  const table = document.createElement("table");
+  table.className = "operations-table activity-table";
+  const caption = document.createElement("caption");
+  caption.className = "sr-only";
+  caption.textContent = "Actividad reciente informada por la fuente";
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  ["Hora", "Evento", "Instrumento", "Magic", "Resultado"].forEach((label, index) => {
+    const th = document.createElement("th");
+    th.setAttribute("scope", "col");
+    if (index === 4) th.className = "numeric";
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  const tbody = document.createElement("tbody");
+  events.forEach((activity) => {
+    const row = document.createElement("tr");
+    const occurredAt = toDate(activity.occurred_at);
+    row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—", "", "Hora"));
+    const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
+    const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
+    row.appendChild(textCell(stateName ? `${eventName} · ${stateName}` : eventName, "", "Evento"));
+    row.appendChild(textCell(activity.symbol, "", "Instrumento"));
+    row.appendChild(textCell(String(activity.magic_number), "", "Magic"));
+    const profitCell = document.createElement("td");
+    profitCell.className = "numeric";
+    profitCell.setAttribute("data-label", "Resultado");
+    if (Number.isFinite(activity.profit)) {
+      profitCell.textContent = money(activity.profit, latestCurrency, true);
+      if (activity.profit > 0) profitCell.classList.add("positive-text");
+      else if (activity.profit < 0) profitCell.classList.add("negative-text");
+    } else {
+      profitCell.textContent = "—";
+    }
+    row.appendChild(profitCell);
+    tbody.appendChild(row);
+  });
+  table.append(caption, thead, tbody);
+  nodes.push(table);
+  return nodes;
 }
 
 function elapsed(seconds) {
@@ -702,9 +743,6 @@ function loadStoredFilters() {
   try {
     const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
     magicFilter.value = stored.magic || "";
-    activityElements.magicFilter.value = stored.activityMagic || "";
-    activityElements.kindFilter.value = stored.activityKind || "";
-    activityElements.resultFilter.value = stored.activityResult || "";
   } catch (_) {
     // almacenamiento no disponible
   }
@@ -714,9 +752,6 @@ function saveStoredFilters() {
   try {
     localStorage.setItem(FILTER_STORE, JSON.stringify({
       magic: magicFilter.value,
-      activityMagic: activityElements.magicFilter.value,
-      activityKind: activityElements.kindFilter.value,
-      activityResult: activityElements.resultFilter.value,
     }));
   } catch (_) {
     // almacenamiento no disponible
@@ -728,17 +763,6 @@ clearFilter.addEventListener("click", () => {
   magicFilter.value = "";
   magicFilter.focus();
   renderOperations();
-  saveStoredFilters();
-});
-activityElements.magicFilter.addEventListener("input", () => { renderActivity(); saveStoredFilters(); });
-activityElements.kindFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
-activityElements.resultFilter.addEventListener("change", () => { renderActivity(); saveStoredFilters(); });
-activityElements.clearFilter.addEventListener("click", () => {
-  activityElements.magicFilter.value = "";
-  activityElements.kindFilter.value = "";
-  activityElements.resultFilter.value = "";
-  activityElements.magicFilter.focus();
-  renderActivity();
   saveStoredFilters();
 });
 function scheduleRefresh() {

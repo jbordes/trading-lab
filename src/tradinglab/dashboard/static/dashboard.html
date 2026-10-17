@@ -159,79 +159,56 @@
       </section>
 
       <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
-        <section class="capture-grid" aria-label="Estado de captura">
-          <article class="panel capture-card">
-            <span>Captura</span><strong id="capture-health">Iniciando</strong><small id="capture-streak">Sin lecturas</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Último éxito</span><strong id="capture-last-success">—</strong><small id="capture-age">Edad —</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Duración</span><strong id="capture-duration">—</strong><small id="capture-max-duration">Máximo —</small>
-          </article>
-          <article class="panel capture-card">
-            <span>Intentos</span><strong id="capture-attempts">0</strong><small id="capture-results">0 correctos · 0 fallidos</small>
-          </article>
-        </section>
-
         <article class="panel operations-panel activity-panel">
           <div class="operations-heading">
             <div>
-              <p class="eyebrow">HISTORIAL MÓVIL</p>
-              <h2>Actividad reciente</h2>
-              <p id="activity-copy" class="operations-copy">Operaciones cerradas (deals) y órdenes de las últimas 24 horas.</p>
-              <p class="window-pnl">Resultado neto de la ventana: <strong id="window-pnl-value">—</strong></p>
-            </div>
-            <div class="activity-filters">
-              <label class="filter-field" for="activity-magic-filter">
-                <span>Magic number</span>
-                <input id="activity-magic-filter" type="search" list="activity-magic-options" inputmode="numeric" placeholder="Todos" autocomplete="off">
-                <datalist id="activity-magic-options"></datalist>
-              </label>
-              <label class="filter-field" for="activity-kind-filter">
-                <span>Tipo de evento</span>
-                <select id="activity-kind-filter">
-                  <option value="">Todos</option>
-                  <option value="deal">Deals</option>
-                  <option value="order">Órdenes históricas</option>
-                </select>
-              </label>
-              <label class="filter-field" for="activity-result-filter">
-                <span>Resultado</span>
-                <select id="activity-result-filter">
-                  <option value="">Todos los resultados</option>
-                  <option value="profit">Con ganancia</option>
-                  <option value="loss">Con pérdida</option>
-                </select>
-              </label>
+              <p class="eyebrow">SALUD Y EVENTOS</p>
+              <h2>Actividad y estado de la fuente</h2>
+              <p class="operations-copy">Salud del receptor de telemetría, actualización de la vista y eventos recientes.</p>
             </div>
           </div>
 
-          <div class="operation-stats">
-            <div><span>Mostrados</span><strong id="visible-activity">0</strong></div>
-            <div><span>Deals</span><strong id="visible-deals">0</strong></div>
-            <div><span>Órdenes</span><strong id="visible-history-orders">0</strong></div>
-            <button id="clear-activity-filter" class="clear-filter" type="button">Limpiar filtros</button>
-          </div>
+          <section class="health-grid" aria-label="Estado de la fuente">
+            <div class="health-block">
+              <h3>Fuente</h3>
+              <p id="source-health-label" class="health-value">—</p>
+              <p id="source-health-id" class="health-meta"></p>
+              <p id="source-health-version" class="health-meta"></p>
+              <p id="source-health-checked" class="health-meta"></p>
+            </div>
+            <div class="health-block">
+              <h3>Receptor local</h3>
+              <p id="receiver-summary" class="health-summary">—</p>
+              <dl class="receiver-counters">
+                <div><dt>Mensajes aceptados</dt><dd id="rc-accepted">—</dd></div>
+                <div><dt>Duplicados</dt><dd id="rc-duplicates">—</dd></div>
+                <div><dt>Secuencias faltantes</dt><dd id="rc-gaps">—</dd></div>
+                <div><dt>Mensajes retenidos</dt><dd id="rc-retained">—</dd></div>
+                <div><dt>Sesiones retenidas</dt><dd id="rc-sessions">—</dd></div>
+                <div><dt>Historial</dt><dd id="rc-history">—</dd></div>
+              </dl>
+            </div>
+          </section>
+          <p class="health-note">Los contadores son del receptor local completo, acumulados desde su inicio; no describen una cuenta aislada. El historial corresponde al último mensaje retenido por el receptor.</p>
 
-          <div class="operations-table-wrap">
-            <table class="operations-table activity-table">
-              <caption class="sr-only">Actividad reciente informada por la fuente</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Hora</th>
-                  <th scope="col">Evento</th>
-                  <th scope="col">Ticket / Magic</th>
-                  <th scope="col">Símbolo</th>
-                  <th scope="col" class="numeric">Volumen / Precio</th>
-                  <th scope="col" class="numeric">Resultado neto</th>
-                  <th scope="col">Referencia</th>
-                </tr>
-              </thead>
-              <tbody id="activity-body"></tbody>
-            </table>
-            <p id="activity-empty" class="operations-empty">Recuperando actividad reciente…</p>
-          </div>
+          <section class="view-health" aria-label="Actualización de la vista">
+            <h3>Actualización de la vista</h3>
+            <dl class="receiver-counters">
+              <div><dt>Estado</dt><dd id="capture-health">Iniciando</dd></div>
+              <div><dt>Última lectura exitosa</dt><dd id="capture-last-success">—</dd></div>
+              <div><dt>Fallos consecutivos</dt><dd id="capture-streak">—</dd></div>
+              <div><dt>Intentos</dt><dd id="capture-attempts">0</dd></div>
+            </dl>
+            <details>
+              <summary>Detalle técnico</summary>
+              <p id="capture-results" class="health-meta"></p>
+            </details>
+          </section>
+
+          <section class="recent-activity" aria-label="Actividad reciente">
+            <h3>Actividad reciente</h3>
+            <div id="activity-content"></div>
+          </section>
         </article>
       </section>
 

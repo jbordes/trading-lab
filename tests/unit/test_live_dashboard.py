@@ -381,32 +381,34 @@ function functionSource(name) {
   }
   throw new Error(`Función incompleta: ${name}`);
 }
-eval(`${functionSource("netOf")}\n${functionSource("activityRow")}`);
+eval(`${functionSource("buildActivityContent")}`);
 function nodeStub() {
   return {
-    children: [], className: "", textContent: "",
-    appendChild(child) { this.children.push(child); },
+    children: [], className: "", textContent: "", value: "", checked: false,
+    classList: { add() {}, toggle() {}, remove() {} },
+    setAttribute() {}, appendChild(child) { this.children.push(child); },
     append(...children) { this.children.push(...children); },
   };
 }
 globalThis.document = { createElement: () => nodeStub() };
+globalThis.telemetryMode = false;
 globalThis.toDate = (value) => new Date(value);
 globalThis.dateTimeFormatter = { format: () => "15/10/2026, 01:00:00" };
 globalThis.activityTypes = { sell_out: "Venta · salida" };
 globalThis.activityStates = {};
 globalThis.latestCurrency = "USD";
 globalThis.textCell = () => nodeStub();
-globalThis.detailCell = () => nodeStub();
-globalThis.decimal = String;
-globalThis.price = String;
 globalThis.money = (value) => String(value);
-const row = activityRow({
+const nodes = buildActivityContent([{
   occurred_at: "2026-10-15T01:00:00Z", category: "deal",
   event_type: "sell_out", event_state: null, ticket: "1", magic_number: "11122",
-  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1,
-  profit: 10, commission: -1, swap: 0, fee: 0, position_id: "2", order_ticket: "3",
-});
-if (row.children.length !== 7) throw new Error("La fila de actividad quedó incompleta");
+  symbol: "EURUSD", comment: "", volume: 0.1, price: 1.1, profit: 10,
+}]);
+const table = nodes.find((node) => node.tagName === "table") || nodes[1];
+const tbody = table.children[2];
+const row = tbody.children[0];
+if (row.children.length !== 5) throw new Error("La fila de actividad quedó incompleta");
+if (row.children[4].textContent !== "10") throw new Error("El resultado no quedó en la fila");
 """
 
         result = subprocess.run(

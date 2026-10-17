@@ -21,7 +21,7 @@ Terminal demo MT5
     v
 receptor 127.0.0.1:8766
     |
-    | GET /v1/snapshot + mismo Bearer token
+    | GET /v1/snapshot?source_id=<id> + mismo Bearer token
     v
 adaptador servidor del dashboard + buffer acotado en memoria + /health
 ```
@@ -85,9 +85,11 @@ El estado diagnóstico queda disponible en:
 http://127.0.0.1:8766/health
 ```
 
-`GET /v1/snapshot` requiere el mismo Bearer token y devuelve solamente la última
-muestra de cuenta validada. No expone un listado histórico completo y la memoria
-se pierde al detener el proceso.
+`GET /v1/snapshot?source_id=<id>` requiere el mismo Bearer token y exactamente un
+identificador válido. Devuelve solamente la última muestra de cuenta de esa
+fuente; mensajes posteriores de otro collector no la desplazan. El token protege
+el receptor completo y `source_id` selecciona datos, no concede autorización. No
+expone un listado histórico completo y la memoria se pierde al detener el proceso.
 
 ## Fuente MQL5
 

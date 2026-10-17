@@ -94,15 +94,17 @@ El collector incorpora una ventana móvil de ejecuciones (`deals`) para recupera
 actividad entre muestras: una hora y hasta 200 filas por defecto, con estados
 explícitos completo/truncado/error. La vista recibida se reemplaza al reconciliar,
 no se acumulan solapamientos. Es memoria temporal, sin emparejar trades ni
-alimentar todavía la UI; no reemplaza el historial del adaptador Python ni una
-futura persistencia. Los tiempos de ejecución conservan la escala del servidor
+alimentar todavía la UI; no reemplaza una futura persistencia durable. Los tiempos
+de ejecución conservan la escala del servidor
 MT5 hasta validar su conversión.
 
 La primera integración visible conserva receptor y dashboard como procesos
-separados. El receptor expone la última muestra de cuenta validada mediante
-`GET /v1/snapshot`, autenticado y limitado a loopback. Un adaptador del lado
-servidor del dashboard vuelve a validar el contrato, exige el `source_id`
-esperado y degrada la vista cuando la muestra supera la antigüedad configurada.
+separados. El receptor expone la última muestra de una fuente mediante
+`GET /v1/snapshot?source_id=<id>`, autenticado y limitado a loopback. Cada consulta
+exige exactamente un identificador válido y los mensajes de otras fuentes no
+pueden desplazar su resultado. Un adaptador del lado servidor del dashboard vuelve
+a validar el contrato y el `source_id` esperado, y degrada la vista cuando la
+muestra supera la antigüedad configurada.
 El token no llega al navegador. Balance, equity y operaciones actuales se
 proyectan en la interfaz; los deals y los timestamps operativos quedan fuera de
 esta integración hasta validar la zona horaria del servidor MT5.

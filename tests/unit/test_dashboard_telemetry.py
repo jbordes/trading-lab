@@ -135,15 +135,36 @@ class DashboardTelemetryTest(unittest.TestCase):
     def test_loopback_client_reads_only_authenticated_validated_snapshot(self) -> None:
         buffer = TelemetryBuffer()
         buffer.accept(envelope())
+        buffer.accept(envelope(source_id="demo-terminal-02"))
         server = create_telemetry_server(buffer, token=TOKEN, port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            client = LoopbackTelemetryClient(token=TOKEN, port=server.server_port)
+            client = LoopbackTelemetryClient(
+                token=TOKEN,
+                source_id="demo-terminal-01",
+                port=server.server_port,
+            )
             self.assertEqual(client.latest().source_id, "demo-terminal-01")
-            wrong = LoopbackTelemetryClient(token="x" * 24, port=server.server_port)
+            second = LoopbackTelemetryClient(
+                token=TOKEN,
+                source_id="demo-terminal-02",
+                port=server.server_port,
+            )
+            self.assertEqual(second.latest().source_id, "demo-terminal-02")
+            wrong = LoopbackTelemetryClient(
+                token="x" * 24,
+                source_id="demo-terminal-01",
+                port=server.server_port,
+            )
             with self.assertRaisesRegex(DashboardReadError, "autenticación"):
                 wrong.latest()
+            with self.assertRaisesRegex(ValueError, "source_id"):
+                LoopbackTelemetryClient(
+                    token=TOKEN,
+                    source_id="invalid source",
+                    port=server.server_port,
+                )
         finally:
             server.shutdown()
             server.server_close()

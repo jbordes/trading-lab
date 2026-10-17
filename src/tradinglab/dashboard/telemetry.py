@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -40,18 +41,28 @@ class TelemetrySnapshotClient(Protocol):
 class LoopbackTelemetryClient:
     """Fetch the newest snapshot from the authenticated loopback receiver."""
 
-    def __init__(self, *, token: str, port: int = 8766, timeout_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        *,
+        token: str,
+        source_id: str,
+        port: int = 8766,
+        timeout_seconds: float = 2.0,
+    ) -> None:
         if len(token) < 24 or not token.isascii() or any(not 33 <= ord(c) <= 126 for c in token):
             raise ValueError("El token de telemetría no cumple el formato requerido")
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             raise ValueError("El puerto de telemetría está fuera de rango")
+        if not IDENTIFIER.fullmatch(source_id):
+            raise ValueError("source_id de telemetría inválido")
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
             or not 0.05 <= timeout_seconds <= 30
         ):
             raise ValueError("El timeout de telemetría debe ser 0.05..30 segundos")
-        self._url = f"http://127.0.0.1:{port}/v1/snapshot"
+        query = urllib.parse.urlencode({"source_id": source_id})
+        self._url = f"http://127.0.0.1:{port}/v1/snapshot?{query}"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
 

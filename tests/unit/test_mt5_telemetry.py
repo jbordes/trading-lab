@@ -26,11 +26,16 @@ from tradinglab.telemetry.ingest import (  # noqa: E402
 TOKEN = "example-local-token-with-at-least-24-characters"
 
 
-def snapshot_message(*, sequence: int = 1, event_id: str | None = None) -> dict[str, object]:
+def snapshot_message(
+    *,
+    sequence: int = 1,
+    event_id: str | None = None,
+    source_id: str = "demo-terminal-01",
+) -> dict[str, object]:
     return {
         "schema_version": "mt5-telemetry-v1",
         "collector_version": "0.1.0",
-        "source_id": "demo-terminal-01",
+        "source_id": source_id,
         "session_id": "session-20261015-001",
         "sequence": sequence,
         "event_id": event_id or f"session-20261015-001:{sequence}",
@@ -248,6 +253,25 @@ class TelemetryContractTest(unittest.TestCase):
 
 
 class TelemetryBufferTest(unittest.TestCase):
+    def test_latest_snapshot_is_scoped_to_one_source(self) -> None:
+        buffer = TelemetryBuffer()
+        first = snapshot_message(source_id="terminal-a")
+        second = snapshot_message(source_id="terminal-b")
+        first["payload"]["account"]["balance"] = 1_000.0
+        second["payload"]["account"]["balance"] = 2_000.0
+        buffer.accept(parse_envelope(encoded(first)))
+        buffer.accept(parse_envelope(encoded(second)))
+
+        self.assertEqual(
+            buffer.latest_account_snapshot("terminal-a")["payload"]["account"]["balance"],
+            1_000.0,
+        )
+        self.assertEqual(
+            buffer.latest_account_snapshot("terminal-b")["payload"]["account"]["balance"],
+            2_000.0,
+        )
+        self.assertIsNone(buffer.latest_account_snapshot("unknown-terminal"))
+
     def test_duplicate_is_idempotent(self) -> None:
         buffer = TelemetryBuffer()
         envelope = parse_envelope(encoded(snapshot_message()))
@@ -386,13 +410,81 @@ class TelemetryServerTest(unittest.TestCase):
             self.assertEqual(health["accepted"], 1)
             self.assertNotIn("latest", health)
         snapshot_request = urllib.request.Request(
-            f"{self.base_url}/v1/snapshot",
+            f"{self.base_url}/v1/snapshot?source_id=demo-terminal-01",
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with urllib.request.urlopen(snapshot_request, timeout=2) as response:
             latest = json.loads(response.read())
             self.assertEqual(latest["source_id"], "demo-terminal-01")
             self.assertEqual(latest["kind"], "account_snapshot")
+
+    def test_snapshot_endpoint_requires_exactly_one_valid_source(self) -> None:
+        for query in (
+            "",
+            "?source_id=",
+            "?source_id=bad%20source",
+            "?source_id=a&source_id=b",
+            "?source_id=a&extra=b",
+        ):
+            request = urllib.request.Request(
+                f"{self.base_url}/v1/snapshot{query}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            )
+            with self.subTest(query=query), self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=2)
+            with caught.exception as response:
+                self.assertEqual(response.code, 400)
+                self.assertEqual(json.loads(response.read()), {"error": "invalid_source"})
+
+    def test_interleaved_sources_are_read_independently(self) -> None:
+        for source_id, balance in (("terminal-a", 1_000.0), ("terminal-b", 2_000.0)):
+            message = snapshot_message(source_id=source_id)
+            message["payload"]["account"]["balance"] = balance
+            request = urllib.request.Request(
+                f"{self.base_url}/v1/telemetry",
+                data=encoded(message),
+                headers={
+                    "Authorization": f"Bearer {TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 202)
+
+        for source_id, balance in (("terminal-a", 1_000.0), ("terminal-b", 2_000.0)):
+            request = urllib.request.Request(
+                f"{self.base_url}/v1/snapshot?source_id={source_id}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                latest = json.loads(response.read())
+                self.assertEqual(latest["source_id"], source_id)
+                self.assertEqual(latest["payload"]["account"]["balance"], balance)
+
+    def test_unknown_source_does_not_fall_back_to_another_terminal(self) -> None:
+        message = snapshot_message(source_id="terminal-a")
+        request = urllib.request.Request(
+            f"{self.base_url}/v1/telemetry",
+            data=encoded(message),
+            headers={
+                "Authorization": f"Bearer {TOKEN}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            self.assertEqual(response.status, 202)
+
+        unknown_request = urllib.request.Request(
+            f"{self.base_url}/v1/snapshot?source_id=terminal-b",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(unknown_request, timeout=2)
+        with caught.exception as response:
+            self.assertEqual(response.code, 404)
+            self.assertEqual(json.loads(response.read()), {"error": "snapshot_unavailable"})
 
     def test_responses_use_mt5_compatible_http_1_1_and_close(self) -> None:
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)

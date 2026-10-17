@@ -28,6 +28,12 @@ El receptor es un proceso separado. El servidor del dashboard continúa
 rechazando `POST`; su adaptador servidor conoce el token local, pero nunca lo
 entrega al navegador.
 
+El receptor responde mediante HTTP/1.1 y cierra explícitamente cada conexión.
+Durante el piloto del 2026-10-17, MT5 aceptaba el cuerpo enviado a un receptor
+HTTP/1.0 pero devolvía los códigos internos 1001/1003 en lugar de 200/202. Eso
+impedía al collector confirmar el envío y mantenía la cola atrasada. Una respuesta
+mínima HTTP/1.1 en el mismo endpoint confirmó la compatibilidad necesaria.
+
 ## Contrato `mt5-telemetry-v1`
 
 Cada mensaje contiene:

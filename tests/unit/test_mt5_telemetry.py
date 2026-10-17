@@ -394,6 +394,17 @@ class TelemetryServerTest(unittest.TestCase):
             self.assertEqual(latest["source_id"], "demo-terminal-01")
             self.assertEqual(latest["kind"], "account_snapshot")
 
+    def test_responses_use_mt5_compatible_http_1_1_and_close(self) -> None:
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+        try:
+            connection.request("GET", "/health")
+            with connection.getresponse() as response:
+                self.assertEqual(response.version, 11)
+                self.assertEqual(response.getheader("Connection"), "close")
+                response.read()
+        finally:
+            connection.close()
+
     def test_rejects_missing_token_without_echoing_secret(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/v1/telemetry",

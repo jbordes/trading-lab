@@ -210,6 +210,12 @@ def create_telemetry_server(
 
     class TelemetryHandler(BaseHTTPRequestHandler):
         server_version = "TradingLabTelemetrySpike/0.1"
+        # Current MT5 builds may accept an HTTP/1.0 response body but report an
+        # internal 1001/1003 result instead of its status code.  The collector
+        # then cannot acknowledge the sample.  Use an explicit, bounded HTTP/1.1
+        # response and close it after every request; the collector never needs a
+        # persistent connection.
+        protocol_version = "HTTP/1.1"
 
         def handle(self) -> None:
             try:
@@ -312,9 +318,11 @@ def create_telemetry_server(
 
         def _send_json(self, status: HTTPStatus, payload: object) -> None:
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+            self.close_connection = True
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Connection", "close")
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")

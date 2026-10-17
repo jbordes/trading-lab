@@ -30,7 +30,7 @@
     const current = effectiveTheme();
     document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
       button.hidden = false;
-      button.textContent = current === "dark" ? "Tema claro" : "Tema oscuro";
+      button.textContent = current === "dark" ? "Claro" : "Oscuro";
       button.setAttribute(
         "aria-label",
         current === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro",

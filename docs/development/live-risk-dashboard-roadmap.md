@@ -127,7 +127,9 @@ Pendiente:
 4. Definir el procedimiento reproducible para compilar, instalar, configurar,
    verificar y retirar un collector por terminal con aprobación humana.
 5. Diseñar cómo presentar y alternar varias fuentes en una misma interfaz sin
-   asumir todavía una base, cola o despliegue remoto.
+   asumir todavía una base, cola o despliegue remoto. Nota: la interfaz ya
+   presenta una fuente con su `source_id`, versión del colector y salud del
+   receptor local; la alternancia entre varias fuentes sigue pendiente.
 6. Completar la validación acotada con operaciones antes de usar cuentas reales.
 
 ## Incremento 1 — Contrato de control operativo

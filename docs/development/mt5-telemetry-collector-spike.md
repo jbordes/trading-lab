@@ -331,6 +331,12 @@ bytes canónicos, sin copiar ni exponer el último payload. Un socket que agota 
 timeout de inactividad puede cerrarse antes del temporizador absoluto y no sumar
 al contador de expiraciones de este último.
 
+Desde el ADR-0005, el adaptador del dashboard consulta este `/health` (sin token)
+en cada poll y publica en `/api/state` un resumen acotado como `source_health`:
+aceptados, duplicados, secuencias faltantes, retenidos, sesiones y
+`history_status`. Los contadores siguen siendo globales del receptor desde su
+inicio; la interfaz los rotula así.
+
 Las pruebas locales cubren cuerpos y cabeceras incompletos, saturación, vencimiento
 absoluto controlado, cierre, fallo al crear worker, churn de sesiones, presupuesto
 por bytes y semántica de replay tras desalojo. No acceden a MT5.

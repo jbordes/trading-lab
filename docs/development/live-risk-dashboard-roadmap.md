@@ -111,10 +111,16 @@ caída y la recuperación automática al reanudar el receptor.
 
 ## Incremento 0E — Promoción del collector
 
-1. Hacer que el arranque operativo del dashboard exija telemetría y un
-   `source_id` explícito; no usar descubrimiento automático de MT5.
-2. Mantener el modo Python únicamente en la herramienta diagnóstica, exigiendo
-   ruta e identidad esperadas y una terminal por proceso.
+Implementado:
+
+1. El dashboard exige elegir `--demo` o `--telemetry`; eliminó el descubrimiento
+   automático de MT5 y telemetría requiere un `source_id` explícito.
+2. Python permanece únicamente en la herramienta diagnóstica. La captura exige
+   por entorno ruta de terminal, carpeta de datos, cuenta y servidor esperados,
+   los verifica antes de leer operaciones y trabaja con una terminal por proceso.
+
+Pendiente:
+
 3. Definir el procedimiento reproducible para compilar, instalar, configurar,
    verificar y retirar un collector por terminal con aprobación humana.
 4. Diseñar la selección de varias fuentes sin asumir todavía una base, cola o

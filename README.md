@@ -50,6 +50,9 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
+El modo de fuente siempre es explícito: ejecutar el comando sin `--demo` o
+`--telemetry` se rechaza y nunca intenta descubrir una terminal MT5.
+
 La fuente MT5 operativa es el collector MQL5. Con el receptor local iniciado, el
 mismo token disponible fuera de Git y un `SourceId` configurado en el EA:
 

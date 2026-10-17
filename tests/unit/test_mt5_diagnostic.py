@@ -25,15 +25,17 @@ from tradinglab.incubation.diagnostic import (  # noqa: E402
     CaptureValidationError,
     CaptureWindow,
     EvidenceConflictError,
+    Mt5IdentityError,
     Mt5InitializationError,
     Mt5ReadError,
+    Mt5TerminalIdentity,
     collect_mt5_diagnostic,
     load_capture_evidence,
     write_capture_evidence,
 )
 
 Account = namedtuple("Account", "login server balance")
-Terminal = namedtuple("Terminal", "connected build")
+Terminal = namedtuple("Terminal", "connected build path data_path")
 Order = namedtuple("Order", "ticket position_id magic")
 Deal = namedtuple("Deal", "ticket order position_id magic profit")
 Position = namedtuple("Position", "ticket position_id magic profit")
@@ -45,8 +47,15 @@ class FakeMt5:
         self.shutdown_called = False
         self.fail_initialize = False
         self.fail_endpoint: str | None = None
+        self.requested_path: str | None = None
+        self.timeout: int | None = None
+        self.operational_reads = 0
+        self.terminal_path = ROOT / "tests" / "fixtures" / "terminal"
+        self.data_path = ROOT / "tests" / "fixtures" / "terminal-data"
 
-    def initialize(self) -> bool:
+    def initialize(self, path: str, *, timeout: int) -> bool:
+        self.requested_path = path
+        self.timeout = timeout
         self.initialized = not self.fail_initialize
         return self.initialized
 
@@ -60,20 +69,27 @@ class FakeMt5:
         return self._value("account_info", Account(90000001, "DEMO-SERVER", 10000.0))
 
     def terminal_info(self) -> object | None:
-        return self._value("terminal_info", Terminal(True, 5000))
+        return self._value(
+            "terminal_info",
+            Terminal(True, 5000, str(self.terminal_path), str(self.data_path)),
+        )
 
     def history_orders_get(self, date_from: datetime, date_to: datetime) -> object | None:
         del date_from, date_to
+        self.operational_reads += 1
         return self._value("history_orders_get", (Order(1, 10, 900001),))
 
     def history_deals_get(self, date_from: datetime, date_to: datetime) -> object | None:
         del date_from, date_to
+        self.operational_reads += 1
         return self._value("history_deals_get", (Deal(2, 1, 10, 900001, 3.5),))
 
     def positions_get(self) -> object | None:
+        self.operational_reads += 1
         return self._value("positions_get", (Position(11, 11, 900001, 1.5),))
 
     def orders_get(self) -> object | None:
+        self.operational_reads += 1
         return self._value("orders_get", ())
 
     def _value(self, endpoint: str, value: object) -> object | None:
@@ -87,6 +103,12 @@ class Mt5DiagnosticTest(unittest.TestCase):
             self.captured_at - timedelta(days=1),
             self.captured_at,
         )
+        self.identity = Mt5TerminalIdentity(
+            terminal_path=ROOT / "tests" / "fixtures" / "terminal" / "terminal64.exe",
+            data_path=ROOT / "tests" / "fixtures" / "terminal-data",
+            account_login=90000001,
+            server="DEMO-SERVER",
+        )
 
     def test_collects_all_read_only_datasets_and_shuts_down(self) -> None:
         client = FakeMt5()
@@ -95,10 +117,13 @@ class Mt5DiagnosticTest(unittest.TestCase):
             client,
             self.window,
             captured_at=self.captured_at,
+            identity=self.identity,
         )
 
         self.assertTrue(client.initialized)
         self.assertTrue(client.shutdown_called)
+        self.assertEqual(client.requested_path, str(self.identity.terminal_path))
+        self.assertEqual(client.timeout, 10_000)
         self.assertEqual(payload["account"]["login"], 90000001)
         self.assertEqual(payload["history_orders"][0]["magic"], 900001)
         self.assertEqual(payload["history_deals"][0]["position_id"], 10)
@@ -110,7 +135,12 @@ class Mt5DiagnosticTest(unittest.TestCase):
         client.fail_initialize = True
 
         with self.assertRaises(Mt5InitializationError):
-            collect_mt5_diagnostic(client, self.window, captured_at=self.captured_at)
+            collect_mt5_diagnostic(
+                client,
+                self.window,
+                captured_at=self.captured_at,
+                identity=self.identity,
+            )
 
         self.assertFalse(client.shutdown_called)
 
@@ -119,7 +149,12 @@ class Mt5DiagnosticTest(unittest.TestCase):
         client.fail_endpoint = "history_deals_get"
 
         with self.assertRaises(Mt5ReadError):
-            collect_mt5_diagnostic(client, self.window, captured_at=self.captured_at)
+            collect_mt5_diagnostic(
+                client,
+                self.window,
+                captured_at=self.captured_at,
+                identity=self.identity,
+            )
 
         self.assertTrue(client.shutdown_called)
 
@@ -134,6 +169,7 @@ class Mt5DiagnosticTest(unittest.TestCase):
             FakeMt5(),
             self.window,
             captured_at=self.captured_at,
+            identity=self.identity,
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.json"
@@ -191,6 +227,79 @@ class Mt5DiagnosticTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn(" -> ", output.getvalue())
+
+    def test_identity_mismatch_stops_before_operational_reads(self) -> None:
+        mismatches = {
+            "terminal": Mt5TerminalIdentity(
+                terminal_path=ROOT / "other-terminal" / "terminal64.exe",
+                data_path=self.identity.data_path,
+                account_login=self.identity.account_login,
+                server=self.identity.server,
+            ),
+            "data": Mt5TerminalIdentity(
+                terminal_path=self.identity.terminal_path,
+                data_path=ROOT / "other-data",
+                account_login=self.identity.account_login,
+                server=self.identity.server,
+            ),
+            "account": Mt5TerminalIdentity(
+                terminal_path=self.identity.terminal_path,
+                data_path=self.identity.data_path,
+                account_login=90000002,
+                server=self.identity.server,
+            ),
+            "server": Mt5TerminalIdentity(
+                terminal_path=self.identity.terminal_path,
+                data_path=self.identity.data_path,
+                account_login=self.identity.account_login,
+                server="OTHER-SERVER",
+            ),
+        }
+
+        for field, wrong_identity in mismatches.items():
+            with self.subTest(field=field):
+                client = FakeMt5()
+                with self.assertRaises(Mt5IdentityError):
+                    collect_mt5_diagnostic(
+                        client,
+                        self.window,
+                        captured_at=self.captured_at,
+                        identity=wrong_identity,
+                    )
+
+                self.assertTrue(client.shutdown_called)
+                self.assertEqual(client.operational_reads, 0)
+
+    def test_identity_rejects_relative_paths_and_invalid_login(self) -> None:
+        with self.assertRaisesRegex(ValueError, "absolutas"):
+            Mt5TerminalIdentity(
+                terminal_path=Path("terminal64.exe"),
+                data_path=self.identity.data_path,
+                account_login=self.identity.account_login,
+                server=self.identity.server,
+            )
+        with self.assertRaisesRegex(ValueError, "positivo"):
+            Mt5TerminalIdentity(
+                terminal_path=self.identity.terminal_path,
+                data_path=self.identity.data_path,
+                account_login=0,
+                server=self.identity.server,
+            )
+
+    def test_identity_environment_is_required_and_not_in_argv(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TRADINGLAB_MT5_TERMINAL_PATH"):
+            CLI.terminal_identity_from_environment({})
+
+        identity = CLI.terminal_identity_from_environment(
+            {
+                "TRADINGLAB_MT5_TERMINAL_PATH": str(self.identity.terminal_path),
+                "TRADINGLAB_MT5_DATA_PATH": str(self.identity.data_path),
+                "TRADINGLAB_MT5_EXPECTED_LOGIN": str(self.identity.account_login),
+                "TRADINGLAB_MT5_EXPECTED_SERVER": self.identity.server,
+            }
+        )
+
+        self.assertEqual(identity, self.identity)
 
 
 if __name__ == "__main__":

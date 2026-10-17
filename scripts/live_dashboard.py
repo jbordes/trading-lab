@@ -87,7 +87,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         try:
             source = TelemetrySnapshotSource(
-                LoopbackTelemetryClient(token=credential, port=args.telemetry_port),
+                LoopbackTelemetryClient(
+                    token=credential,
+                    source_id=args.telemetry_source,
+                    port=args.telemetry_port,
+                ),
                 source_id=args.telemetry_source,
                 max_age=timedelta(seconds=args.telemetry_max_age),
             )

@@ -118,14 +118,17 @@ Implementado:
 2. Python permanece únicamente en la herramienta diagnóstica. La captura exige
    por entorno ruta de terminal, carpeta de datos, cuenta y servidor esperados,
    los verifica antes de leer operaciones y trabaja con una terminal por proceso.
+3. El receptor conserva y entrega el último snapshot por `source_id`; el cliente
+   solicita una fuente concreta y vuelve a verificarla. Pruebas con mensajes
+   intercalados demuestran que un collector no desplaza los datos de otro.
 
 Pendiente:
 
-3. Definir el procedimiento reproducible para compilar, instalar, configurar,
+4. Definir el procedimiento reproducible para compilar, instalar, configurar,
    verificar y retirar un collector por terminal con aprobación humana.
-4. Diseñar la selección de varias fuentes sin asumir todavía una base, cola o
-   despliegue remoto.
-5. Completar la validación acotada con operaciones antes de usar cuentas reales.
+5. Diseñar cómo presentar y alternar varias fuentes en una misma interfaz sin
+   asumir todavía una base, cola o despliegue remoto.
+6. Completar la validación acotada con operaciones antes de usar cuentas reales.
 
 ## Incremento 1 — Contrato de control operativo
 

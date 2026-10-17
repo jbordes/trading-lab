@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from tradinglab.telemetry.contract import (
+    IDENTIFIER,
     MAX_BODY_BYTES,
     TelemetryEnvelope,
     TelemetryValidationError,
@@ -148,12 +150,12 @@ class TelemetryBuffer:
                 return result
         return {"status": "unavailable", "deals": []}
 
-    def latest_account_snapshot(self) -> dict[str, Any] | None:
-        """Return an owned copy of the newest validated account snapshot."""
+    def latest_account_snapshot(self, source_id: str) -> dict[str, Any] | None:
+        """Return an owned copy of the newest snapshot for exactly one source."""
 
         with self._lock:
             for envelope in reversed(self._messages):
-                if envelope.kind == "account_snapshot":
+                if envelope.source_id == source_id and envelope.kind == "account_snapshot":
                     return deepcopy(envelope.as_dict())
         return None
 
@@ -225,7 +227,12 @@ def create_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
-            path = self.path.split("?", 1)[0]
+            try:
+                request_target = urlsplit(self.path)
+            except ValueError:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_target"})
+                return
+            path = request_target.path
             if path == "/health":
                 health = buffer.state(include_latest=False)
                 health.pop("latest")
@@ -236,7 +243,11 @@ def create_telemetry_server(
                 if not self._is_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
-                latest = buffer.latest_account_snapshot()
+                source_id = self._snapshot_source_id(request_target.query)
+                if source_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_source"})
+                    return
+                latest = buffer.latest_account_snapshot(source_id)
                 if latest is None:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "snapshot_unavailable"})
                     return
@@ -312,6 +323,21 @@ def create_telemetry_server(
                 and authorization.isascii()
                 and hmac.compare_digest(authorization, expected_authorization)
             )
+
+        def _snapshot_source_id(self, query: str) -> str | None:
+            try:
+                values = parse_qs(
+                    query,
+                    keep_blank_values=True,
+                    strict_parsing=True,
+                    max_num_fields=2,
+                )
+            except ValueError:
+                return None
+            if set(values) != {"source_id"} or len(values["source_id"]) != 1:
+                return None
+            source_id = values["source_id"][0]
+            return source_id if IDENTIFIER.fullmatch(source_id) else None
 
         def _method_not_allowed(self) -> None:
             self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed"})

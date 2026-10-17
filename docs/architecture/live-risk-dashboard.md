@@ -33,9 +33,10 @@ TelemetrySnapshotSource --> buffer acotado en memoria
                         dashboard sin build
 ```
 
-El navegador consulta el estado local cada dos segundos. El collector captura MT5
-cada cinco segundos por defecto y el dashboard consulta el receptor de forma
-independiente. Los intervalos son configurables y no prometen tiempo real estricto.
+El navegador consulta el estado local cada cinco segundos por defecto. El collector
+captura MT5 también cada cinco segundos por defecto y el dashboard consulta el
+receptor de forma independiente. Los intervalos son configurables y no prometen
+tiempo real estricto.
 
 ## Contrato mínimo del snapshot
 
@@ -144,16 +145,17 @@ el panel de la cuenta. Ambas comparten un tema claro y otro oscuro con tokens
 sigue la preferencia del sistema, sin flash al recargar.
 
 El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
-principal con el resultado abierto, balance y margen libre secundarios, una curva
-reciente de balance/equity y una franja de origen con la fuente, su identificador
-y la versión del colector. Operaciones lista posiciones abiertas y órdenes
-pendientes con filtro por Magic Number y detalle expandible por operación; los
-timestamps no validados se muestran como "No informada". Actividad presenta el
-estado de la fuente (salud del receptor local de telemetría: aceptados,
-duplicados, secuencias faltantes, retenidos y estado del historial) separado de
-la actualización de la vista, y la actividad reciente según la fuente. La ventana
-de deals recibida por telemetría se incorporará con filtros por tipo y Magic
-Number después de validar la escala horaria del servidor.
+principal neutral, el resultado abierto con semántica de signo y color, balance y
+margen libre secundarios, una curva reciente de balance/equity y una franja de
+origen. La curva respeta los tiempos observados y deja huecos cuando se interrumpe
+la captura. Operaciones lista posiciones abiertas y órdenes pendientes, muestra
+el Magic Number sin abrir el detalle y filtra por Magic y tipo; una actualización
+conserva el detalle abierto y el foco. Los filtros se persisten por fuente y los
+timestamps no validados se muestran como "No informada". Actividad antepone una
+conclusión comprensible y mantiene en un diagnóstico desplegable la salud global
+del receptor, la actualización de la vista y sus contadores técnicos. La ventana
+de deals recibida por telemetría se incorporará después de validar la escala
+horaria del servidor.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 

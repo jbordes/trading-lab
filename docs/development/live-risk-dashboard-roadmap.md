@@ -98,6 +98,11 @@ Implementado en el primer corte:
    con más de 30 segundos;
 5. deduplicación de muestras sin cambios para no inflar la curva al consultar el
    receptor más rápido que el colector.
+6. frescura calculada continuamente en el navegador y degradación visual de la
+   última muestra válida ante una caída del servicio local;
+7. gráfico temporal con interrupciones visibles, navegación móvil sin desborde,
+   filtros por Magic y tipo conservados por fuente, y detalles que permanecen
+   abiertos durante las actualizaciones.
 
 Pendiente para cerrar el incremento:
 

@@ -27,7 +27,7 @@ const balanceReference = document.getElementById("balance-reference");
 const grid = document.getElementById("grid");
 const magicFilter = document.getElementById("magic-filter");
 const kindFilter = document.getElementById("kind-filter");
-const magicOptions = document.getElementById("magic-options");
+const modeNotice = document.getElementById("mode-notice");
 const operationsBody = document.getElementById("operations-body");
 const operationsEmpty = document.getElementById("operations-empty");
 const operationsBadge = document.getElementById("operations-badge");
@@ -52,6 +52,8 @@ let serviceReachable = true;
 let latestStatus = "starting";
 let currentFilterScope = "uninitialized";
 let refreshInFlight = null;
+let latestHealthState = null;
+const operationNodes = new Map();
 const expandedOperationTickets = new Set();
 
 const activityElements = {
@@ -226,6 +228,7 @@ function renderSummary(value, currency, status) {
 }
 
 function renderState(state) {
+  latestHealthState = state;
   latestStatus = state.status;
   setText(elements.status, statusLabels[state.status] || "Lectura degradada");
   statusDot.className = `status-dot ${state.status}`;
@@ -239,7 +242,11 @@ function renderState(state) {
   renderCapture(state);
   renderSourceHealth(state);
   renderHealthOverview(state);
-  if (!state.latest) return;
+  if (!state.latest) {
+    if (activeView === "operations") renderOperations();
+    updateFreshness();
+    return;
+  }
 
   const value = state.latest;
   latestIntervalSeconds = state.interval_seconds || 5;
@@ -256,6 +263,7 @@ function renderState(state) {
   lastPollSince = value.observed_at;
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
+  modeNotice.hidden = value.source !== "demo";
   elements["account-identity"].textContent = value.account_reference && value.server
     ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
     : "Cuenta sin identificar";
@@ -274,15 +282,14 @@ function renderState(state) {
   elements.orders.textContent = number(value.active_orders);
   elements.margin.textContent = money(value.margin, currency);
   setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
-  const sourceId = health.source_id ? ` · ${health.source_id}` : "";
-  const collector = health.collector_version ? ` · Colector ${health.collector_version}` : "";
-  setText(sourceDescription, `${sourceLabel(value.source)}${sourceId}${collector}`);
+  setText(sourceDescription, sourceLabel(value.source));
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
   operationsBadge.textContent = number(latestOperations.length);
   if (activeView === "operations") renderOperations();
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
   latestActivity = nextActivity;
   activityElements.badge.textContent = number(latestActivity.length);
+  activityElements.badge.hidden = telemetryMode || latestActivity.length === 0;
   if (activeView === "activity") renderActivity();
   if (state.history_truncated) {
     const known = new Set(lastHistory.map((item) => item.observed_at));
@@ -333,6 +340,14 @@ function renderHealthOverview(state) {
     tone = "warning";
   } else if (state.status === "degraded") {
     message = "La lectura está degradada. Se muestran los últimos datos válidos.";
+    tone = "warning";
+  }
+  const outdated = state.latest && toDate(state.latest.observed_at)
+    && Date.now() - toDate(state.latest.observed_at).getTime() > 2 * latestIntervalSeconds * 1000;
+  if (!serviceReachable || outdated) {
+    message = !serviceReachable
+      ? "Sin conexión con el servicio local. No se están recibiendo datos nuevos."
+      : "La última lectura está atrasada. Los valores visibles no representan el estado actual de la cuenta.";
     tone = "warning";
   }
   setText(healthOverview, message);
@@ -404,6 +419,7 @@ function renderSourceHealth(state) {
 }
 
 function renderActivity() {
+  if (!latestObservedDate) return;
   activityElements.content.replaceChildren(...buildActivityContent(latestActivity));
 }
 
@@ -431,6 +447,7 @@ function buildActivityContent(events) {
   chip.textContent = "Datos de demostración: los eventos son sintéticos y sirven para validar la interfaz.";
   nodes.push(chip);
   const table = document.createElement("table");
+  table.setAttribute("role", "table");
   table.className = "operations-table activity-table";
   const caption = document.createElement("caption");
   caption.className = "sr-only";
@@ -480,12 +497,13 @@ function elapsed(seconds) {
 }
 
 function updateFreshness() {
+  if (latestHealthState) renderHealthOverview(latestHealthState);
   if (!latestObservedDate) {
-    setText(elements.freshness, "Esperando primera captura");
+    setText(elements.freshness, serviceReachable ? "Esperando primera captura" : "Sin una lectura válida todavía");
     return;
   }
   const ageSeconds = Math.max(0, (Date.now() - latestObservedDate.getTime()) / 1000);
-  const staleData = !serviceReachable || ageSeconds > 2 * latestIntervalSeconds;
+  const staleData = !serviceReachable || latestStatus !== "connected" || ageSeconds > 2 * latestIntervalSeconds;
   const criticalAge = !serviceReachable || ageSeconds > 10 * latestIntervalSeconds;
   setText(
     elements.freshness,
@@ -497,13 +515,20 @@ function updateFreshness() {
   elements.freshness.classList.toggle("aged", staleData && !criticalAge);
   elements.freshness.classList.toggle("stale", criticalAge);
   metricsPanel.classList.toggle("stale", staleData);
-  if (criticalAge && latestStatus === "connected") {
+  if (staleData && latestStatus === "connected") {
     setText(elements.status, serviceReachable ? "Datos desactualizados" : "Sin conexión local");
     statusDot.className = "status-dot degraded";
   }
 }
 
 function renderOperations() {
+  if (!latestObservedDate) {
+    operationsEmpty.hidden = false;
+    operationsEmpty.textContent = serviceReachable
+      ? "Esperando la primera lectura de operaciones…"
+      : "No hay una lectura disponible. El servicio local volverá a intentar la conexión.";
+    return;
+  }
   const filter = magicFilter.value.trim();
   const kind = kindFilter.value;
   const currentOperationKeys = new Set(
@@ -519,29 +544,14 @@ function renderOperations() {
     (!filter || String(operation.magic_number) === filter)
     && (kind === "all" || operation.kind === kind)
   ));
-  const magicNumbers = [...new Set(latestOperations.map((item) => String(item.magic_number)))];
-  magicNumbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  const magicKey = magicNumbers.join(",");
-  if (magicKey !== latestMagicKey) {
-    latestMagicKey = magicKey;
-    magicOptions.replaceChildren(...magicNumbers.map((magic) => {
-      const option = document.createElement("option");
-      option.value = magic;
-      return option;
-    }));
-  }
-
-  const focusedTicket = document.activeElement?.dataset.operationTicket || null;
-  operationsBody.replaceChildren(...filtered.flatMap(operationRow));
-  if (focusedTicket) {
-    operationsBody.querySelector(`[data-operation-ticket="${CSS.escape(focusedTicket)}"]`)?.focus();
-  }
+  updateMagicOptions(filter);
+  reconcileOperations(filtered);
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
     ? "La fuente no informa operaciones abiertas."
     : "Ninguna operación coincide con los filtros elegidos.";
   operationsNote.hidden = !(telemetryMode && latestOperations.length > 0);
-  visibleOperations.textContent = filter
+  visibleOperations.textContent = filter || kind !== "all"
     ? `${number(filtered.length)} de ${number(latestOperations.length)}`
     : number(filtered.length);
   visiblePositions.textContent = number(filtered.filter((item) => item.kind === "position").length);
@@ -549,10 +559,79 @@ function renderOperations() {
   clearFilter.disabled = !filter && kind === "all";
 }
 
+function updateMagicOptions(selected = "") {
+  const numbers = [...new Set(latestOperations.map((item) => String(item.magic_number)))];
+  numbers.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const missing = selected && !numbers.includes(selected);
+  if (missing) numbers.push(selected);
+  const key = JSON.stringify([numbers, selected, Boolean(missing)]);
+  if (key === latestMagicKey) return;
+  latestMagicKey = key;
+  magicFilter.replaceChildren(...["", ...numbers].map((magic) => {
+    const option = document.createElement("option");
+    option.value = magic;
+    option.textContent = !magic ? "Todos los bots"
+      : magic === selected && missing ? `${magic} · sin operaciones` : magic;
+    return option;
+  }));
+  magicFilter.value = selected;
+}
+
+// Conserva los nodos y sus listeners: una captura no debe quitar el foco ni cerrar detalles.
+function syncOperationNode(current, next) {
+  if (current.nodeType === Node.TEXT_NODE) {
+    if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
+    return;
+  }
+  for (const attribute of [...current.attributes]) {
+    if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  }
+  for (const attribute of next.attributes) {
+    if (current.getAttribute(attribute.name) !== attribute.value) {
+      current.setAttribute(attribute.name, attribute.value);
+    }
+  }
+  const children = [...next.childNodes];
+  children.forEach((child, index) => {
+    const existing = current.childNodes[index];
+    if (!existing) current.appendChild(child);
+    else if (existing.nodeType !== child.nodeType || existing.nodeName !== child.nodeName) {
+      current.replaceChild(child, existing);
+    } else syncOperationNode(existing, child);
+  });
+  while (current.childNodes.length > children.length) current.lastChild.remove();
+}
+
+function reconcileOperations(operations) {
+  const focused = operationsBody.contains(document.activeElement) ? document.activeElement : null;
+  const visibleKeys = new Set(operations.map((item) => `${item.kind}-${item.ticket}`));
+  for (const [key, nodes] of operationNodes) {
+    if (!visibleKeys.has(key)) {
+      if (nodes.some((node) => node.contains(document.activeElement))) magicFilter.focus();
+      nodes.forEach((node) => node.remove());
+      operationNodes.delete(key);
+    }
+  }
+  let cursor = operationsBody.firstChild;
+  for (const operation of operations) {
+    const key = `${operation.kind}-${operation.ticket}`;
+    const next = operationRow(operation);
+    let nodes = operationNodes.get(key);
+    if (nodes) nodes.forEach((node, index) => syncOperationNode(node, next[index]));
+    else { nodes = next; operationNodes.set(key, nodes); }
+    for (const node of nodes) {
+      if (node !== cursor) operationsBody.insertBefore(node, cursor);
+      cursor = node.nextSibling;
+    }
+  }
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+}
+
 function operationRow(operation) {
   const ticket = String(operation.ticket);
   const operationKey = `${operation.kind}-${ticket}`;
   const row = document.createElement("tr");
+  row.setAttribute("role", "row");
   const kind = operation.kind === "position" ? "Posición" : "Orden";
   const kindCell = document.createElement("td");
   kindCell.setAttribute("data-label", "Operación");
@@ -565,9 +644,7 @@ function operationRow(operation) {
   typeText.textContent = operationTypes[operation.operation_type] || operation.operation_type;
   kindCell.appendChild(typeText);
   row.appendChild(kindCell);
-  const operationContext = operation.comment
-    ? `Magic ${operation.magic_number} · ${operation.comment}`
-    : `Magic ${operation.magic_number}`;
+  const operationContext = `Magic ${operation.magic_number}`;
   row.appendChild(detailCell(operation.symbol, operationContext, "", "Instrumento"));
   row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
 
@@ -625,6 +702,7 @@ function operationRow(operation) {
   button.className = "detail-toggle";
   button.type = "button";
   button.dataset.operationTicket = operationKey;
+  button.setAttribute("aria-label", `Detalle de ${operation.symbol}, ${kind.toLowerCase()} ${ticket}`);
   button.setAttribute("aria-controls", detailRow.id);
   button.setAttribute("aria-expanded", String(!detailRow.hidden));
   button.textContent = detailRow.hidden ? "Ver detalle" : "Ocultar detalle";
@@ -638,6 +716,8 @@ function operationRow(operation) {
   });
   buttonCell.appendChild(button);
   row.appendChild(buttonCell);
+  detailRow.setAttribute("role", "row");
+  [...row.children, ...detailRow.children].forEach((cell) => cell.setAttribute("role", "cell"));
   return [row, detailRow];
 }
 
@@ -725,7 +805,7 @@ function renderChart(history, intervalSeconds) {
   chartEnd.textContent = timeFormatter.format(endAt);
   const spanSeconds = Math.max(0, timeRange / 1000);
   const span = elapsed(spanSeconds);
-  chartSpan.textContent = gaps ? `Ventana ${span} · ${gaps} interrupción${gaps === 1 ? "" : "es"}` : `Ventana ${span}`;
+  chartSpan.textContent = gaps ? `Ventana ${span} · ${gaps} ${gaps === 1 ? "interrupción" : "interrupciones"}` : `Ventana ${span}`;
   chart.setAttribute(
     "aria-label",
     `Evolución de balance y equity, ventana ${span}${gaps ? `, ${gaps} interrupciones de captura` : ""}`,
@@ -766,10 +846,13 @@ async function performRefresh() {
     setText(elements.status, "Sin conexión local");
     statusDot.className = "status-dot degraded";
     updateFreshness();
+    if (activeView === "operations") renderOperations();
     setText(errorHuman, "No se pudo consultar el servicio local.");
     errorTechnicalDetails.hidden = true;
     errorBox.hidden = false;
-    setText(healthOverview, "No se puede consultar el servicio local. Se muestran los últimos datos válidos.");
+    setText(healthOverview, latestObservedDate
+      ? "No se puede consultar el servicio local. Se muestran los últimos datos válidos."
+      : "No se puede consultar el servicio local. Todavía no hay datos para mostrar.");
     healthOverview.className = "health-overview warning";
     retryMultiplier = Math.min(retryMultiplier * 2, 6);
   } finally {
@@ -814,12 +897,13 @@ document.querySelectorAll(".view-tab").forEach((button) => {
     history.replaceState(null, "", `#${button.dataset.view}`);
   });
   button.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const tabs = [...document.querySelectorAll(".view-tab")];
     const index = tabs.indexOf(button);
     const direction = event.key === "ArrowRight" ? 1 : -1;
-    const next = tabs[(index + direction + tabs.length) % tabs.length];
+    const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1]
+      : tabs[(index + direction + tabs.length) % tabs.length];
     next.focus();
     next.click();
   });
@@ -838,7 +922,7 @@ function loadStoredFilters(scope) {
   try {
     const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
     const selected = stored.scopes?.[scope] || {};
-    magicFilter.value = selected.magic || "";
+    updateMagicOptions(typeof selected.magic === "string" ? selected.magic : "");
     kindFilter.value = ["all", "position", "order"].includes(selected.kind)
       ? selected.kind
       : "all";
@@ -860,7 +944,7 @@ function saveStoredFilters() {
   }
 }
 
-magicFilter.addEventListener("input", () => { renderOperations(); saveStoredFilters(); });
+magicFilter.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 kindFilter.addEventListener("change", () => { renderOperations(); saveStoredFilters(); });
 clearFilter.addEventListener("click", () => {
   magicFilter.value = "";

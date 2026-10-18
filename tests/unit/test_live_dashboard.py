@@ -629,6 +629,14 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('class="skip-link"', dashboard)
         self.assertIn('id="kind-filter"', dashboard)
         self.assertIn('class="technical-health"', dashboard)
+        self.assertIn('<select id="magic-filter">', dashboard)
+        self.assertIn("Todos los bots", dashboard)
+        self.assertNotIn('id="freshness" aria-live', dashboard)
+        self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
+        self.assertLess(
+            dashboard.index('id="activity-content"'),
+            dashboard.index('class="technical-health"'),
+        )
         for view in ("overview", "operations", "activity"):
             self.assertIn(f'aria-controls="{view}-view"', dashboard)
             self.assertIn(f'id="{view}-view"', dashboard)

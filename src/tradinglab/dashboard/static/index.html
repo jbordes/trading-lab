@@ -4,86 +4,64 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
-    <title>TradingLab</title>
+    <title>TradingLab · Inicio</title>
     <link rel="icon" href="data:,">
     <script src="/assets/theme.js"></script>
     <link rel="stylesheet" href="/assets/styles.css">
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
-    <main class="shell" id="contenido">
+    <div class="shell">
       <nav class="site-nav" aria-label="Navegación principal">
-        <a class="brand" href="/"><strong>TradingLab</strong><span>Laboratorio de estrategias de trading</span></a>
+        <a class="brand" href="/" aria-label="TradingLab, inicio"><strong>TradingLab<span class="brand-dot">.</span></strong></a>
         <div class="site-nav-links">
-          <a href="/" aria-current="page">Proyecto</a>
-          <a href="/dashboard">Panel de la cuenta</a>
+          <a href="/" aria-current="page">Inicio</a>
+          <a href="/dashboard">Panel</a>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
         </div>
       </nav>
-
-      <section class="hero">
-        <p class="eyebrow">TRADINGLAB 2.0</p>
-        <h1>De la estrategia a la incubación.</h1>
-        <p>
-          Investigamos y preparamos estrategias de StrategyQuant X para observarlas
-          en MetaTrader 5. Cada paso conserva su configuración, sus decisiones y
-          sus resultados para que el trabajo pueda revisarse y repetirse.
-        </p>
-        <a class="button-primary" href="/dashboard">Abrir el panel de la cuenta</a>
-      </section>
-
-      <section class="project-section project-section-wide" aria-labelledby="como-trabajamos">
-        <h2 id="como-trabajamos">Cómo trabajamos</h2>
-        <ol class="steps">
-          <li><strong>1 · Selección</strong><span>Una estrategia candidata de SQX, con su configuración y resultados.</span></li>
-          <li><strong>2 · Preparación</strong><span>Adaptación versionada a código MQL5, con receta y componentes compartidos.</span></li>
-          <li><strong>3 · Compilación</strong><span>Construcción reproducible con MetaEditor: hashes, logs y manifiesto.</span></li>
-          <li><strong>4 · Validación</strong><span>Controles técnicos y comparación con la estrategia de origen antes de aprobar.</span></li>
-          <li><strong>5 · Incubación</strong><span>Observación controlada en una cuenta demo, con evidencia de vuelta al laboratorio.</span></li>
-        </ol>
-      </section>
-
-      <section class="project-section" aria-labelledby="que-podes-observar">
-        <h2 id="que-podes-observar">Qué podés observar hoy</h2>
-        <ul class="pillars">
-          <li><strong>Estado de la cuenta</strong><span>Balance, equity, margen y frescura de la última lectura.</span></li>
-          <li><strong>Operaciones abiertas</strong><span>Posiciones y órdenes, filtrables por bot mediante Magic Number.</span></li>
-          <li><strong>Salud de la fuente</strong><span>Disponibilidad del collector y calidad de la captura local.</span></li>
-          <li><strong>Trazabilidad en evolución</strong><span>La arquitectura relacionará cada bot con su estrategia y evidencia.</span></li>
-        </ul>
-      </section>
-
-      <section class="project-section" aria-labelledby="estado-actual">
-        <h2 id="estado-actual">Estado actual</h2>
-        <p class="status-note">
-          <strong>Octubre de 2026.</strong> El colector MQL5 es la fuente operativa
-          de MetaTrader 5 (un colector y un identificador por cuenta). El panel de
-          la cuenta muestra posiciones, órdenes y salud de la fuente en vivo, en
-          modo demo o con telemetría. Las métricas de riesgo (DDD y Max DD) siguen
-          pendientes de contrato con el socio: no mostramos estimaciones.
-        </p>
-      </section>
-
-      <section class="project-section" aria-labelledby="limites">
-        <h2 id="limites">Límites del laboratorio</h2>
-        <ul>
-          <li>Solo lectura: el laboratorio no ejecuta operaciones de trading.</li>
-          <li>Cuentas demo antes que cuentas reales.</li>
-          <li>Las métricas se muestran únicamente con fórmulas aprobadas.</li>
-          <li>Los datos permanecen en la máquina local.</li>
-        </ul>
-      </section>
-
-      <section class="project-section" aria-labelledby="documentacion">
-        <h2 id="documentacion">Documentación</h2>
-        <ul>
-          <li><a href="https://github.com/jbordes/trading-lab">Repositorio en GitHub</a></li>
-          <li><a href="https://github.com/jbordes/trading-lab/blob/main/docs/architecture/tradinglab-architecture-v2.md">Arquitectura vigente</a></li>
-          <li><a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/live-risk-dashboard-roadmap.md">Roadmap del panel de la cuenta</a></li>
-        </ul>
-      </section>
-
-      <footer>Revisado el 17 de octubre de 2026 · TradingLab 2.0</footer>
-    </main>
+      <main id="contenido" tabindex="-1">
+        <section class="home-intro" aria-labelledby="home-title">
+          <div class="hero">
+            <p class="eyebrow">Laboratorio de estrategias</p>
+            <h1 id="home-title">Observar mejor.<br>Decidir con criterio.</h1>
+            <p>Un espacio para seguir tus estrategias en MetaTrader 5 y entender qué está pasando en la cuenta.</p>
+            <a class="button-primary" href="/dashboard">Abrir el panel <span aria-hidden="true">↗</span></a>
+            <p class="hero-note">Lectura local. Sin ejecutar operaciones.</p>
+          </div>
+          <aside class="home-focus" aria-labelledby="focus-title">
+            <p class="eyebrow">Tu punto de partida</p>
+            <h2 id="focus-title">La cuenta, con contexto.</h2>
+            <p>Revisá el capital, encontrá las operaciones de un bot y comprobá cuándo se recibieron los datos.</p>
+            <ul class="focus-list">
+              <li><span>01</span> Estado de la cuenta</li>
+              <li><span>02</span> Operaciones por Magic Number</li>
+              <li><span>03</span> Estado de la captura</li>
+            </ul>
+            <small>Disponible en el piloto actual</small>
+          </aside>
+        </section>
+        <section class="home-workspace" aria-labelledby="workspace-title">
+          <div class="section-heading"><h2 id="workspace-title">¿Qué querés revisar?</h2><p>Accesos al panel de la fuente configurada.</p></div>
+          <div class="workspace-links">
+            <a href="/dashboard#overview"><span class="eyebrow">Resumen</span><h3>Cómo está la cuenta <span aria-hidden="true">↗</span></h3><p>Equity, balance, margen y evolución reciente.</p></a>
+            <a href="/dashboard#operations"><span class="eyebrow">Operaciones</span><h3>Qué está abierto <span aria-hidden="true">↗</span></h3><p>Posiciones y órdenes pendientes, filtradas por bot.</p></a>
+            <a href="/dashboard#activity"><span class="eyebrow">Actividad</span><h3>Cómo llegan los datos <span aria-hidden="true">↗</span></h3><p>Estado de la fuente y diagnóstico de la captura.</p></a>
+          </div>
+        </section>
+        <section class="home-next" aria-labelledby="next-title">
+          <div><p class="eyebrow">En desarrollo</p><h2 id="next-title">Primero evidencia.<br>Después, más métricas.</h2></div>
+          <div><p>Las métricas de riesgo y el análisis histórico se incorporarán cuando estén acordadas sus fórmulas. El panel actual muestra observaciones, no estimaciones de riesgo.</p>
+            <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/live-risk-dashboard-roadmap.md">Consultar el roadmap</a></div>
+        </section>
+        <details class="project-details">
+          <summary>Sobre el laboratorio y su evolución</summary>
+          <p>TradingLab busca conectar la investigación en StrategyQuant X con la preparación, validación e incubación de estrategias en MT5. Es la dirección del proyecto; el flujo completo todavía no está automatizado.</p>
+          <p>El piloto trabaja con cuentas demo. La ventana visual se conserva en memoria y se pierde al reiniciar el servicio; no sustituye un historial durable.</p>
+          <a href="https://github.com/jbordes/trading-lab/blob/main/docs/architecture/tradinglab-architecture-v2.md">Leer la arquitectura</a>
+        </details>
+      </main>
+      <footer><span>TradingLab · Laboratorio local</span><a href="https://github.com/jbordes/trading-lab">Documentación y código</a></footer>
+    </div>
   </body>
 </html>

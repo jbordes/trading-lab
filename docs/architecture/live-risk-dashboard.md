@@ -139,7 +139,7 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
 de Python. No descarga scripts de terceros ni necesita Node. `/` presenta la
-página del proyecto (qué es TradingLab, pipeline, estado y límites) y `/dashboard`
+inicio orientado a tareas (propósito, accesos al panel y límites actuales) y `/dashboard`
 el panel de la cuenta. Ambas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
 sigue la preferencia del sistema, sin flash al recargar.
@@ -149,13 +149,22 @@ principal neutral, el resultado abierto con semántica de signo y color, balance
 margen libre secundarios, una curva reciente de balance/equity y una franja de
 origen. La curva respeta los tiempos observados y deja huecos cuando se interrumpe
 la captura. Operaciones lista posiciones abiertas y órdenes pendientes, muestra
-el Magic Number sin abrir el detalle y filtra por Magic y tipo; una actualización
-conserva el detalle abierto y el foco. Los filtros se persisten por fuente y los
+el Magic Number sin abrir el detalle y filtra por Magic y tipo desde una barra
+encima de los resultados. El selector enumera los Magic disponibles, conserva
+como texto los identificadores y hace explícito un bot filtrado sin operaciones.
+En móvil la tabla adopta jerarquía de tarjeta, sin scroll interno; los nodos se
+actualizan por tipo/ticket conservando detalle y foco. Los filtros se persisten por fuente y los
 timestamps no validados se muestran como "No informada". Actividad antepone una
 conclusión comprensible y mantiene en un diagnóstico desplegable la salud global
 del receptor, la actualización de la vista y sus contadores técnicos. La ventana
 de deals recibida por telemetría se incorporará después de validar la escala
 horaria del servidor.
+
+El modo simulado se identifica en las tres vistas. La carga inicial, ausencia de
+operaciones, filtros sin resultados y desconexión son estados distintos. La edad
+de la muestra afecta al indicador de conexión y al resumen de salud; el reloj
+visual no genera anuncios continuos para lectores de pantalla. Las métricas de
+riesgo pendientes se explican en un desplegable, sin competir con los datos actuales.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 

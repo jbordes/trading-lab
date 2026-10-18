@@ -14,23 +14,38 @@ El dashboard es el primer producto de observabilidad del piloto (mod. 2.4): la v
 2. **Dos audiencias, una pantalla**: el trader (detalle operativo, trazabilidad) y el socio no técnico (riesgo en castellano llano).
 3. **El diseño es un contrato más**: cada valor derivado debe poder remitir a su fuente (run, deployment, evidence bundle) cuando exista el catálogo.
 
-## 2. Estado del prototipo (actualizado 17 de octubre de 2026)
+## 2. Estado del prototipo (actualizado 18 de octubre de 2026)
 
 A partir de tres análisis previos (UX, diseño visual, performance en navegador) se aplicaron en fases y, en octubre de 2026, un rediseño completo según el ADR-0005:
 
-- Página de proyecto en `/` (qué es TradingLab, pipeline, estado y límites) y panel en `/dashboard`, con navegación cruzada.
-- Tema claro y oscuro con tokens `light-dark()`: paleta cálida tipo reporte y oscuro neutro sin negro puro, validada en WCAG AA; elección persistida sin flash al recargar; superficies planas separadas por bordes de 1px, sin gradientes, sombras ni mayúsculas sostenidas.
+- Inicio en `/`: propósito breve, acceso principal al panel y accesos directos a
+  Resumen, Operaciones y Actividad. Las capacidades actuales se separan del roadmap;
+  la arquitectura queda en un desplegable secundario. El bloque lateral editorial
+  se omite en móvil porque repite los accesos disponibles inmediatamente después.
+- Tema claro y oscuro con tokens `light-dark()`: fondo neutro, acento verde apagado,
+  fuentes del sistema y superficies planas. Elección persistida sin flash al recargar.
+  No se declara conformidad WCAG integral: falta validación con tecnologías de
+  asistencia y dispositivos físicos.
 - Resumen curado: equity protagonista en tono neutral, resultado abierto con signo,
-  color y palabra, balance y margen secundarios, franja de origen con fuente,
-  `source_id` y versión del collector, y nota honesta de riesgo sin estimaciones.
-- Operaciones con tabla de cinco columnas y detalle expandible por operación;
-  Magic Number visible, filtros por Magic y tipo, estado del detalle y foco
-  conservados entre actualizaciones; "No informada" en timestamps no validados y
-  filas apiladas sin scroll horizontal en viewports chicos.
+  color y palabra, balance y margen secundarios en una banda sin tres cajas.
+  Fuente resumida, gráfico reciente y contexto de la cuenta; identificador y versión
+  del collector en diagnóstico. Nota desplegable de riesgo sin estimaciones.
+- Operaciones con tabla de seis columnas en escritorio y composición de tarjeta
+  bajo 900 px: instrumento/resultado primero, Magic visible, dirección/volumen y
+  detalle secundario. Hora y comentario completos quedan en el detalle móvil.
+  Barra de filtros arriba de los resultados, conteos en una línea, sin tarjetas.
+  Selector nativo de Magic con «Todos los bots», selección exacta como texto y
+  opción retenida «sin operaciones» si desaparece el bot filtrado. Usa navegación
+  nativa de teclado; búsqueda avanzada se evaluará si el volumen la justifica.
+  Los nodos se actualizan por tipo/ticket sin reconstruir la tabla completa;
+  detalle y foco se conservan. Sin scroll interno de altura fija.
 - Actividad y estado de la fuente: primero una conclusión en lenguaje llano; el
   diagnóstico desplegable separa la salud global del receptor de la actualización
   de la vista y conserva los contadores técnicos cuando hacen falta.
 - Salud de fuente en `/api/state` (`source_health` aditivo, schema v3): el navegador sigue haciendo una única llamada y el token no sale del backend.
+- Demo marcada en todas las vistas. Esperar la primera lectura no equivale a cero
+  operaciones. Desconexión, antigüedad y recuperación afectan también al resumen
+  de salud. El reloj visual no se anuncia cada segundo al lector de pantalla.
 - Se conservan del pulido previo: números como tablero financiero, historial
   incremental, ETag/304, accesibilidad de tabs y tablas y demo determinista. El
   gráfico usa ahora el tiempo observado en el eje horizontal y corta la línea en
@@ -82,7 +97,8 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 
 - Alertas push, multi-cuenta, autenticación: fuera del piloto.
 - Métricas históricas sin contrato aprobado: ni en prototipo, salvo los valores ilustrativos explícitos de la demo.
-- Vista de portfolio, rangos temporales y gaps del gráfico: esperan persistencia (incremento 2).
+- Vista de portfolio y rangos temporales: esperan persistencia (incremento 2).
+  Los gaps de la ventana actual ya se muestran; no requieren persistencia.
 - Selector de fuente completo: espera StocksTrader (incremento 4).
 
 ## 6. Riesgos de diseño a vigilar
@@ -91,3 +107,21 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 2. **Sobrecarga en incremento 3**: diez visualizaciones técnicas sin capa de lenguaje espantan al socio; cada gráfico entra con su frase.
 3. **Demo como espejo falso**: todo prototipo debe contrastarse con datos reales del terminal antes de darse por cerrado.
 4. **Métricas no aprobadas presentadas como válidas**: hasta el contrato, placeholder honesto o "—".
+
+## 7. Verificación reproducible de la interfaz
+
+`tests/browser/dashboard-smoke.cjs` es un check opcional con Node y Chrome aislado
+con depuración remota (puerto 9340); no son dependencias del producto ni del
+harness rápido. Requiere iniciar primero `scripts/live_dashboard.py --demo --port
+8786`. Ejecutar `node tests/browser/dashboard-smoke.cjs`; rechaza una fuente que
+no sea demo y limita las direcciones a `127.0.0.1`. Nunca conectar el script al
+perfil habitual de Chrome. Para iniciar un perfil de pruebas, pasar a Chrome
+`--headless=new --remote-debugging-port=9340` y un `--user-data-dir` nuevo bajo
+`_storage/`; al finalizar cerrar solo ese proceso aislado.
+
+Comprueba 32 composiciones (cuatro vistas, dos temas, 1440/768/390/320 px), ancho
+real del documento, pie debajo de la tabla, filtros exactos/persistidos, detalle
+y foco durante refresh, carga/vacío/desconexión/recuperación y listas largas con
+Magic de 64 bits. Guarda capturas y resultados en `_storage/product-design-review/`.
+Las pruebas son de Chromium en escritorio con viewport emulado, no certifican
+Safari/iOS, lector de pantalla ni Core Web Vitals de usuarios reales.

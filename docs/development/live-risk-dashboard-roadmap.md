@@ -19,6 +19,19 @@
 
 ## Incremento 0B — Vista MT5 local
 
+### Diseño de producto — 18 de octubre de 2026
+
+- Inicio orientado a tareas; navegación y temas coherentes con el panel.
+- Resumen con jerarquía equity/balance/margen y límites del gráfico visibles.
+- Operaciones con filtros integrados, Magic seleccionable y composición móvil.
+- Actividad primero, diagnóstico técnico secundario; carga y degradación explícitas.
+- Actualizaciones por identidad de operación para conservar foco y detalle.
+- Check opcional de navegador y alcance de validación documentados en la
+  [guía UX](dashboard-evolution-ux.md).
+
+No cambia las fuentes, el collector ni las definiciones de métricas. Queda
+pendiente contrastar la usabilidad con los socios y dispositivos físicos.
+
 Alcance:
 
 1. Adaptador mínimo para `account_info`, `positions_get` y `orders_get`.

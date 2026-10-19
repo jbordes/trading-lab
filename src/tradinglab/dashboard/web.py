@@ -20,6 +20,22 @@ STATIC_ROUTES = {
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/assets/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/assets/nav-icons.svg": ("nav-icons.svg", "image/svg+xml"),
+    "/assets/logo_black.png": ("logo_black.png", "image/png"),
+    "/assets/logo_white.png": ("logo_white.png", "image/png"),
+    "/assets/favicon-black.ico": ("favicon-black.ico", "image/x-icon"),
+    "/assets/favicon-white.ico": ("favicon-white.ico", "image/x-icon"),
+    "/favicon.ico": ("favicon-black.ico", "image/x-icon"),
+    "/assets/tradinglab-favicon-black-32.png": ("tradinglab-favicon-black-32.png", "image/png"),
+    "/assets/tradinglab-favicon-white-32.png": ("tradinglab-favicon-white-32.png", "image/png"),
+    "/assets/tradinglab-apple-touch-icon-black.png": (
+        "tradinglab-apple-touch-icon-black.png",
+        "image/png",
+    ),
+    "/assets/tradinglab-apple-touch-icon-white.png": (
+        "tradinglab-apple-touch-icon-white.png",
+        "image/png",
+    ),
 }
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes, str]] = {}

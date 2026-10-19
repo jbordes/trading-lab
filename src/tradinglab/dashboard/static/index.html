@@ -5,21 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
     <title>TradingLab · Inicio</title>
-    <link rel="icon" href="data:,">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon-black.ico?v=fitted-1" data-theme-icon="light">
     <script src="/assets/theme.js"></script>
     <link rel="stylesheet" href="/assets/styles.css">
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
-    <div class="shell">
-      <nav class="site-nav" aria-label="Navegación principal">
-        <a class="brand" href="/" aria-label="TradingLab, inicio"><strong>TradingLab<span class="brand-dot">.</span></strong></a>
-        <div class="site-nav-links">
-          <a href="/" aria-current="page">Inicio</a>
-          <a href="/dashboard">Panel</a>
-          <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
-        </div>
-      </nav>
+    <div class="public-shell">
+      <header class="public-header">
+        <a class="brand" href="/" aria-label="TradingLab, inicio"><span class="brand-mark" aria-hidden="true"></span><strong>TradingLab</strong></a>
+        <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
+      </header>
       <main id="contenido" tabindex="-1">
         <section class="home-intro" aria-labelledby="home-title">
           <div class="hero">
@@ -42,11 +38,11 @@
           </aside>
         </section>
         <section class="home-workspace" aria-labelledby="workspace-title">
-          <div class="section-heading"><h2 id="workspace-title">¿Qué querés revisar?</h2><p>Accesos al panel de la fuente configurada.</p></div>
+          <div class="section-heading"><h2 id="workspace-title">Qué ofrece el panel</h2><p>Una vista de la fuente configurada.</p></div>
           <div class="workspace-links">
-            <a href="/dashboard#overview"><span class="eyebrow">Resumen</span><h3>Cómo está la cuenta <span aria-hidden="true">↗</span></h3><p>Equity, balance, margen y evolución reciente.</p></a>
-            <a href="/dashboard#operations"><span class="eyebrow">Operaciones</span><h3>Qué está abierto <span aria-hidden="true">↗</span></h3><p>Posiciones y órdenes pendientes, filtradas por bot.</p></a>
-            <a href="/dashboard#activity"><span class="eyebrow">Actividad</span><h3>Cómo llegan los datos <span aria-hidden="true">↗</span></h3><p>Estado de la fuente y diagnóstico de la captura.</p></a>
+            <article><span class="eyebrow">Resumen</span><h3>Cómo está la cuenta</h3><p>Equity, balance, margen y evolución reciente.</p></article>
+            <article><span class="eyebrow">Operaciones</span><h3>Qué está abierto</h3><p>Posiciones y órdenes pendientes, filtradas por bot.</p></article>
+            <article><span class="eyebrow">Actividad</span><h3>Cómo llegan los datos</h3><p>Estado de la fuente y diagnóstico de la captura.</p></article>
           </div>
         </section>
         <section class="home-next" aria-labelledby="next-title">

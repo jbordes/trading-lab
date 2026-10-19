@@ -61,8 +61,16 @@ async function main() {
   try {
     await call("Page.enable");
     await call("Runtime.enable");
+    // La prueba controla cada lectura; los polls automáticos causarían carreras con los fallos simulados.
+    await call("Page.addScriptToEvaluateOnNewDocument", {
+      source: "window.setInterval = () => 0; window.setTimeout = () => 0;",
+    });
     const layouts = [];
     for (const theme of ["light", "dark"]) {
+      // Contraste de pestaña y página pueden ser opuestos.
+      await call("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-color-scheme", value: theme === "light" ? "dark" : "light" }],
+      });
       for (const width of [1440, 768, 390, 320]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#activity"]) {
@@ -76,16 +84,37 @@ async function main() {
             scroll: document.documentElement.scrollWidth,
             footer: document.querySelector('footer').getBoundingClientRect().top,
             tableBottom: document.querySelector('#operations-view:not([hidden]) .operations-table')?.getBoundingClientRect().bottom || 0,
-            chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0
+            chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0,
+            navPosition: document.querySelector('.site-nav-links') ? getComputedStyle(document.querySelector('.site-nav-links')).position : null,
+            logo: getComputedStyle(document.querySelector('.brand-mark')).backgroundImage,
+            iconTheme: document.querySelector('[data-theme-icon]')?.dataset.themeIcon || '',
+            browserTheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+            squareIcon: document.querySelector('[data-theme-icon]')?.href.includes('/assets/favicon-') || false,
+            publicHeader: Boolean(document.querySelector('.public-header')),
+            viewCount: document.querySelectorAll('.view-tab').length,
+            homeLinks: document.querySelectorAll('a[href^="/dashboard#"]').length,
+            title: document.querySelector('#page-title')?.textContent || ''
           })`);
           const name = `${theme}-${width}-${route === "/" ? "home" : route.split("#")[1]}`;
           layouts.push({ name, ...layout });
           assert.ok(layout.scroll <= layout.width, `${name}: horizontal overflow ${JSON.stringify(layout)}`);
           assert.ok(layout.footer >= layout.tableBottom, `${name}: footer overlaps operations`);
+          assert.equal(layout.navPosition, route === "/" ? null : width < 1000 ? "fixed" : "static", `${name}: navigation position`);
+          assert.equal(layout.publicHeader, route === "/", `${name}: public and workspace shells are separate`);
+          assert.equal(layout.viewCount, route === "/" ? 0 : 3, `${name}: dashboard has only its three views`);
+          assert.equal(layout.homeLinks, 0, `${name}: no cross-section links from presentation page`);
+          assert.ok(layout.logo.includes(`tradinglab-apple-touch-icon-${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
+          assert.equal(layout.iconTheme, layout.browserTheme, `${name}: favicon follows browser preference`);
+          assert.ok(layout.squareIcon, `${name}: favicon keeps logo aspect on a square canvas`);
+          if (route.includes("#")) {
+            const expected = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" }[route.split("#")[1]];
+            assert.equal(layout.title, expected, `${name}: page title`);
+          }
           await screenshot(name);
         }
       }
     }
+    await call("Emulation.setEmulatedMedia", { features: [] });
     await navigate("/dashboard#operations");
     const interaction = await evaluate(`(async () => {
       const state = await (await fetch('/api/state')).json();

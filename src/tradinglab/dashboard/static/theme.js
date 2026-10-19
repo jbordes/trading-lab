@@ -28,6 +28,18 @@
 
   function updateButtons() {
     const current = effectiveTheme();
+    const icon = document.querySelector("[data-theme-icon]");
+    if (icon) {
+      // La pestaña pertenece al navegador: su contraste no depende del tema de la app.
+      const browserDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const iconTheme = browserDark ? "dark" : "light";
+      if (icon.dataset.themeIcon !== iconTheme) {
+        icon.href = browserDark
+          ? "/assets/favicon-white.ico?v=fitted-1"
+          : "/assets/favicon-black.ico?v=fitted-1";
+        icon.dataset.themeIcon = iconTheme;
+      }
+    }
     document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
       button.hidden = false;
       button.textContent = current === "dark" ? "Claro" : "Oscuro";

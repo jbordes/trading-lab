@@ -138,11 +138,19 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 ## Presentación
 
 La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
-de Python. No descarga scripts de terceros ni necesita Node. `/` presenta la
-inicio orientado a tareas (propósito, accesos al panel y límites actuales) y `/dashboard`
-el panel de la cuenta. Ambas comparten un tema claro y otro oscuro con tokens
+de Python. No descarga scripts de terceros ni necesita Node. `/` presenta el
+proyecto y ofrece una entrada al panel; `/dashboard` es el espacio de trabajo
+de la cuenta, con Resumen, Operaciones y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
 sigue la preferencia del sistema, sin flash al recargar.
+
+Solo el panel muestra la navegación de sus secciones: barra lateral en escritorio
+y barra inferior en pantallas estrechas. La portada tiene encabezado propio, sin
+accesos directos a vistas internas. Ambas páginas comparten el logo provisto por
+el proyecto. Esta organización prepara el uso móvil, pero no implica una app
+instalable ni crea destinos para funciones aún no implementadas. El login con
+token previsto requerirá proteger en el servidor `/dashboard` y las rutas de
+datos; la separación visual actual no es autenticación.
 
 El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
 principal neutral, el resultado abierto con semántica de signo y color, balance y

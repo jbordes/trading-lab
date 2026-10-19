@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-20
 
-**Estado:** paso 1 documental completado; diseño propuesto, sin implementación.
+**Estado:** pasos 1 y 2A documentales completados; diseño propuesto, sin implementación.
 
 ## Alcance y referencia
 
@@ -118,11 +118,65 @@ está apagado: hace falta definir cuánto tolera el piloto en esa situación.
   de recolección deliberadamente cuando se quiera almacenar; no arrancarla desde
   esta tarea documental ni vincular su vida a que el navegador esté abierto.
 
+## Paso 2A — Esquema mínimo propuesto
+
+Primer corte: guardar mensajes validados de forma durable, conservando todos sus
+campos actuales. Tres tablas son suficientes para ese alcance. No crear todavía
+una tabla de trades cerrados ni transformar cada fila del CSV en un deal.
+
+| Tabla | Campos y tipos propuestos | Claves y propósito |
+|---|---|---|
+| `accounts` | `account_id TEXT`, `label TEXT`, `server TEXT`, `currency TEXT`, `created_at_utc TEXT` | PK `account_id`, identificador interno opaco. Contexto de cuenta sin login completo ni credenciales. Label, servidor y moneda no forman una clave única. |
+| `sources` | `source_id TEXT`, `account_id TEXT`, `created_at_utc TEXT` | PK `source_id`; FK a `accounts.account_id`. Asociación explícita e inmutable de fuente a cuenta. |
+| `telemetry_messages` | `message_id INTEGER`, `source_id TEXT`, `session_id TEXT`, `sequence TEXT`, `captured_at_utc TEXT`, `received_at_utc TEXT`, `schema_version TEXT`, `collector_version TEXT`, `payload_json TEXT`, `content_sha256 TEXT` | PK `message_id`; FK a `sources.source_id`; UNIQUE `(source_id, session_id, sequence)`. Conserva el mensaje completo validado, incluidas posiciones, órdenes, deals y cobertura. |
+
+Reglas del esquema:
+
+- Todos los campos anteriores son obligatorios. Validar formatos, longitudes,
+  versión y límites de tamaño antes de insertar; definir las restricciones SQL
+  concretas y activar integridad referencial en cada conexión durante el paso 2B.
+- `sequence` se propone como texto decimal canónico porque procede de un contador
+  unsigned de MQL5. No depender del límite signed de INTEGER de SQLite ni ordenar
+  secuencias numéricamente mediante orden lexicográfico. Los tickets y Magic
+  Numbers conservan su representación textual en el mensaje.
+- Las fechas UTC técnicas usan un formato único validado. Los tiempos de deals
+  del servidor permanecen crudos dentro del payload hasta resolver su conversión.
+  `message_id` indica orden de inserción, no orden de operaciones ni de captura.
+- Índice inicial de consulta: `(source_id, captured_at_utc, message_id)`.
+  La restricción UNIQUE ya cubre la búsqueda de reenvíos por identidad de mensaje.
+- `payload_json` conserva el sobre completo validado. El hash se calcula sobre una
+  representación canónica de ese contenido; excluye la hora local de recepción.
+  Los campos duplicados en columnas se extraen del mismo sobre, no de entradas
+  independientes. Un duplicado idéntico no reemplaza la recepción original.
+- Un source desconocido se rechaza hasta registrarlo explícitamente. Si cambia
+  de cuenta, requiere otro source_id. Varias fuentes aprobadas pueden referenciar
+  la misma cuenta, pero no autorizan ejecución concurrente duplicada del collector.
+  La identidad no se deduce comparando cuentas enmascaradas. La provisión segura
+  del mapping debe definirse en 2B; no registrar cuentas automáticamente del payload.
+- El journal es inmutable para la ingesta: nuevos snapshots son nuevas
+  observaciones. Correcciones recibidas posteriormente conservan ambas evidencias;
+  la política para actualizar una proyección de deals se define después.
+- SQLite vivirá bajo `_storage/`, fuera de Git. El primer corte no necesita
+  tablas de usuarios, métricas, credenciales ni trabajos de ejecución de EAs.
+
+Este diseño evita perder los campos actuales al reiniciar, pero no agrega los
+campos históricos que faltan ni resuelve por sí solo recuperación y retención.
+Duplicar snapshots completos puede consumir espacio: medirlo en el piloto y
+acordar el plazo de retención antes de dejar captura continua prolongada.
+
+Después se podrán crear proyecciones consultables de ejecuciones y valores de
+cuenta a partir de estos mensajes, manteniendo su procedencia. Una tabla futura
+de deals usará `(account_id, deal_ticket)` como identidad; la proyección de trades
+esperará las reglas de cierres parciales. No hace falta aprobar esas reglas para
+guardar las observaciones actuales.
+
 ## TODO para retomar: pasos cerrables
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
-- [ ] Paso 2: esquema mínimo SQLite, transacciones, identidad de cuenta, tratamiento
-  de revisiones, retención y backup. Separar lo aceptado de lo propuesto.
+- [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
+- [ ] Paso 2B: acordar el esquema; definir provisión de identidad, restricciones SQL,
+  transacción y confirmación durable, recuperación del proceso, tratamiento de
+  revisiones en proyecciones, retención y backup. Separar aceptado de propuesto.
 - [ ] Paso 3: implementar guardado durable de mensajes actuales, con pruebas de
   duplicado, conflicto, caída antes/después del commit y reinicio. Esto todavía
   no equivale a historial completo ni a reconstrucción de trades.
@@ -137,6 +191,6 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por el paso 2. Esta rama solo contiene documentación de diseño: no crea
+Retomar por el paso 2B. Esta rama solo contiene documentación de diseño: no crea
 base de datos, no cambia el collector ni configura terminales. Integración por PR
 y merge humano; ninguna publicación directa a main forma parte de este paso.

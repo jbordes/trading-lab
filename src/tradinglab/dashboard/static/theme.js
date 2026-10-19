@@ -26,38 +26,20 @@
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
-  // El logo horizontal completo queda diminuto a 16 px. Para la pestaña se usa
-  // su motivo central, recortado simétricamente y sin deformar el PNG original.
-  function prepareFavicon(icon) {
-    if (icon.dataset.squareReady || icon.dataset.squareLoading) return;
-    icon.dataset.squareLoading = "true";
-    const source = new Image();
-    source.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 64;
-      canvas.height = 64;
-      const sourceWidth = source.naturalWidth * 0.7;
-      const sourceX = (source.naturalWidth - sourceWidth) / 2;
-      const width = 60;
-      const height = width * source.naturalHeight / sourceWidth;
-      canvas.getContext("2d").drawImage(
-        source, sourceX, 0, sourceWidth, source.naturalHeight,
-        (64 - width) / 2, (64 - height) / 2, width, height,
-      );
-      icon.href = canvas.toDataURL("image/png");
-      icon.dataset.squareReady = "true";
-      delete icon.dataset.squareLoading;
-    };
-    source.onerror = () => { delete icon.dataset.squareLoading; };
-    source.src = icon.href;
-  }
-
   function updateButtons() {
     const current = effectiveTheme();
-    document.querySelectorAll("[data-theme-icon]").forEach((icon) => {
-      icon.media = icon.dataset.themeIcon === current ? "all" : "not all";
-      prepareFavicon(icon);
-    });
+    const icon = document.querySelector("[data-theme-icon]");
+    if (icon) {
+      // La pestaña pertenece al navegador: su contraste no depende del tema de la app.
+      const browserDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const iconTheme = browserDark ? "dark" : "light";
+      if (icon.dataset.themeIcon !== iconTheme) {
+        icon.href = browserDark
+          ? "/assets/favicon-white.ico?v=fitted-1"
+          : "/assets/favicon-black.ico?v=fitted-1";
+        icon.dataset.themeIcon = iconTheme;
+      }
+    }
     document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
       button.hidden = false;
       button.textContent = current === "dark" ? "Claro" : "Oscuro";

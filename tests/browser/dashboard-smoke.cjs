@@ -67,6 +67,10 @@ async function main() {
     });
     const layouts = [];
     for (const theme of ["light", "dark"]) {
+      // Contraste de pestaña y página pueden ser opuestos.
+      await call("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-color-scheme", value: theme === "light" ? "dark" : "light" }],
+      });
       for (const width of [1440, 768, 390, 320]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#activity"]) {
@@ -75,10 +79,6 @@ async function main() {
             const current = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             if (current !== ${JSON.stringify(theme)}) document.querySelector('[data-theme-toggle]').click();
           })()`);
-          for (let attempt = 0; attempt < 20; attempt++) {
-            if (await evaluate("Boolean(document.querySelector('[data-theme-icon][media=all][data-square-ready]'))")) break;
-            await new Promise((resolve) => setTimeout(resolve, 50));
-          }
           const layout = await evaluate(`({
             width: document.documentElement.clientWidth,
             scroll: document.documentElement.scrollWidth,
@@ -87,8 +87,9 @@ async function main() {
             chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0,
             navPosition: document.querySelector('.site-nav-links') ? getComputedStyle(document.querySelector('.site-nav-links')).position : null,
             logo: getComputedStyle(document.querySelector('.brand-mark')).backgroundImage,
-            iconTheme: document.querySelector('[data-theme-icon][media="all"]')?.dataset.themeIcon || '',
-            squareIcon: document.querySelector('[data-theme-icon][media="all"]')?.href.startsWith('data:image/png;base64,') || false,
+            iconTheme: document.querySelector('[data-theme-icon]')?.dataset.themeIcon || '',
+            browserTheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+            squareIcon: document.querySelector('[data-theme-icon]')?.href.includes('/assets/favicon-') || false,
             publicHeader: Boolean(document.querySelector('.public-header')),
             viewCount: document.querySelectorAll('.view-tab').length,
             homeLinks: document.querySelectorAll('a[href^="/dashboard#"]').length,
@@ -102,8 +103,8 @@ async function main() {
           assert.equal(layout.publicHeader, route === "/", `${name}: public and workspace shells are separate`);
           assert.equal(layout.viewCount, route === "/" ? 0 : 3, `${name}: dashboard has only its three views`);
           assert.equal(layout.homeLinks, 0, `${name}: no cross-section links from presentation page`);
-          assert.ok(layout.logo.includes(`logo_${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
-          assert.equal(layout.iconTheme, theme, `${name}: favicon theme`);
+          assert.ok(layout.logo.includes(`tradinglab-apple-touch-icon-${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
+          assert.equal(layout.iconTheme, layout.browserTheme, `${name}: favicon follows browser preference`);
           assert.ok(layout.squareIcon, `${name}: favicon keeps logo aspect on a square canvas`);
           if (route.includes("#")) {
             const expected = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" }[route.split("#")[1]];
@@ -113,6 +114,7 @@ async function main() {
         }
       }
     }
+    await call("Emulation.setEmulatedMedia", { features: [] });
     await navigate("/dashboard#operations");
     const interaction = await evaluate(`(async () => {
       const state = await (await fetch('/api/state')).json();

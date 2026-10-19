@@ -359,6 +359,12 @@ class LiveDashboardTest(unittest.TestCase):
             for asset, content_type in (
                 ("logo_black.png", "image/png"),
                 ("logo_white.png", "image/png"),
+                ("favicon-black.ico", "image/x-icon"),
+                ("favicon-white.ico", "image/x-icon"),
+                ("tradinglab-favicon-black-32.png", "image/png"),
+                ("tradinglab-favicon-white-32.png", "image/png"),
+                ("tradinglab-apple-touch-icon-black.png", "image/png"),
+                ("tradinglab-apple-touch-icon-white.png", "image/png"),
                 ("nav-icons.svg", "image/svg+xml"),
             ):
                 with urllib.request.urlopen(f"{base_url}/assets/{asset}", timeout=2) as response:

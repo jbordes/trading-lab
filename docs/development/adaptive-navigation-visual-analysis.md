@@ -10,7 +10,7 @@ Las referencias provistas son [escritorio](../idea-visual-tabs.png) y
 jerarquía, no como definición de colores, métricas o funciones. La paleta clara y
 oscura suave del piloto se conserva.
 
-Vistas del prototipo en modo demo: [escritorio claro](../adaptive-navigation-desktop.png)
+Vistas del prototipo en modo demo: [portada](../adaptive-navigation-home.png), [escritorio claro](../adaptive-navigation-desktop.png)
 y [móvil oscuro](../adaptive-navigation-mobile.png). Son capturas de ejemplo;
 los importes simulados cambian con las lecturas.
 
@@ -32,9 +32,17 @@ es una página de presentación con encabezado propio y una entrada al panel.
 
 Los logos provistos en `docs/logo_black.png` y `docs/logo_white.png` se copiaron
 sin alterar a `src/tradinglab/dashboard/static/` para servirlos localmente. Los
-originales del usuario se conservaron. Para el favicon, el navegador dibuja
-un recorte centrado del logo horizontal dentro de un lienzo cuadrado
-transparente: el motivo tiene mejor presencia a 16 px sin estirar los PNG.
+originales del usuario se conservaron. Para la marca visible se usan las variantes
+cuadradas de 180 px y para la pestaña copias ajustadas de los `.ico` provistos.
+Se eliminó únicamente el margen transparente de su fotograma de 256 px y se
+regeneraron sus seis tamaños con escala uniforme y centrado en píxeles. Los
+originales de `docs/` no se modifican; se conserva la marca completa.
+El navegador elige entre sus seis tamaños
+de 16 a 256 px. El color del favicon sigue `prefers-color-scheme`, independientemente
+del tema manual de la web, para conservar contraste en la pestaña del navegador.
+En 16 px el dibujo ajustado ocupa 16 × 8 px, centrado verticalmente: su forma
+horizontal limita la altura que puede ocupar conservando la marca completa. Los PNG de 32 px quedan
+disponibles como alternativa.
 El nombre sigue siendo texto real; el
 gráfico decorativo queda oculto al lector de pantalla. Las vistas del panel
 mantienen sus roles de tab y el título principal cambia con la vista activa.

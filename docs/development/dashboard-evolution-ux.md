@@ -6,6 +6,9 @@
 
 **Documentos relacionados:** [Dashboard local de riesgo](../architecture/live-risk-dashboard.md), [Roadmap](live-risk-dashboard-roadmap.md), [Guía de métricas para el socio](guia-metricas-para-el-socio.md).
 
+**Actualización de navegación (19 de octubre de 2026):**
+[análisis visual y adaptación](adaptive-navigation-visual-analysis.md).
+
 ## 1. Rol de esta pantalla dentro del laboratorio
 
 El dashboard es el primer producto de observabilidad del piloto (mod. 2.4): la ventana de confianza entre el laboratorio y las personas. No es una app de trading ni el sistema; el sistema es la trazabilidad de extremo a extremo desde la idea SQX hasta la decisión de incubación. Tres ejes de diseño sobreviven a todos los incrementos:

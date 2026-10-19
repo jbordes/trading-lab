@@ -144,6 +144,11 @@ el panel de la cuenta. Ambas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
 sigue la preferencia del sistema, sin flash al recargar.
 
+La navegación de las secciones disponibles se muestra en una barra lateral en
+escritorio y en una barra inferior en pantallas estrechas. Ambas páginas comparten
+el logo provisto por el proyecto. Esta organización prepara el uso móvil, pero no
+implica una app instalable ni crea destinos para funciones aún no implementadas.
+
 El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
 principal neutral, el resultado abierto con semántica de signo y color, balance y
 margen libre secundarios, una curva reciente de balance/equity y una franja de

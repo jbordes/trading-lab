@@ -1,8 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <symbol id="home" viewBox="0 0 24 24">
-    <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10Z"/>
-    <path d="M9 21v-7h6v7"/>
-  </symbol>
   <symbol id="overview" viewBox="0 0 24 24">
     <path d="M3 20h18M5 16v-5m5 5V5m5 11V9m5 7V3"/>
   </symbol>

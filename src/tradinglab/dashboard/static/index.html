@@ -12,17 +12,11 @@
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
-    <div class="shell">
-      <nav class="site-nav" aria-label="Navegación principal">
+    <div class="public-shell">
+      <header class="public-header">
         <a class="brand" href="/" aria-label="TradingLab, inicio"><span class="brand-mark" aria-hidden="true"></span><strong>TradingLab</strong></a>
-        <div class="site-nav-links">
-          <a href="/" aria-current="page"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#home"></use></svg><span>Inicio</span></a>
-          <a href="/dashboard#overview"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#overview"></use></svg><span>Resumen</span></a>
-          <a href="/dashboard#operations"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#operations"></use></svg><span>Operaciones</span></a>
-          <a href="/dashboard#activity"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span>Actividad</span></a>
-          <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
-        </div>
-      </nav>
+        <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
+      </header>
       <main id="contenido" tabindex="-1">
         <section class="home-intro" aria-labelledby="home-title">
           <div class="hero">
@@ -45,11 +39,11 @@
           </aside>
         </section>
         <section class="home-workspace" aria-labelledby="workspace-title">
-          <div class="section-heading"><h2 id="workspace-title">¿Qué querés revisar?</h2><p>Accesos al panel de la fuente configurada.</p></div>
+          <div class="section-heading"><h2 id="workspace-title">Qué ofrece el panel</h2><p>Una vista de la fuente configurada.</p></div>
           <div class="workspace-links">
-            <a href="/dashboard#overview"><span class="eyebrow">Resumen</span><h3>Cómo está la cuenta <span aria-hidden="true">↗</span></h3><p>Equity, balance, margen y evolución reciente.</p></a>
-            <a href="/dashboard#operations"><span class="eyebrow">Operaciones</span><h3>Qué está abierto <span aria-hidden="true">↗</span></h3><p>Posiciones y órdenes pendientes, filtradas por bot.</p></a>
-            <a href="/dashboard#activity"><span class="eyebrow">Actividad</span><h3>Cómo llegan los datos <span aria-hidden="true">↗</span></h3><p>Estado de la fuente y diagnóstico de la captura.</p></a>
+            <article><span class="eyebrow">Resumen</span><h3>Cómo está la cuenta</h3><p>Equity, balance, margen y evolución reciente.</p></article>
+            <article><span class="eyebrow">Operaciones</span><h3>Qué está abierto</h3><p>Posiciones y órdenes pendientes, filtradas por bot.</p></article>
+            <article><span class="eyebrow">Actividad</span><h3>Cómo llegan los datos</h3><p>Estado de la fuente y diagnóstico de la captura.</p></article>
           </div>
         </section>
         <section class="home-next" aria-labelledby="next-title">

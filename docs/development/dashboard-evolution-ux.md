@@ -21,10 +21,10 @@ El dashboard es el primer producto de observabilidad del piloto (mod. 2.4): la v
 
 A partir de tres análisis previos (UX, diseño visual, performance en navegador) se aplicaron en fases y, en octubre de 2026, un rediseño completo según el ADR-0005:
 
-- Inicio en `/`: propósito breve, acceso principal al panel y accesos directos a
-  Resumen, Operaciones y Actividad. Las capacidades actuales se separan del roadmap;
+- Inicio en `/`: presentación del proyecto y una entrada al panel, sin formar
+  parte de su navegación interna. Las capacidades actuales se separan del roadmap;
   la arquitectura queda en un desplegable secundario. El bloque lateral editorial
-  se omite en móvil porque repite los accesos disponibles inmediatamente después.
+  se omite en móvil para priorizar la presentación y el acceso principal.
 - Tema claro y oscuro con tokens `light-dark()`: fondo neutro, acento verde apagado,
   fuentes del sistema y superficies planas. Elección persistida sin flash al recargar.
   No se declara conformidad WCAG integral: falta validación con tecnologías de

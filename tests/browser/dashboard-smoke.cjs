@@ -75,24 +75,36 @@ async function main() {
             const current = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             if (current !== ${JSON.stringify(theme)}) document.querySelector('[data-theme-toggle]').click();
           })()`);
+          for (let attempt = 0; attempt < 20; attempt++) {
+            if (await evaluate("Boolean(document.querySelector('[data-theme-icon][media=all][data-square-ready]'))")) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
           const layout = await evaluate(`({
             width: document.documentElement.clientWidth,
             scroll: document.documentElement.scrollWidth,
             footer: document.querySelector('footer').getBoundingClientRect().top,
             tableBottom: document.querySelector('#operations-view:not([hidden]) .operations-table')?.getBoundingClientRect().bottom || 0,
             chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0,
-            navPosition: getComputedStyle(document.querySelector('.site-nav-links')).position,
+            navPosition: document.querySelector('.site-nav-links') ? getComputedStyle(document.querySelector('.site-nav-links')).position : null,
             logo: getComputedStyle(document.querySelector('.brand-mark')).backgroundImage,
             iconTheme: document.querySelector('[data-theme-icon][media="all"]')?.dataset.themeIcon || '',
+            squareIcon: document.querySelector('[data-theme-icon][media="all"]')?.href.startsWith('data:image/png;base64,') || false,
+            publicHeader: Boolean(document.querySelector('.public-header')),
+            viewCount: document.querySelectorAll('.view-tab').length,
+            homeLinks: document.querySelectorAll('a[href^="/dashboard#"]').length,
             title: document.querySelector('#page-title')?.textContent || ''
           })`);
           const name = `${theme}-${width}-${route === "/" ? "home" : route.split("#")[1]}`;
           layouts.push({ name, ...layout });
           assert.ok(layout.scroll <= layout.width, `${name}: horizontal overflow ${JSON.stringify(layout)}`);
           assert.ok(layout.footer >= layout.tableBottom, `${name}: footer overlaps operations`);
-          assert.equal(layout.navPosition, width < 1000 ? "fixed" : "static", `${name}: navigation position`);
+          assert.equal(layout.navPosition, route === "/" ? null : width < 1000 ? "fixed" : "static", `${name}: navigation position`);
+          assert.equal(layout.publicHeader, route === "/", `${name}: public and workspace shells are separate`);
+          assert.equal(layout.viewCount, route === "/" ? 0 : 3, `${name}: dashboard has only its three views`);
+          assert.equal(layout.homeLinks, 0, `${name}: no cross-section links from presentation page`);
           assert.ok(layout.logo.includes(`logo_${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
           assert.equal(layout.iconTheme, theme, `${name}: favicon theme`);
+          assert.ok(layout.squareIcon, `${name}: favicon keeps logo aspect on a square canvas`);
           if (route.includes("#")) {
             const expected = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" }[route.split("#")[1]];
             assert.equal(layout.title, expected, `${name}: page title`);

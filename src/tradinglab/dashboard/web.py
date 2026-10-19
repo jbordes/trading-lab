@@ -20,6 +20,9 @@ STATIC_ROUTES = {
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/assets/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/assets/nav-icons.svg": ("nav-icons.svg", "image/svg+xml"),
+    "/assets/logo_black.png": ("logo_black.png", "image/png"),
+    "/assets/logo_white.png": ("logo_white.png", "image/png"),
 }
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes, str]] = {}

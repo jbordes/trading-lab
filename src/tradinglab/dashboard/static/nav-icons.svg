@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <symbol id="home" viewBox="0 0 24 24">
+    <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10Z"/>
+    <path d="M9 21v-7h6v7"/>
+  </symbol>
+  <symbol id="overview" viewBox="0 0 24 24">
+    <path d="M3 20h18M5 16v-5m5 5V5m5 11V9m5 7V3"/>
+  </symbol>
+  <symbol id="operations" viewBox="0 0 24 24">
+    <path d="M4 6h16M4 12h16M4 18h16"/>
+    <circle cx="7" cy="6" r="1"/><circle cx="17" cy="12" r="1"/><circle cx="10" cy="18" r="1"/>
+  </symbol>
+  <symbol id="activity" viewBox="0 0 24 24">
+    <path d="M2 12h4l3-7 5 14 3-7h5"/>
+  </symbol>
+</svg>

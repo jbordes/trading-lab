@@ -61,6 +61,10 @@ async function main() {
   try {
     await call("Page.enable");
     await call("Runtime.enable");
+    // La prueba controla cada lectura; los polls automáticos causarían carreras con los fallos simulados.
+    await call("Page.addScriptToEvaluateOnNewDocument", {
+      source: "window.setInterval = () => 0; window.setTimeout = () => 0;",
+    });
     const layouts = [];
     for (const theme of ["light", "dark"]) {
       for (const width of [1440, 768, 390, 320]) {
@@ -76,12 +80,23 @@ async function main() {
             scroll: document.documentElement.scrollWidth,
             footer: document.querySelector('footer').getBoundingClientRect().top,
             tableBottom: document.querySelector('#operations-view:not([hidden]) .operations-table')?.getBoundingClientRect().bottom || 0,
-            chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0
+            chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0,
+            navPosition: getComputedStyle(document.querySelector('.site-nav-links')).position,
+            logo: getComputedStyle(document.querySelector('.brand-mark')).backgroundImage,
+            iconTheme: document.querySelector('[data-theme-icon][media="all"]')?.dataset.themeIcon || '',
+            title: document.querySelector('#page-title')?.textContent || ''
           })`);
           const name = `${theme}-${width}-${route === "/" ? "home" : route.split("#")[1]}`;
           layouts.push({ name, ...layout });
           assert.ok(layout.scroll <= layout.width, `${name}: horizontal overflow ${JSON.stringify(layout)}`);
           assert.ok(layout.footer >= layout.tableBottom, `${name}: footer overlaps operations`);
+          assert.equal(layout.navPosition, width < 1000 ? "fixed" : "static", `${name}: navigation position`);
+          assert.ok(layout.logo.includes(`logo_${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
+          assert.equal(layout.iconTheme, theme, `${name}: favicon theme`);
+          if (route.includes("#")) {
+            const expected = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" }[route.split("#")[1]];
+            assert.equal(layout.title, expected, `${name}: page title`);
+          }
           await screenshot(name);
         }
       }

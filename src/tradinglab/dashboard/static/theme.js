@@ -28,6 +28,9 @@
 
   function updateButtons() {
     const current = effectiveTheme();
+    document.querySelectorAll("[data-theme-icon]").forEach((icon) => {
+      icon.media = icon.dataset.themeIcon === current ? "all" : "not all";
+    });
     document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
       button.hidden = false;
       button.textContent = current === "dark" ? "Claro" : "Oscuro";

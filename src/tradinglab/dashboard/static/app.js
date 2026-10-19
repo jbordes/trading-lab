@@ -876,6 +876,8 @@ document.addEventListener("visibilitychange", () => {
 drawGrid();
 window.setInterval(updateFreshness, 1000);
 function activateView(view) {
+  const titles = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" };
+  setText(document.getElementById("page-title"), titles[view]);
   document.querySelectorAll(".view-tab").forEach((tab) => {
     const active = tab.dataset.view === view;
     tab.classList.toggle("active", active);
@@ -897,11 +899,11 @@ document.querySelectorAll(".view-tab").forEach((button) => {
     history.replaceState(null, "", `#${button.dataset.view}`);
   });
   button.addEventListener("keydown", (event) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const tabs = [...document.querySelectorAll(".view-tab")];
     const index = tabs.indexOf(button);
-    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const direction = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
     const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1]
       : tabs[(index + direction + tabs.length) % tabs.length];
     next.focus();

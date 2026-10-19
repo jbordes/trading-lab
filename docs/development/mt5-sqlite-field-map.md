@@ -170,10 +170,52 @@ de deals usará `(account_id, deal_ticket)` como identidad; la proyección de tr
 esperará las reglas de cierres parciales. No hace falta aprobar esas reglas para
 guardar las observaciones actuales.
 
+## Estado de recepción — definición acordada para el piloto
+
+Acordado el 2026-10-20; pendiente de implementación. Para el intervalo actual
+de cinco segundos, evaluar por fuente el tiempo desde la recepción de la última
+muestra nueva válida, no desde la última consulta del navegador:
+
+| Estado | Tiempo transcurrido |
+|---|---|
+| Actualizado | Menos de 20 segundos |
+| Demorado | Desde 20 hasta 60 segundos, inclusive |
+| Sin recepción | Más de 60 segundos |
+| Sin datos todavía | Nunca se recibió una muestra válida de esa fuente |
+
+Son umbrales iniciales ajustables; revisarlos si cambia el intervalo de captura.
+La etiqueta «Actualizado» describe la recepción, no garantiza por sí sola la
+actualidad de todos los datos ni la integridad del historial.
+
+- Un reenvío duplicado o mensaje inválido no reinicia el contador. La consulta
+  del dashboard tampoco convierte una observación antigua en una nueva.
+- Conservar los últimos datos válidos junto a su hora y advertencia de antigüedad;
+  nunca reemplazarlos por cero por falta de recepción. Sin muestra previa, mostrar
+  ausencia de datos, no valores ficticios.
+- Separar recepción del collector, antigüedad de captura, cobertura histórica,
+  conexión MT5-broker y acceso navegador-backend. Recibir una cola atrasada no
+  vuelve recientes sus capturas. Si el navegador pierde contacto con el backend,
+  indicar que no puede verificar la recepción, sin atribuir el fallo al collector.
+- Mercado cerrado o ausencia de operaciones no significan fallo del collector:
+  puede seguir enviando muestras válidas sin cambios en las operaciones.
+- En ejecución, medir intervalos con reloj monotónico; conservar fechas UTC para
+  mostrar y recuperar el estado tras reinicio. No marcar datos restaurados como
+  recién recibidos ni presentar una edad negativa como recepción saludable.
+- Mostrar este diagnóstico de forma compacta, con detalles accesibles, sin
+  desplazar el análisis de trading ni depender exclusivamente del color.
+
+La UI actual usa umbrales de dos y diez intervalos de consulta y combina algunas
+señales de conexión. Esta definición es el comportamiento objetivo para telemetry,
+no una descripción de lo ya implementado ni un cambio del adaptador Python.
+
 ## TODO para retomar: pasos cerrables
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
+- [x] Definición breve: estados y umbrales de recepción por fuente acordados.
+- [ ] Implementar esos estados separando recepción, antigüedad y conectividad;
+  probar límites de 20/60 segundos, duplicados, cola atrasada, reinicio y pérdida
+  de acceso al backend. Validación visual manual por el usuario.
 - [ ] Paso 2B: acordar el esquema; definir provisión de identidad, restricciones SQL,
   transacción y confirmación durable, recuperación del proceso, tratamiento de
   revisiones en proyecciones, retención y backup. Separar aceptado de propuesto.

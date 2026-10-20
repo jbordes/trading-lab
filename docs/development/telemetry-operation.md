@@ -49,7 +49,18 @@ ni adoptar procesos existentes. Ctrl+C detiene ambos; no detiene el EA.
 Con el comando mostrado, el almacenamiento del receptor es volátil: al detenerlo
 se pierde su buffer. Hay un modo SQLite opcional con `--sqlite-db` para una base
 preexistente bajo `_storage/` y una fuente registrada. La base no se crea al
-arrancar; primero debe aprobarse su provisión y política de backup/retención.
+arrancar. Hay un comando de primera provisión con vista previa:
+
+```powershell
+uv run python scripts/provision_telemetry_db.py --filename piloto.sqlite3 --account-id cuenta-demo-interna --label "Demo de pruebas" --server SERVIDOR-DEMO-VERIFICADO --currency USD --source-id juampi-demo-01
+```
+
+El operador debe verificar en MT5 la cuenta demo activa, el servidor y la moneda;
+`SERVIDOR-DEMO-VERIFICADO` es solo un marcador de ejemplo. Después de revisar la
+vista previa, repetir exactamente el comando con `--apply` para crear una base
+nueva bajo `_storage/`. Nunca pasar el login completo ni el token como argumentos.
+Una base ya existente no se modifica. La frecuencia de backup y la retención aún
+deben acordarse antes de operar el receptor SQLite continuamente.
 El supervisor transmite la ruta solo al receptor y mantiene las mismas
 comprobaciones de arranque y limpieza. No habilitar este modo para una terminal
 real hasta completar ese paso operativo.

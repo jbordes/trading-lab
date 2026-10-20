@@ -246,7 +246,7 @@ reutilizar `terminal-pruebas-a`, con nueva sesión. No hace falta una tabla de
 terminales en este corte; esta asociación se registra en el inventario operativo
 local. El nombre de la fuente no sustituye la comprobación de identidad.
 
-Procedimiento de alta propuesto, con API local de registro pero todavía sin CLI:
+Procedimiento de alta con API local y comando de primera provisión:
 
 1. El operador verifica en la terminal de pruebas la cuenta demo activa y su
    servidor. Determina si ya existe una cuenta registrada; nunca fusionar cuentas
@@ -360,7 +360,7 @@ no por mensaje; evaluar su coste cuando crezca el histórico. Los archivos y su
 directorio deben estar bajo control del operador; no es un lector de bases SQLite
 arbitrarias de terceros ni verifica la cuenta real conectada en MT5.
 
-No hay CLI, autorización por token ni alta operativa de cuentas reales. La API no
+El registro no autoriza por token ni realiza alta operativa de cuentas reales. La API no
 acepta credenciales. Tampoco fusiona cuentas con metadatos similares. El receptor
 sigue usando memoria.
 
@@ -447,11 +447,22 @@ su buffer volátil. El archivo debe estar bajo `_storage/` del checkout que se
 arranca; este paso no crea una base operativa ni configura terminales. Pruebas HTTP
 locales verifican commit, reenvío, reinicio, aislamiento de fuentes y concurrencia.
 
-La conexión compartida entre hilos se usa bajo un bloqueo del backend. Falta un
-procedimiento aprobado de alta de cuenta/fuente y de backup/retención antes de
-encender este modo en la terminal demo. El paso siguiente es preparar ese alta
-local controlada y una prueba de operación breve, con revisión humana de la
-identidad activa de MT5.
+La conexión compartida entre hilos se usa bajo un bloqueo del backend. Falta
+aprobar backup/retención antes de encender este modo en la terminal demo.
+
+### Bloque implementado: primera provisión local (3G)
+
+`scripts/provision_telemetry_db.py` muestra una vista previa por defecto. Con
+`--apply`, crea exclusivamente un archivo nuevo `.sqlite3` bajo `_storage/` y
+registra el `account_id` interno y el `source_id` proporcionados. Valida nombres,
+campos y ruta antes de escribir; si la base existe, falla sin modificarla. Nunca
+lee el login completo, credenciales o tokens. La verificación de cuenta demo,
+servidor y moneda dentro de MT5 corresponde al operador antes de aplicar.
+
+Una falla inesperada después de crear el archivo puede dejar una base parcial:
+revisarla manualmente, sin borrado ni reintento automático. Este paso no activa
+captura ni define aún frecuencia de backups o retención. El siguiente gate es
+acordar esas políticas y probar una sesión breve con la terminal de pruebas.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -467,6 +478,7 @@ identidad activa de MT5.
 - [x] Paso 3D: lectura del último snapshot por fuente con procedencia y fechas originales.
 - [x] Paso 3E: vista en memoria sincronizada con mensajes confirmados y recuperada al inicio.
 - [x] Paso 3F: receptor HTTP y supervisor con SQLite opcional, fuente única y pruebas locales.
+- [x] Paso 3G: comando de primera provisión con vista previa y creación explícita.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -485,7 +497,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por provisión y prueba operativa acotada. No se creó una
+Retomar por backup/retención y prueba operativa acotada. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

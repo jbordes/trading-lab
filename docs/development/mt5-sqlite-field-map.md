@@ -170,6 +170,54 @@ de deals usará `(account_id, deal_ticket)` como identidad; la proyección de tr
 esperará las reglas de cierres parciales. No hace falta aprobar esas reglas para
 guardar las observaciones actuales.
 
+## Paso 2B.1 — Confirmación durable y reenvíos
+
+Diseño propuesto para implementar y verificar en el paso 3. El receptor actual
+confirma contra un buffer en memoria; esta sección no implica que ya persista.
+
+Unidad de guardado: un sobre validado completo por transacción. Autenticar,
+validar contrato y comprobar la fuente registrada antes de aceptar el mensaje.
+La base, no la caché en memoria, determina si su identidad ya fue guardada.
+
+| Situación | Guardado y respuesta previstos |
+|---|---|
+| Identidad nueva admitida | Insertar el sobre y confirmar éxito solo después de completar el commit. |
+| Misma identidad y contenido canónico idéntico | Confirmar como duplicado ya guardado, sin otra fila ni cambio de la recepción original. |
+| Misma identidad con contenido diferente | Rechazar como conflicto; conservar el original sin reemplazarlo. |
+| Fallo de escritura o base temporalmente ocupada | No confirmar éxito; revertir la transacción si sigue activa y devolver un error controlado. Reintento acotado, sin espera infinita. |
+| Caída antes del commit | No prometer guardado; el reenvío vuelve a intentar la inserción. |
+| Caída después del commit, antes de entregar la respuesta | El reenvío encuentra el mensaje durable y se confirma como duplicado. |
+
+La restricción UNIQUE debe resolver también dos solicitudes concurrentes con la
+misma identidad. Tras un choque, comparar el contenido guardado: no usar un
+«ignorar si existe» que oculte conflictos. El hash ayuda a comparar, pero conservar
+el contenido canónico para verificar igualdad.
+
+Comprobar duplicados durables antes de rechazar por secuencia antigua: un mensaje
+ya confirmado debe poder reenviarse aunque haya mensajes posteriores. La admisión
+de secuencias antiguas desconocidas queda pendiente; no relajar silenciosamente
+la protección actual contra replay. Un salto de secuencia se registra como hueco,
+no como evidencia de operaciones inexistentes ni de cobertura completa.
+
+La respuesta de éxito conserva compatibilidad con el collector (actualmente
+200 para duplicados y 202 para nuevos), pero en el futuro camino persistente
+ambas exigirán evidencia de guardado. Si el commit tiene resultado incierto,
+no inventar éxito: resolver consultando por identidad al reintentar. Una avería
+de SQLite nunca habilita un fallback silencioso que confirme solo en memoria.
+
+Las vistas en memoria se actualizan desde datos confirmados y deben poder
+reconstruirse tras reiniciar. Su fallo no revierte un mensaje ya confirmado ni
+justifica marcar datos antiguos como recientes. El primer corte no añade cursor
+de backfill: el sobre conserva la cobertura declarada. Si luego se introduce un
+cursor durable, su avance y los datos asociados se guardarán juntos.
+
+Antes de implementar, concretar configuración de durabilidad SQLite, tiempos de
+espera, recuperación de vistas, contrato de errores y pruebas con reinicios.
+Este diseño cubre reenvíos de mensajes disponibles, no pérdida del disco ni
+mensajes que desaparecieron de la cola volátil del collector. La deduplicación
+se garantiza mientras se conserve su registro; la retención deberá preservar
+esa garantía o definir explícitamente su ventana.
+
 ## Estado de recepción — definición acordada para el piloto
 
 Acordado el 2026-10-20; pendiente de implementación. Para el intervalo actual
@@ -216,9 +264,11 @@ no una descripción de lo ya implementado ni un cambio del adaptador Python.
 - [ ] Implementar esos estados separando recepción, antigüedad y conectividad;
   probar límites de 20/60 segundos, duplicados, cola atrasada, reinicio y pérdida
   de acceso al backend. Validación visual manual por el usuario.
-- [ ] Paso 2B: acordar el esquema; definir provisión de identidad, restricciones SQL,
-  transacción y confirmación durable, recuperación del proceso, tratamiento de
-  revisiones en proyecciones, retención y backup. Separar aceptado de propuesto.
+- [x] Paso 2B.1: propuesta de transacción, confirmación durable y reenvíos.
+- [ ] Resto del paso 2B: acordar el esquema; definir provisión de identidad,
+  restricciones SQL, configuración de durabilidad y errores, admisión de secuencias
+  antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
+  Separar aceptado de propuesto.
 - [ ] Paso 3: implementar guardado durable de mensajes actuales, con pruebas de
   duplicado, conflicto, caída antes/después del commit y reinicio. Esto todavía
   no equivale a historial completo ni a reconstrucción de trades.

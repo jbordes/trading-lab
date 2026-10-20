@@ -218,6 +218,68 @@ mensajes que desaparecieron de la cola volátil del collector. La deduplicación
 se garantiza mientras se conserve su registro; la retención deberá preservar
 esa garantía o definir explícitamente su ventana.
 
+## Paso 2B.2 — Registro de cuentas y fuentes
+
+Separación acordada: una terminal puede tener varias cuentas configuradas y
+alternar entre ellas. No confundir terminal, cuenta y sesión de captura. El
+collector observa la cuenta activa; no captura simultáneamente todas las cuentas
+guardadas en esa terminal.
+
+- `account_id`: identidad interna opaca y estable de una cuenta de trading,
+  independiente de la terminal. No derivarla de un login enmascarado, alias,
+  moneda ni Magic Number. La verificación humana considera login completo y
+  servidor dentro de MT5, sin copiar el login completo a Git ni al registro de mensajes.
+- `source_id`: asociación explícita de una instalación del collector en una
+  terminal con una cuenta. Su vínculo con `account_id` no se reasigna. La misma
+  terminal usa fuentes diferentes para cuentas diferentes; una cuenta observada
+  desde otra terminal también requiere otra fuente asociada al mismo account_id.
+- `session_id`: una ejecución del collector. Al reiniciarlo se crea una sesión
+  nueva, sin crear otra cuenta ni reutilizar la identidad de mensajes anteriores.
+
+Ejemplo ficticio: `terminal-pruebas-a` y `terminal-pruebas-b` son dos fuentes
+de la misma terminal para cuentas diferentes. Volver a la cuenta A permite
+reutilizar `terminal-pruebas-a`, con nueva sesión. No hace falta una tabla de
+terminales en este corte; esta asociación se registra en el inventario operativo
+local. El nombre de la fuente no sustituye la comprobación de identidad.
+
+Procedimiento de alta propuesto, todavía sin comando implementado:
+
+1. El operador verifica en la terminal de pruebas la cuenta demo activa y su
+   servidor. Determina si ya existe una cuenta registrada; nunca fusionar cuentas
+   automáticamente por coincidencia de metadatos parciales.
+2. Crear o seleccionar el account_id y registrar su alias, servidor y moneda en
+   SQLite. Registrar el source_id con su cuenta, antes de admitir sus mensajes.
+   Un alta repetida idéntica es idempotente; un vínculo distinto se rechaza.
+3. Configurar localmente SourceId y la guarda de login/servidor esperados del
+   collector. Mantener credenciales y tokens fuera de SQLite y Git. La asociación
+   local de fuentes autorizadas se configura explícitamente, no desde el payload.
+4. Verificar la primera muestra contra la fuente registrada y los metadatos
+   esperados. Una discrepancia de servidor o moneda bloquea la admisión y requiere
+   revisión; no modifica automáticamente la cuenta. Los metadatos concordantes
+   son una comprobación adicional, no una prueba suficiente de identidad.
+
+Para alternar de A a B, detener explícitamente el collector de pruebas, cambiar
+la cuenta en MT5 y reconfigurar su fuente y guarda antes de reiniciarlo. No
+reenviar mensajes de A etiquetados como B ni transferir la cola entre fuentes.
+La cola actual es volátil: si quedan mensajes al detenerlo, señalar posible
+pérdida y reconciliar posteriormente; no prometer continuidad histórica.
+No tocar terminales de terceros para ejecutar este procedimiento.
+
+La guarda actual detiene el collector si la cuenta deja de coincidir con la demo
+aprobada. Se conserva: no habrá detección ni cambio automático de identidad en
+este primer corte. La protección completa requiere además vincular autenticación
+con fuentes permitidas en el receptor; un token compartido no demuestra qué
+terminal emitió un mensaje. Ese control sigue pendiente de implementación.
+
+No activar dos collectors concurrentes para la misma cuenta en el piloto. Un
+traslado requiere detener el anterior y aprobar la nueva fuente; las observaciones
+históricas mantienen su procedencia. La deduplicación futura de deals por cuenta
+no elimina automáticamente snapshots duplicados de dos fuentes.
+
+Pruebas previstas: fuente desconocida, alta repetida, intento de reasignación,
+metadatos incompatibles, alternancia A → B → A sin mezcla, nueva sesión, fuente
+no autorizada para el token y cuenta compartida entre terminales sin alta automática.
+
 ## Estado de recepción — definición acordada para el piloto
 
 Acordado el 2026-10-20; pendiente de implementación. Para el intervalo actual
@@ -265,8 +327,9 @@ no una descripción de lo ya implementado ni un cambio del adaptador Python.
   probar límites de 20/60 segundos, duplicados, cola atrasada, reinicio y pérdida
   de acceso al backend. Validación visual manual por el usuario.
 - [x] Paso 2B.1: propuesta de transacción, confirmación durable y reenvíos.
-- [ ] Resto del paso 2B: acordar el esquema; definir provisión de identidad,
-  restricciones SQL, configuración de durabilidad y errores, admisión de secuencias
+- [x] Paso 2B.2: separación de terminal/cuenta/fuente y procedimiento de alta propuesto.
+- [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
+  y autorización por fuente, restricciones SQL, durabilidad y errores, admisión de secuencias
   antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
   Separar aceptado de propuesto.
 - [ ] Paso 3: implementar guardado durable de mensajes actuales, con pruebas de

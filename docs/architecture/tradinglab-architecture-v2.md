@@ -100,8 +100,9 @@ diagnóstico o reconciliación aislada con identidad explícita.
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque
 implementa la creación segura del esquema SQLite, su apertura validada y el
-registro local de cuentas/fuentes, sin conectarlo al receptor: el flujo operativo
-sigue usando memoria hasta validar la ingesta durable.
+registro local de cuentas/fuentes y guardado transaccional aislado de mensajes.
+No está conectado al receptor: el flujo operativo sigue usando memoria hasta
+validar la integración, autorización y recuperación del estado persistido.
 
 ## 3. Principios de diseño
 

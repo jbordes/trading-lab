@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tradinglab.telemetry.contract import IDENTIFIER
+from tradinglab.telemetry.contract import IDENTIFIER, parse_envelope
 
 SCHEMA_VERSION = 1
 
@@ -67,6 +69,23 @@ class RegistrationConflictError(ValueError):
     """An existing identity cannot be silently edited or reassigned."""
 
 
+class MessageConflictError(ValueError):
+    """A stored message identity was reused with different content."""
+
+
+class MessageAdmissionError(ValueError):
+    """Unknown source, incompatible account, or unknown old sequence."""
+
+
+@dataclass(frozen=True, slots=True)
+class StoredMessage:
+    """Returned only after the transaction committed successfully."""
+
+    message_id: int
+    duplicate: bool
+    sequence_gap: bool
+
+
 def _identifier(value: str) -> None:
     if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
         raise ValueError("Identificador inválido")
@@ -95,11 +114,11 @@ def _schema_objects(connection: sqlite3.Connection) -> list[tuple[str, str, str]
 
 
 class TelemetryRegistry:
-    """Explicit local registration only; no credentials or message ingestion.
+    """Local registration and durable messages; no authentication or MT5 access.
 
     Obtain instances through open_registry. Each instance belongs to its opening
-    thread and must not escape that context. Methods return True for a new row,
-    False for an identical registration, and never update existing metadata.
+    thread and must not escape that context. Registration returns True for a new
+    row and False for an identical registration, without updating metadata.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
@@ -152,6 +171,73 @@ class TelemetryRegistry:
             )
             return True
 
+    def store_message(self, body: bytes, *, received_at: datetime) -> StoredMessage:
+        """Validate and persist one envelope, preserving original duplicate reception.
+
+        Unknown older sequences in an existing session are rejected; known retries
+        are checked first. A gap is diagnostic, never proof of history coverage.
+        The caller must authorize the source before invoking this local API.
+        """
+        if not isinstance(body, bytes):
+            raise ValueError("El mensaje debe ser bytes")
+        envelope = parse_envelope(body)
+        received = _timestamp(received_at)
+        canonical = envelope.canonical_bytes().decode("utf-8")
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        captured = _timestamp(datetime.fromisoformat(envelope.captured_at))
+        identity = (envelope.source_id, envelope.session_id, str(envelope.sequence))
+        with self._transaction() as connection:
+            account = connection.execute(
+                """SELECT a.server, a.currency FROM sources s
+                JOIN accounts a ON a.account_id = s.account_id WHERE s.source_id = ?""",
+                (envelope.source_id,),
+            ).fetchone()
+            if account is None:
+                raise MessageAdmissionError("Fuente no registrada")
+            existing = connection.execute(
+                """SELECT message_id, payload_json, content_sha256 FROM telemetry_messages
+                WHERE source_id = ? AND session_id = ? AND sequence = ?""",
+                identity,
+            ).fetchone()
+            if existing is not None:
+                if existing[1:] != (canonical, digest):
+                    raise MessageConflictError("Identidad de mensaje con contenido diferente")
+                return StoredMessage(existing[0], duplicate=True, sequence_gap=False)
+            if envelope.kind == "account_snapshot":
+                observed = envelope.payload["account"]
+                if (observed["server"], observed["currency"]) != account:
+                    raise MessageAdmissionError("Metadatos incompatibles con la cuenta registrada")
+            previous = connection.execute(
+                """SELECT sequence FROM telemetry_messages
+                WHERE source_id = ? AND session_id = ?
+                ORDER BY length(sequence) DESC, sequence DESC LIMIT 1""",
+                identity[:2],
+            ).fetchone()
+            last_sequence = int(previous[0]) if previous else 0
+            if envelope.sequence <= last_sequence:
+                raise MessageAdmissionError("Secuencia antigua desconocida")
+            cursor = connection.execute(
+                """INSERT INTO telemetry_messages
+                (source_id, session_id, sequence, captured_at_utc, received_at_utc,
+                 schema_version, collector_version, payload_json, content_sha256)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    *identity,
+                    captured,
+                    received,
+                    envelope.schema_version,
+                    envelope.collector_version,
+                    canonical,
+                    digest,
+                ),
+            )
+            result = StoredMessage(
+                int(cursor.lastrowid),
+                duplicate=False,
+                sequence_gap=envelope.sequence > last_sequence + 1,
+            )
+        return result
+
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         try:
@@ -159,7 +245,7 @@ class TelemetryRegistry:
                 self._connection.execute("BEGIN IMMEDIATE")
                 yield self._connection
         except sqlite3.Error as exc:
-            raise TelemetryStorageError("No se pudo completar el registro local") from exc
+            raise TelemetryStorageError("No se pudo completar la transacción local") from exc
 
 
 @contextmanager

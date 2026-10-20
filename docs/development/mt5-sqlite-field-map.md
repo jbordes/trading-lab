@@ -2,8 +2,8 @@
 
 **Fecha:** 2026-10-20
 
-**Estado:** creación, apertura validada y registro local de cuentas/fuentes implementados.
-La ingesta SQLite y su integración operativa siguen pendientes.
+**Estado:** creación, apertura validada, registro y guardado aislado de mensajes implementados.
+La integración con el receptor y la activación operativa siguen pendientes.
 
 ## Alcance y referencia
 
@@ -197,9 +197,10 @@ misma identidad. Tras un choque, comparar el contenido guardado: no usar un
 el contenido canónico para verificar igualdad.
 
 Comprobar duplicados durables antes de rechazar por secuencia antigua: un mensaje
-ya confirmado debe poder reenviarse aunque haya mensajes posteriores. La admisión
-de secuencias antiguas desconocidas queda pendiente; no relajar silenciosamente
-la protección actual contra replay. Un salto de secuencia se registra como hueco,
+ya confirmado debe poder reenviarse aunque haya mensajes posteriores. El bloque
+3C rechaza secuencias antiguas desconocidas dentro de una misma fuente/sesión;
+el backfill necesitará un camino explícito, sin relajar la protección contra replay.
+Un salto de secuencia se registra como hueco,
 no como evidencia de operaciones inexistentes ni de cobertura completa.
 
 La respuesta de éxito conserva compatibilidad con el collector (actualmente
@@ -361,9 +362,37 @@ arbitrarias de terceros ni verifica la cuenta real conectada en MT5.
 
 No hay CLI, autorización por token ni alta operativa de cuentas reales. La API no
 acepta credenciales. Tampoco fusiona cuentas con metadatos similares. El receptor
-sigue usando memoria. Próximo bloque: ingesta transaccional y reenvíos en el
-componente aislado, antes de integrarlo al HTTP. Antes de activar captura continua,
-cerrar autorización, recuperación, retención y backups.
+sigue usando memoria.
+
+### Bloque implementado: mensajes durables aislados (3C)
+
+`store_message(body: bytes, received_at: datetime)` valida el contrato existente,
+exige fuente registrada y verifica servidor/moneda para snapshots. Guarda el sobre
+canónico completo y su SHA-256 en una transacción; solo devuelve resultado después
+del commit. Los mensajes heartbeat se conservan como tales, sin representar una
+nueva captura de cuenta. El caller deberá autenticar y autorizar la fuente antes
+de llamar esta API; registrar una fuente no autentica al emisor.
+
+Un duplicado idéntico devuelve el mismo message_id y no actualiza la fecha de
+recepción. Contenido diferente con igual identidad produce conflicto. Se comprueba
+el duplicado antes de rechazar secuencias antiguas; las secuencias se comparan
+numéricamente, aunque se guarden como texto. Se permite una nueva sesión sin mezclar
+su contador con otras sesiones o fuentes. La autorización de sesiones antiguas
+queda para la integración; este componente no es una protección completa de replay.
+
+El resultado distingue inserción, duplicado y salto de secuencia en una inserción.
+Un duplicado devuelve sequence_gap=False porque no agrega un hueco nuevo; no afirma
+que la sesión carezca de huecos. Las secuencias conservadas permiten reconstruir
+discontinuidades, pero no garantizan cobertura histórica. Las fechas técnicas en
+columnas se normalizan a UTC con microsegundos, sin modificar el sobre original.
+
+Pruebas en bases temporales cubren reenvío tras reapertura, conflictos, inputs
+inválidos, identidad, límites de secuencia, fuentes/sesiones, concurrencia y fallos
+inyectados antes/después del commit. No equivalen a pruebas de corte eléctrico o
+muerte abrupta de proceso. No se cambia el protocolo HTTP ni se habilita captura.
+Próximo bloque: lectura/reconstrucción acotada del estado persistido antes de
+integrar el receptor; cerrar autorización, recuperación, retención y backups antes
+de operación continua.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -375,9 +404,10 @@ cerrar autorización, recuperación, retención y backups.
 - [x] Paso 2B.2: separación de terminal/cuenta/fuente y procedimiento de alta propuesto.
 - [x] Paso 3A: creación aislada del esquema v1 y pruebas en bases temporales.
 - [x] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
+- [x] Paso 3C: guardado aislado de mensajes, deduplicación y fallos de commit simulados.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
-  y autorización por fuente, restricciones SQL, durabilidad y errores, admisión de secuencias
-  antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
+  y autorización por fuente, durabilidad y errores de la integración, admisión de
+  sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
   Separar aceptado de propuesto.
 - [ ] Paso 3: implementar guardado durable de mensajes actuales, con pruebas de
   duplicado, conflicto, caída antes/después del commit y reinicio. Esto todavía
@@ -393,7 +423,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por ingesta aislada y las definiciones de 2B necesarias para ese bloque. No se creó una
+Retomar por lectura acotada del estado persistido y las definiciones de 2B necesarias. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

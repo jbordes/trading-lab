@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from test_mt5_telemetry import encoded, snapshot_message
+
+from tradinglab.telemetry.contract import TelemetryValidationError, parse_envelope
+from tradinglab.telemetry.sqlite_store import (
+    MessageAdmissionError,
+    MessageConflictError,
+    TelemetryRegistry,
+    TelemetryStorageError,
+    create_database,
+    open_registry,
+)
+
+
+class FailingCommitConnection(sqlite3.Connection):
+    """Inject failure before commit or an ambiguous result after durable commit."""
+
+    after_commit = False
+
+    def __exit__(self, *args: object) -> None:
+        if self.after_commit:
+            super().__exit__(*args)
+        else:
+            self.rollback()
+        raise sqlite3.OperationalError("injected commit failure")
+
+
+class StoredMessagesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / "messages.sqlite3"
+        create_database(self.path)
+        self.now = datetime(2026, 10, 20, 12, tzinfo=UTC)
+        with open_registry(self.path) as registry:
+            registry.register_account("a", "Demo", "DEMO-SERVER", "USD", created_at=self.now)
+            for source in ("demo-terminal-01", "other-source"):
+                registry.register_source(source, "a", created_at=self.now)
+
+    def rows(self) -> list[tuple]:
+        with closing(sqlite3.connect(self.path)) as connection:
+            return connection.execute(
+                "SELECT payload_json, content_sha256, received_at_utc FROM telemetry_messages"
+            ).fetchall()
+
+    def test_round_trip_hash_and_retry_after_reopen(self) -> None:
+        message = snapshot_message()
+        with open_registry(self.path) as registry:
+            first = registry.store_message(encoded(message), received_at=self.now)
+        with open_registry(self.path) as registry:
+            repeat = registry.store_message(
+                json.dumps(message, indent=4).encode(), received_at=self.now + timedelta(days=1)
+            )
+        self.assertFalse(first.duplicate)
+        self.assertTrue(repeat.duplicate)
+        self.assertEqual(first.message_id, repeat.message_id)
+        rows = self.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(json.loads(rows[0][0]), message)
+        canonical = parse_envelope(encoded(message)).canonical_bytes()
+        self.assertEqual(rows[0][1], hashlib.sha256(canonical).hexdigest())
+        self.assertEqual(rows[0][2], "2026-10-20T12:00:00.000000Z")
+
+    def test_conflict_preserves_original_and_allows_next_message(self) -> None:
+        message = snapshot_message()
+        with open_registry(self.path) as registry:
+            registry.store_message(encoded(message), received_at=self.now)
+            message["payload"]["account"]["balance"] = 1.0
+            with self.assertRaises(MessageConflictError):
+                registry.store_message(encoded(message), received_at=self.now)
+            registry.store_message(encoded(snapshot_message(sequence=2)), received_at=self.now)
+        self.assertEqual(len(self.rows()), 2)
+        self.assertEqual(json.loads(self.rows()[0][0])["payload"]["account"]["balance"], 100000.0)
+
+    def test_rejects_unregistered_source_and_mismatched_metadata(self) -> None:
+        with open_registry(self.path) as registry:
+            for field, value in (("server", "OTHER"), ("currency", "EUR")):
+                message = snapshot_message()
+                message["payload"]["account"][field] = value
+                with self.assertRaises(MessageAdmissionError):
+                    registry.store_message(encoded(message), received_at=self.now)
+            with self.assertRaises(MessageAdmissionError):
+                registry.store_message(
+                    encoded(snapshot_message(source_id="unknown")), received_at=self.now
+                )
+        self.assertEqual(self.rows(), [])
+
+    def test_invalid_contract_and_naive_time_do_not_write(self) -> None:
+        with open_registry(self.path) as registry:
+            with self.assertRaises(TelemetryValidationError):
+                registry.store_message(b"{}", received_at=self.now)
+            with self.assertRaises(ValueError):
+                registry.store_message(
+                    encoded(snapshot_message()), received_at=self.now.replace(tzinfo=None)
+                )
+        self.assertEqual(self.rows(), [])
+
+    def test_numeric_sequence_gaps_old_retry_and_unknown_old_sequence(self) -> None:
+        with open_registry(self.path) as registry:
+            for sequence, gap in ((1, False), (9, True), (10, False), (2**63 - 1, True)):
+                result = registry.store_message(
+                    encoded(snapshot_message(sequence=sequence)), received_at=self.now
+                )
+                self.assertEqual(result.sequence_gap, gap)
+            self.assertTrue(
+                registry.store_message(encoded(snapshot_message()), received_at=self.now).duplicate
+            )
+            with self.assertRaises(MessageAdmissionError):
+                registry.store_message(encoded(snapshot_message(sequence=2)), received_at=self.now)
+
+    def test_sources_and_sessions_have_separate_sequences(self) -> None:
+        with open_registry(self.path) as registry:
+            registry.store_message(encoded(snapshot_message()), received_at=self.now)
+            other = snapshot_message(source_id="other-source")
+            registry.store_message(encoded(other), received_at=self.now)
+            other["session_id"] = "new-session"
+            registry.store_message(encoded(other), received_at=self.now)
+        self.assertEqual(len(self.rows()), 3)
+
+    def test_heartbeat_is_stored_without_claiming_account_capture(self) -> None:
+        message = snapshot_message()
+        message.update(kind="heartbeat", payload={"status": "ok"})
+        with open_registry(self.path) as registry:
+            registry.store_message(encoded(message), received_at=self.now)
+        self.assertEqual(json.loads(self.rows()[0][0])["kind"], "heartbeat")
+
+    def test_failure_before_commit_then_retry_inserts_once(self) -> None:
+        self.check_commit_failure(after_commit=False)
+
+    def test_concurrent_identical_requests_insert_once(self) -> None:
+        barrier = threading.Barrier(2, timeout=5)
+
+        def send() -> bool:
+            with open_registry(self.path) as registry:
+                barrier.wait()
+                return registry.store_message(
+                    encoded(snapshot_message()), received_at=self.now
+                ).duplicate
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(send) for _ in range(2)]
+            self.assertEqual(sorted(future.result(timeout=10) for future in futures), [False, True])
+        self.assertEqual(len(self.rows()), 1)
+
+    def test_failure_after_commit_then_retry_is_duplicate(self) -> None:
+        self.check_commit_failure(after_commit=True)
+
+    def check_commit_failure(self, *, after_commit: bool) -> None:
+        with closing(sqlite3.connect(self.path, factory=FailingCommitConnection)) as connection:
+            connection.after_commit = after_commit
+            connection.execute("PRAGMA foreign_keys = ON")
+            registry = TelemetryRegistry(connection)
+            with self.assertRaises(TelemetryStorageError):
+                registry.store_message(encoded(snapshot_message()), received_at=self.now)
+        self.assertEqual(len(self.rows()), int(after_commit))
+        with open_registry(self.path) as registry:
+            retry = registry.store_message(encoded(snapshot_message()), received_at=self.now)
+        self.assertEqual(retry.duplicate, after_commit)
+        self.assertEqual(len(self.rows()), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-20
 
-**Estado:** creación, apertura validada, registro y guardado aislado de mensajes implementados.
+**Estado:** creación, apertura validada, registro, guardado y lectura aislada implementados.
 La integración con el receptor y la activación operativa siguen pendientes.
 
 ## Alcance y referencia
@@ -390,9 +390,26 @@ Pruebas en bases temporales cubren reenvío tras reapertura, conflictos, inputs
 inválidos, identidad, límites de secuencia, fuentes/sesiones, concurrencia y fallos
 inyectados antes/después del commit. No equivalen a pruebas de corte eléctrico o
 muerte abrupta de proceso. No se cambia el protocolo HTTP ni se habilita captura.
-Próximo bloque: lectura/reconstrucción acotada del estado persistido antes de
-integrar el receptor; cerrar autorización, recuperación, retención y backups antes
-de operación continua.
+### Bloque implementado: último snapshot persistido por fuente (3D)
+
+`latest_account_snapshot(source_id)` devuelve como máximo un snapshot para una
+fuente registrada, o `None` cuando aún no tiene capturas. Omite heartbeats y usa
+la fecha de captura más reciente; ante empate, el orden de inserción. Así una
+muestra atrasada entregada después no desplaza una captura más nueva. Las fuentes
+se consultan por separado; no hay fallback hacia otra terminal.
+
+El resultado incluye el sobre original validado, su hora de recepción original y
+su `message_id`. La lectura comprueba hash y coherencia de las columnas con el
+sobre. Un dato alterado causa un error explícito. No actualiza fechas, contadores
+ni marcas de conexión. El consumidor futuro deberá calcular antigüedad con su
+reloj, mostrar claramente que la observación fue recuperada y tratar una fecha
+de captura futura como anomalía, no como frescura.
+
+La consulta devuelve una sola observación; no reconstruye una ventana de equity,
+historial completo ni estado operativo del collector. Continúa aislada del HTTP.
+Próximo bloque: definir cómo sincronizar la vista en memoria con el journal antes
+de integrar el receptor. Cerrar autorización, recuperación, retención y backups
+antes de operación continua.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -405,6 +422,7 @@ de operación continua.
 - [x] Paso 3A: creación aislada del esquema v1 y pruebas en bases temporales.
 - [x] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
 - [x] Paso 3C: guardado aislado de mensajes, deduplicación y fallos de commit simulados.
+- [x] Paso 3D: lectura del último snapshot por fuente con procedencia y fechas originales.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -423,7 +441,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por lectura acotada del estado persistido y las definiciones de 2B necesarias. No se creó una
+Retomar por sincronización de vistas y las definiciones de 2B necesarias. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

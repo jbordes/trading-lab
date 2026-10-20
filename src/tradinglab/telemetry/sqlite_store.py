@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tradinglab.telemetry.contract import IDENTIFIER, parse_envelope
+from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope, parse_envelope
 
 SCHEMA_VERSION = 1
 
@@ -84,6 +84,15 @@ class StoredMessage:
     message_id: int
     duplicate: bool
     sequence_gap: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RestoredSnapshot:
+    """A historical observation with its original capture and receipt times."""
+
+    envelope: TelemetryEnvelope
+    received_at: datetime
+    message_id: int
 
 
 def _identifier(value: str) -> None:
@@ -237,6 +246,67 @@ class TelemetryRegistry:
                 sequence_gap=envelope.sequence > last_sequence + 1,
             )
         return result
+
+    def latest_account_snapshot(self, source_id: str) -> RestoredSnapshot | None:
+        """Read one verified snapshot for a registered source.
+
+        Capture time determines which observation is newest; insertion order only
+        breaks ties. The returned timestamps are historical evidence, never an
+        assertion that the collector is currently connected.
+        """
+        _identifier(source_id)
+        try:
+            if (
+                self._connection.execute(
+                    "SELECT 1 FROM sources WHERE source_id = ?", (source_id,)
+                ).fetchone()
+                is None
+            ):
+                raise MessageAdmissionError("Fuente no registrada")
+            row = self._connection.execute(
+                """SELECT message_id, session_id, sequence, captured_at_utc,
+                          received_at_utc, schema_version, collector_version,
+                          payload_json, content_sha256
+                   FROM telemetry_messages
+                   WHERE source_id = ?
+                     AND json_extract(payload_json, '$.kind') = 'account_snapshot'
+                   ORDER BY captured_at_utc DESC, message_id DESC LIMIT 1""",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                message_id,
+                session_id,
+                sequence,
+                captured,
+                received,
+                schema,
+                collector,
+                canonical,
+                digest,
+            ) = row
+            payload = canonical.encode("utf-8")
+            if hashlib.sha256(payload).hexdigest() != digest:
+                raise TelemetryStorageError("El mensaje guardado no coincide con su hash")
+            envelope = parse_envelope(payload)
+            if (
+                canonical != envelope.canonical_bytes().decode("utf-8")
+                or (envelope.source_id, envelope.session_id, str(envelope.sequence))
+                != (source_id, session_id, sequence)
+                or _timestamp(datetime.fromisoformat(envelope.captured_at)) != captured
+                or (envelope.schema_version, envelope.collector_version) != (schema, collector)
+                or envelope.kind != "account_snapshot"
+            ):
+                raise TelemetryStorageError("Columnas y mensaje guardado no coinciden")
+            received_at = datetime.fromisoformat(received)
+            if received_at.tzinfo is None or _timestamp(received_at) != received:
+                raise TelemetryStorageError("Hora de recepción guardada inválida")
+            return RestoredSnapshot(envelope, received_at, message_id)
+        except MessageAdmissionError:
+            raise
+        except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
+            raise TelemetryStorageError("No se pudo recuperar el snapshot guardado") from exc
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:

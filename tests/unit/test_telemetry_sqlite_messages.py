@@ -136,6 +136,63 @@ class StoredMessagesTest(unittest.TestCase):
             registry.store_message(encoded(message), received_at=self.now)
         self.assertEqual(json.loads(self.rows()[0][0])["kind"], "heartbeat")
 
+    def test_restore_latest_capture_after_reopen_skips_heartbeat_and_late_queue(self) -> None:
+        older = snapshot_message(sequence=1)
+        newer = snapshot_message(sequence=2)
+        newer["captured_at"] = "2026-10-20T11:00:00Z"
+        newer["payload"]["account"]["balance"] = 200.0
+        delayed = snapshot_message(sequence=3)
+        delayed["captured_at"] = "2026-10-15T20:00:00Z"
+        delayed["payload"]["account"]["balance"] = 300.0
+        heartbeat = snapshot_message(sequence=4)
+        heartbeat.update(kind="heartbeat", payload={"status": "ok"})
+        heartbeat["captured_at"] = "2026-10-20T12:00:00Z"
+        with open_registry(self.path) as registry:
+            for message, received in (
+                (older, self.now),
+                (newer, self.now),
+                (delayed, self.now + timedelta(seconds=30)),
+                (heartbeat, self.now + timedelta(seconds=40)),
+            ):
+                registry.store_message(encoded(message), received_at=received)
+        with open_registry(self.path) as registry:
+            restored = registry.latest_account_snapshot("demo-terminal-01")
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.envelope.sequence, 2)
+        self.assertEqual(restored.envelope.payload["account"]["balance"], 200.0)
+        self.assertEqual(restored.envelope.captured_at, "2026-10-20T11:00:00Z")
+        self.assertEqual(restored.received_at, self.now)
+
+    def test_restore_empty_and_isolated_source(self) -> None:
+        with open_registry(self.path) as registry:
+            self.assertIsNone(registry.latest_account_snapshot("demo-terminal-01"))
+            with self.assertRaises(MessageAdmissionError):
+                registry.latest_account_snapshot("unknown")
+            registry.store_message(encoded(snapshot_message()), received_at=self.now)
+            self.assertIsNone(registry.latest_account_snapshot("other-source"))
+
+    def test_restore_detects_tampered_content_and_columns(self) -> None:
+        with open_registry(self.path) as registry:
+            registry.store_message(encoded(snapshot_message()), received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute(
+                "UPDATE telemetry_messages SET received_at_utc = ?",
+                ("2026-10-20T12:00:00X",),
+            )
+            connection.commit()
+        with open_registry(self.path) as registry:
+            with self.assertRaises(TelemetryStorageError):
+                registry.latest_account_snapshot("demo-terminal-01")
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute(
+                "UPDATE telemetry_messages SET received_at_utc = ?, content_sha256 = ?",
+                ("2026-10-20T12:00:00.000000Z", "0" * 64),
+            )
+            connection.commit()
+        with open_registry(self.path) as registry:
+            with self.assertRaises(TelemetryStorageError):
+                registry.latest_account_snapshot("demo-terminal-01")
+
     def test_failure_before_commit_then_retry_inserts_once(self) -> None:
         self.check_commit_failure(after_commit=False)
 

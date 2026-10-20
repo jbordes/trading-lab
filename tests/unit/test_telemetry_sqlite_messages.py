@@ -10,10 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from test_mt5_telemetry import encoded, snapshot_message
 
 from tradinglab.telemetry.contract import TelemetryValidationError, parse_envelope
+from tradinglab.telemetry.persisted_view import PersistedSnapshotView
 from tradinglab.telemetry.sqlite_store import (
     MessageAdmissionError,
     MessageConflictError,
@@ -192,6 +194,70 @@ class StoredMessagesTest(unittest.TestCase):
         with open_registry(self.path) as registry:
             with self.assertRaises(TelemetryStorageError):
                 registry.latest_account_snapshot("demo-terminal-01")
+
+    def test_view_restores_history_and_does_not_refresh_time_on_replay(self) -> None:
+        first = snapshot_message()
+        with open_registry(self.path) as registry:
+            view = PersistedSnapshotView(registry, source_id="demo-terminal-01")
+            self.assertIsNone(view.snapshot())
+            view.store_message(encoded(first), received_at=self.now)
+            original = view.snapshot()
+            self.assertEqual(original.received_at, self.now)
+            original.envelope.payload["account"]["balance"] = 0.0
+            replay = view.store_message(encoded(first), received_at=self.now + timedelta(hours=2))
+            self.assertTrue(replay.duplicate)
+            self.assertEqual(view.snapshot().received_at, self.now)
+            self.assertEqual(view.snapshot().envelope.payload["account"]["balance"], 100000.0)
+        with open_registry(self.path) as registry:
+            restarted = PersistedSnapshotView(registry, source_id="demo-terminal-01")
+            self.assertEqual(restarted.snapshot().received_at, self.now)
+            self.assertEqual(restarted.snapshot().envelope.captured_at, first["captured_at"])
+
+    def test_view_keeps_latest_capture_when_heartbeat_or_old_queue_arrives(self) -> None:
+        newest = snapshot_message()
+        newest["captured_at"] = "2026-10-20T11:00:00Z"
+        delayed = snapshot_message(sequence=2)
+        delayed["captured_at"] = "2026-10-15T20:00:00Z"
+        heartbeat = snapshot_message(sequence=3)
+        heartbeat.update(kind="heartbeat", payload={"status": "ok"})
+        with open_registry(self.path) as registry:
+            view = PersistedSnapshotView(registry, source_id="demo-terminal-01")
+            view.store_message(encoded(newest), received_at=self.now)
+            view.store_message(encoded(delayed), received_at=self.now + timedelta(minutes=1))
+            view.store_message(encoded(heartbeat), received_at=self.now + timedelta(minutes=2))
+            self.assertEqual(view.snapshot().envelope.sequence, 1)
+            self.assertEqual(view.snapshot().received_at, self.now)
+
+    def test_view_is_source_scoped_and_can_refresh_external_commit(self) -> None:
+        with open_registry(self.path) as registry:
+            view = PersistedSnapshotView(registry, source_id="demo-terminal-01")
+            with self.assertRaises(MessageAdmissionError):
+                view.store_message(
+                    encoded(snapshot_message(source_id="other-source")), received_at=self.now
+                )
+            registry.store_message(encoded(snapshot_message()), received_at=self.now)
+            self.assertIsNone(view.snapshot())
+            view.refresh()
+            self.assertEqual(view.snapshot().envelope.source_id, "demo-terminal-01")
+            other = PersistedSnapshotView(registry, source_id="other-source")
+            self.assertIsNone(other.snapshot())
+
+    def test_refresh_failure_after_commit_requires_retry_before_read(self) -> None:
+        with open_registry(self.path) as registry:
+            view = PersistedSnapshotView(registry, source_id="demo-terminal-01")
+            original = registry.latest_account_snapshot
+            with patch.object(
+                registry, "latest_account_snapshot", side_effect=TelemetryStorageError
+            ):
+                with self.assertRaises(TelemetryStorageError):
+                    view.store_message(encoded(snapshot_message()), received_at=self.now)
+            with self.assertRaises(TelemetryStorageError):
+                view.snapshot()
+            self.assertEqual(len(self.rows()), 1)
+            self.assertIsNotNone(original("demo-terminal-01"))
+            retry = view.store_message(encoded(snapshot_message()), received_at=self.now)
+            self.assertTrue(retry.duplicate)
+            self.assertEqual(view.snapshot().envelope.sequence, 1)
 
     def test_failure_before_commit_then_retry_inserts_once(self) -> None:
         self.check_commit_failure(after_commit=False)

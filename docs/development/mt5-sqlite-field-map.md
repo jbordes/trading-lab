@@ -407,9 +407,29 @@ de captura futura como anomalía, no como frescura.
 
 La consulta devuelve una sola observación; no reconstruye una ventana de equity,
 historial completo ni estado operativo del collector. Continúa aislada del HTTP.
-Próximo bloque: definir cómo sincronizar la vista en memoria con el journal antes
-de integrar el receptor. Cerrar autorización, recuperación, retención y backups
-antes de operación continua.
+
+### Bloque implementado: vista en memoria sincronizada (3E)
+
+`PersistedSnapshotView` mantiene una vista por `source_id`. Al crearse carga el
+último snapshot confirmado desde SQLite. Después de guardar un mensaje, recarga
+esa fuente antes de devolver éxito. También permite `refresh()` si otro proceso
+escribió en la base. `snapshot()` devuelve una copia independiente con la hora de
+captura y la hora original de recepción; repetir un mensaje o guardar un heartbeat
+no actualiza esas horas. La vista no genera contadores de capturas ni afirma que
+el collector esté conectado: ese diagnóstico deberá provenir del receptor activo.
+
+Si SQLite confirmó el mensaje pero falla la recarga, la vista deja de estar lista
+para lectura y la operación informa error. Un reenvío idéntico consulta el mensaje
+durable, lo reconoce como duplicado y puede recuperar la vista. No sustituir esta
+vista por una llamada a `TelemetryBuffer.accept`: eso volvería a contar una
+observación restaurada como si acabara de llegar.
+
+Esta clase utiliza la conexión del registro en un solo hilo y todavía no atiende
+HTTP. Pruebas cubren reinicio, fuente equivocada, replay, heartbeat, cola atrasada,
+copia independiente y fallo de recarga tras un commit. Próximo bloque: definir la
+integración segura del receptor, con autenticación ligada a fuentes, errores HTTP
+y acceso concurrente a SQLite. Resolver retención y backups antes de operación
+continua.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -423,6 +443,7 @@ antes de operación continua.
 - [x] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
 - [x] Paso 3C: guardado aislado de mensajes, deduplicación y fallos de commit simulados.
 - [x] Paso 3D: lectura del último snapshot por fuente con procedencia y fechas originales.
+- [x] Paso 3E: vista en memoria sincronizada con mensajes confirmados y recuperada al inicio.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -441,7 +462,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por sincronización de vistas y las definiciones de 2B necesarias. No se creó una
+Retomar por integración segura del receptor y las definiciones de 2B necesarias. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

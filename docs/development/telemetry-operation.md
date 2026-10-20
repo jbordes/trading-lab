@@ -79,10 +79,17 @@ copia online de SQLite, comprueba la integridad de la copia y permite que el
 receptor mantenga abierta la base. No reemplaza ni elimina copias anteriores.
 Una falla puede dejar una carpeta `.tmp-telemetry-*` para inspección manual.
 
+La [política del piloto](../adr/0008-pilot-telemetry-retention.md) conserva todos
+los mensajes y copias sin borrado automático. Exige una copia antes de cambiar la
+base y al menos una por día con captura, más un registro diario del tamaño de la
+base, las copias, el espacio libre y la verificación. Tras una semana completa con
+operaciones reales se revisará con el socio. Si falta espacio, detener la captura
+y decidir cómo ampliar o exportar; no borrar para liberar espacio sin aprobación.
+
 Esta copia está en la misma máquina: sirve para errores locales, pero no protege
-contra pérdida de la VPS. Para operación continua habrá que definir periodicidad,
-destino externo controlado, verificación de restauración y retención. Google Drive,
-si se usa como transporte, no se convierte en fuente de verdad.
+contra pérdida de la VPS. Para operación continua faltan un destino externo
+controlado, una prueba de restauración y objetivos de pérdida y recuperación.
+Google Drive, si se usa como transporte, no se convierte en fuente de verdad.
 
 Vista previa sin token, red ni procesos nuevos:
 

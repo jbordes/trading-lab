@@ -475,13 +475,13 @@ pruebas cubren una base abierta, manifest, contenido copiado y ausencia de cambi
 en el origen. Una falla puede dejar una carpeta temporal o parcial: inspeccionarla
 manualmente; no hay limpieza automática.
 
-Política inicial propuesta para la prueba demo: copia antes de una migración o
-modificación manual y al terminar cada jornada de captura; conservar todas las
-copias del piloto mientras se mide el volumen. Registrar tamaño de base y
-crecimiento diario. Antes de una captura continua, decidir con el operador un
-destino fuera de la VPS, frecuencia, prueba de restauración y plazo de retención.
-Una copia ubicada solo en la misma VPS no cubre la pérdida de esa máquina. No se
-habilita borrado automático ni se fija hoy un plazo arbitrario de eliminación.
+La [política de retención del piloto](../adr/0008-pilot-telemetry-retention.md)
+conserva mensajes y copias, sin borrado automático: copia antes de cambiar la
+base y al menos una por día con captura; registro diario de tamaños, espacio
+libre y verificación. Revisar tras la primera semana completa con operaciones
+reales. Antes de depender de captura continua, faltan destino fuera de la VPS,
+prueba de restauración y objetivos de pérdida y recuperación. Una copia local no
+cubre la pérdida de esa máquina.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -499,6 +499,7 @@ habilita borrado automático ni se fija hoy un plazo arbitrario de eliminación.
 - [x] Paso 3F: receptor HTTP y supervisor con SQLite opcional, fuente única y pruebas locales.
 - [x] Paso 3G: comando de primera provisión con vista previa y creación explícita.
 - [x] Paso 3H: copia local SQLite verificada con manifest y sin borrado automático.
+- [x] Política de retención conservadora para el piloto demo (ADR-0008).
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -517,7 +518,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por política de retención, destino externo y prueba operativa acotada. No se creó una
+Retomar por destino externo, prueba de restauración y prueba operativa acotada. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

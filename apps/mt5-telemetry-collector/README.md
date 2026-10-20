@@ -16,6 +16,11 @@ desde el receptor.
 
 ## Prueba manual autorizada
 
+Para el piloto existente, usar el
+[procedimiento de arranque y recuperación](../../docs/development/telemetry-operation.md).
+El arranque conjunto usa los puertos 8776/8775; los ejemplos individuales
+de abajo conservan los valores genéricos 8766/8765.
+
 1. Ejecutar el receptor con un token de prueba configurado fuera de Git.
 2. Compilar `TradingLabTelemetry.mq5` mediante MetaEditor.
 3. Autorizar exactamente `http://127.0.0.1:8766` en la lista de WebRequest de

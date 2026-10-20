@@ -26,6 +26,10 @@ receptor 127.0.0.1:8766
 adaptador servidor del dashboard + buffer acotado en memoria + /health
 ```
 
+Para el arranque cotidiano y la recuperación del piloto Juampi (8776/8775),
+seguir [la guía operativa](telemetry-operation.md). El comando conjunto sustituye
+la dependencia del supervisor temporal del piloto.
+
 El receptor es un proceso separado. El servidor del dashboard continúa
 rechazando `POST`; su adaptador servidor conoce el token local, pero nunca lo
 entrega al navegador.

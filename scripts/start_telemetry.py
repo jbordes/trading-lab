@@ -21,12 +21,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-id", required=True, help="SourceId configurado en el EA")
     parser.add_argument("--receiver-port", type=int, default=8776)
     parser.add_argument("--dashboard-port", type=int, default=8775)
+    parser.add_argument("--sqlite-db", type=Path, help="Base existente bajo _storage/.")
     parser.add_argument("--dry-run", action="store_true", help="Mostrar plan sin abrir servicios")
     args = parser.parse_args(argv)
     try:
-        config = RuntimeConfig(args.source_id, args.receiver_port, args.dashboard_port)
+        config = RuntimeConfig(
+            args.source_id, args.receiver_port, args.dashboard_port, args.sqlite_db
+        )
         print(f"EA -> http://127.0.0.1:{config.receiver_port}/v1/telemetry")
         print(f"Fuente: {config.source_id}; dashboard: {config.dashboard_port}")
+        print("Almacenamiento: SQLite" if config.sqlite_db else "Almacenamiento: memoria volátil")
         if args.dry_run:
             return 0
         environment = dict(os.environ)

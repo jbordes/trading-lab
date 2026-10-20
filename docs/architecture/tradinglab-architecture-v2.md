@@ -100,9 +100,11 @@ diagnóstico o reconciliación aislada con identidad explícita.
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque
 implementa la creación segura del esquema SQLite, su apertura validada y el
-registro local de cuentas/fuentes y guardado transaccional aislado de mensajes.
-No está conectado al receptor: el flujo operativo sigue usando memoria hasta
-validar la integración, autorización y recuperación del estado persistido.
+registro local de cuentas/fuentes y guardado transaccional de mensajes. El
+[ADR-0007](../adr/0007-opt-in-sqlite-telemetry-receiver.md) permite al receptor
+usar una base local preexistente y una sola fuente autorizada por token como modo
+explícito. El arranque por defecto sigue usando memoria. Antes de activar el modo
+persistente en una terminal real faltan provisión operativa, retención y backups.
 
 ## 3. Principios de diseño
 

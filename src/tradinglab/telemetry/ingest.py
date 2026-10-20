@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from tradinglab.telemetry.contract import (
@@ -22,6 +22,12 @@ from tradinglab.telemetry.contract import (
     parse_envelope,
 )
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
+from tradinglab.telemetry.sqlite_store import (
+    MessageAdmissionError,
+    MessageConflictError,
+    MessageStaleError,
+    TelemetryStorageError,
+)
 
 
 class TelemetryConflictError(RuntimeError):
@@ -36,6 +42,14 @@ class TelemetryStaleError(RuntimeError):
 class IngestOutcome:
     status: str
     sequence_gap: int
+
+
+class TelemetryBackend(Protocol):
+    def accept(self, envelope: TelemetryEnvelope) -> IngestOutcome: ...
+
+    def state(self, *, include_latest: bool = True) -> dict[str, Any]: ...
+
+    def latest_account_snapshot(self, source_id: str) -> dict[str, Any] | None: ...
 
 
 class TelemetryBuffer:
@@ -177,7 +191,7 @@ class TelemetryBuffer:
 
 
 def create_telemetry_server(
-    buffer: TelemetryBuffer,
+    buffer: TelemetryBackend,
     *,
     token: str,
     port: int,
@@ -234,8 +248,14 @@ def create_telemetry_server(
                 return
             path = request_target.path
             if path == "/health":
-                health = buffer.state(include_latest=False)
-                health.pop("latest")
+                try:
+                    health = buffer.state(include_latest=False)
+                except TelemetryStorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE, {"error": "storage_unavailable"}
+                    )
+                    return
+                health.pop("latest", None)
                 health.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, health)
                 return
@@ -247,7 +267,16 @@ def create_telemetry_server(
                 if source_id is None:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_source"})
                     return
-                latest = buffer.latest_account_snapshot(source_id)
+                try:
+                    latest = buffer.latest_account_snapshot(source_id)
+                except MessageAdmissionError:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "snapshot_unavailable"})
+                    return
+                except TelemetryStorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE, {"error": "storage_unavailable"}
+                    )
+                    return
                 if latest is None:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "snapshot_unavailable"})
                     return
@@ -297,6 +326,18 @@ def create_telemetry_server(
                 return
             except TelemetryStaleError:
                 self._send_json(HTTPStatus.CONFLICT, {"error": "stale_sequence"})
+                return
+            except MessageConflictError:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "idempotency_conflict"})
+                return
+            except MessageStaleError:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_sequence"})
+                return
+            except MessageAdmissionError:
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "source_not_allowed"})
+                return
+            except TelemetryStorageError:
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "storage_unavailable"})
                 return
             status = HTTPStatus.OK if outcome.status == "duplicate" else HTTPStatus.ACCEPTED
             self._send_json(

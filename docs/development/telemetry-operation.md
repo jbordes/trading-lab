@@ -46,7 +46,13 @@ comprueba salud y HTTP/1.1 en el receptor antes de lanzar el dashboard y vigila
 que ninguno termine. Si uno termina, cierra los hijos de esta ejecución y
 sale con error. Un segundo arranque con puertos ocupados falla sin detener
 ni adoptar procesos existentes. Ctrl+C detiene ambos; no detiene el EA.
-El almacenamiento del receptor es volátil: al detenerlo se pierde su buffer.
+Con el comando mostrado, el almacenamiento del receptor es volátil: al detenerlo
+se pierde su buffer. Hay un modo SQLite opcional con `--sqlite-db` para una base
+preexistente bajo `_storage/` y una fuente registrada. La base no se crea al
+arrancar; primero debe aprobarse su provisión y política de backup/retención.
+El supervisor transmite la ruta solo al receptor y mantiene las mismas
+comprobaciones de arranque y limpieza. No habilitar este modo para una terminal
+real hasta completar ese paso operativo.
 
 Vista previa sin token, red ni procesos nuevos:
 

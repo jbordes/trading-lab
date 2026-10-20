@@ -21,6 +21,7 @@ class RuntimeConfig:
     source_id: str
     receiver_port: int = 8776
     dashboard_port: int = 8775
+    sqlite_db: Path | None = None
 
     def __post_init__(self) -> None:
         if not IDENTIFIER.fullmatch(self.source_id):
@@ -93,17 +94,30 @@ def run_runtime(
         raise ValueError("El token debe tener al menos 24 caracteres ASCII sin espacios")
     check_port(config.receiver_port)
     check_port(config.dashboard_port)
+    database: Path | None = None
+    if config.sqlite_db is not None:
+        try:
+            database = config.sqlite_db.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("La base SQLite configurada no existe") from exc
+        if database.suffix != ".sqlite3" or not database.is_relative_to(
+            (root / "_storage").resolve()
+        ):
+            raise ValueError("La base SQLite debe existir bajo _storage/ y ser .sqlite3")
     children: list[subprocess.Popen[bytes]] = []
     child_environment = dict(environment)
     child_environment["PYTHONUNBUFFERED"] = "1"
     try:
+        receiver_command = [
+            sys.executable,
+            str(root / "scripts" / "telemetry_receiver.py"),
+            "--port",
+            str(config.receiver_port),
+        ]
+        if database is not None:
+            receiver_command.extend(("--sqlite-db", str(database), "--source-id", config.source_id))
         receiver = spawn(
-            [
-                sys.executable,
-                str(root / "scripts" / "telemetry_receiver.py"),
-                "--port",
-                str(config.receiver_port),
-            ],
+            receiver_command,
             cwd=root,
             env=child_environment,
             shell=False,

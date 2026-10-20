@@ -111,11 +111,14 @@ class StoredMessagesTest(unittest.TestCase):
 
     def test_numeric_sequence_gaps_old_retry_and_unknown_old_sequence(self) -> None:
         with open_registry(self.path) as registry:
+            previous = 0
             for sequence, gap in ((1, False), (9, True), (10, False), (2**63 - 1, True)):
                 result = registry.store_message(
                     encoded(snapshot_message(sequence=sequence)), received_at=self.now
                 )
                 self.assertEqual(result.sequence_gap, gap)
+                self.assertEqual(result.gap_count, max(sequence - previous - 1, 0))
+                previous = sequence
             self.assertTrue(
                 registry.store_message(encoded(snapshot_message()), received_at=self.now).duplicate
             )

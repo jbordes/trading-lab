@@ -431,6 +431,28 @@ integración segura del receptor, con autenticación ligada a fuentes, errores H
 y acceso concurrente a SQLite. Resolver retención y backups antes de operación
 continua.
 
+### Bloque implementado: receptor y supervisor con SQLite opcional (3F)
+
+El receptor acepta `--sqlite-db` junto con `--source-id`. Exige una base ya creada
+bajo `_storage/` y la fuente registrada antes de abrir el puerto. En este modo,
+el token autoriza solamente esa fuente. SQLite confirma el mensaje antes del HTTP
+202; los reenvíos idénticos reciben HTTP 200. Una fuente distinta recibe 403 y
+los conflictos/secuencias viejas 409. Los fallos de almacenamiento reciben 503.
+El snapshot recuperado conserva su fecha original. `/health` incluye
+`storage=sqlite`; sus contadores miden este proceso, no el archivo histórico.
+
+`scripts/start_telemetry.py --source-id <fuente> --sqlite-db <ruta>` transmite base y fuente al hijo
+receptor dentro de la supervisión del PR #18. Sin esa opción, el receptor mantiene
+su buffer volátil. El archivo debe estar bajo `_storage/` del checkout que se
+arranca; este paso no crea una base operativa ni configura terminales. Pruebas HTTP
+locales verifican commit, reenvío, reinicio, aislamiento de fuentes y concurrencia.
+
+La conexión compartida entre hilos se usa bajo un bloqueo del backend. Falta un
+procedimiento aprobado de alta de cuenta/fuente y de backup/retención antes de
+encender este modo en la terminal demo. El paso siguiente es preparar ese alta
+local controlada y una prueba de operación breve, con revisión humana de la
+identidad activa de MT5.
+
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
 - [x] Definición breve: estados y umbrales de recepción por fuente acordados.
@@ -444,6 +466,7 @@ continua.
 - [x] Paso 3C: guardado aislado de mensajes, deduplicación y fallos de commit simulados.
 - [x] Paso 3D: lectura del último snapshot por fuente con procedencia y fechas originales.
 - [x] Paso 3E: vista en memoria sincronizada con mensajes confirmados y recuperada al inicio.
+- [x] Paso 3F: receptor HTTP y supervisor con SQLite opcional, fuente única y pruebas locales.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -462,7 +485,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por integración segura del receptor y las definiciones de 2B necesarias. No se creó una
+Retomar por provisión y prueba operativa acotada. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

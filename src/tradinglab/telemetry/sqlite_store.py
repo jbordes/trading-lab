@@ -77,6 +77,10 @@ class MessageAdmissionError(ValueError):
     """Unknown source, incompatible account, or unknown old sequence."""
 
 
+class MessageStaleError(MessageAdmissionError):
+    """An unknown sequence arrived behind an already committed sequence."""
+
+
 @dataclass(frozen=True, slots=True)
 class StoredMessage:
     """Returned only after the transaction committed successfully."""
@@ -84,6 +88,7 @@ class StoredMessage:
     message_id: int
     duplicate: bool
     sequence_gap: bool
+    gap_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +229,7 @@ class TelemetryRegistry:
             ).fetchone()
             last_sequence = int(previous[0]) if previous else 0
             if envelope.sequence <= last_sequence:
-                raise MessageAdmissionError("Secuencia antigua desconocida")
+                raise MessageStaleError("Secuencia antigua desconocida")
             cursor = connection.execute(
                 """INSERT INTO telemetry_messages
                 (source_id, session_id, sequence, captured_at_utc, received_at_utc,
@@ -244,6 +249,7 @@ class TelemetryRegistry:
                 int(cursor.lastrowid),
                 duplicate=False,
                 sequence_gap=envelope.sequence > last_sequence + 1,
+                gap_count=envelope.sequence - last_sequence - 1,
             )
         return result
 
@@ -319,18 +325,23 @@ class TelemetryRegistry:
 
 
 @contextmanager
-def open_registry(path: Path) -> Iterator[TelemetryRegistry]:
+def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[TelemetryRegistry]:
     """Open an existing exact v1 schema, without creating or migrating a database.
 
-    The file and its parent must be under operator control. Authentication and
-    source authorization are separate, future receiver responsibilities.
+    The file and its parent must be under operator control. cross_thread is only
+    for a caller that serializes *all* registry access with its own lock.
     """
     if path.suffix != ".sqlite3":
         raise ValueError("La base debe usar extensión .sqlite3")
     resolved = path.resolve(strict=True)
     connection: sqlite3.Connection | None = None
     try:
-        connection = sqlite3.connect(resolved.as_uri() + "?mode=rw", uri=True, timeout=5.0)
+        connection = sqlite3.connect(
+            resolved.as_uri() + "?mode=rw",
+            uri=True,
+            timeout=5.0,
+            check_same_thread=not cross_thread,
+        )
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
         if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:

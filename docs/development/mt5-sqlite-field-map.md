@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-20
 
-**Estado:** diseño incremental; creación aislada del esquema v1 implementada.
+**Estado:** creación, apertura validada y registro local de cuentas/fuentes implementados.
 La ingesta SQLite y su integración operativa siguen pendientes.
 
 ## Alcance y referencia
@@ -245,7 +245,7 @@ reutilizar `terminal-pruebas-a`, con nueva sesión. No hace falta una tabla de
 terminales en este corte; esta asociación se registra en el inventario operativo
 local. El nombre de la fuente no sustituye la comprobación de identidad.
 
-Procedimiento de alta propuesto, todavía sin comando implementado:
+Procedimiento de alta propuesto, con API local de registro pero todavía sin CLI:
 
 1. El operador verifica en la terminal de pruebas la cuenta demo activa y su
    servidor. Determina si ya existe una cuenta registrada; nunca fusionar cuentas
@@ -338,9 +338,32 @@ Las restricciones SQL comprueban tipos y límites básicos; fechas, identificado
 contenido completo del payload y correspondencia con su hash requerirán validación
 en la API de almacenamiento. No escribir datos de producto mediante SQL directo.
 
-Próximo bloque de código: apertura validada de bases v1 y registro idempotente de
-cuentas/fuentes con pruebas. Luego, ingesta transaccional y reenvíos. Antes de
-activar captura continua, cerrar autorización, recuperación, retención y backups.
+### Bloque implementado: apertura y registro local (3B)
+
+`open_registry(Path)` abre únicamente una base existente y devuelve un registro
+limitado al contexto `with`. Activa claves foráneas y synchronous FULL por conexión,
+comprueba versión 1, esquema exacto (incluido el trigger de protección), integridad
+básica y relaciones. Rechaza diferencias sin migrar ni reparar. La espera por bloqueo
+se limita a cinco segundos. Usar un contexto por hilo; no compartir conexiones.
+
+`register_account` y `register_source` validan sus entradas y guardan cada alta en
+una transacción. Devuelven True para un alta nueva y False para una repetición
+idéntica; preservan la fecha inicial. Metadatos diferentes para el mismo account_id
+o reasignar un source_id generan conflicto explícito. Una fuente requiere cuenta
+previamente registrada; no crea cuentas implícitamente. La fecha es un datetime
+con zona provisto por el llamador, normalizado a UTC.
+
+El esquema exacto evita aceptar bases con guardas eliminadas: una evolución futura
+necesitará migración explícita. La comprobación de integridad se realiza al abrir,
+no por mensaje; evaluar su coste cuando crezca el histórico. Los archivos y su
+directorio deben estar bajo control del operador; no es un lector de bases SQLite
+arbitrarias de terceros ni verifica la cuenta real conectada en MT5.
+
+No hay CLI, autorización por token ni alta operativa de cuentas reales. La API no
+acepta credenciales. Tampoco fusiona cuentas con metadatos similares. El receptor
+sigue usando memoria. Próximo bloque: ingesta transaccional y reenvíos en el
+componente aislado, antes de integrarlo al HTTP. Antes de activar captura continua,
+cerrar autorización, recuperación, retención y backups.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -351,7 +374,7 @@ activar captura continua, cerrar autorización, recuperación, retención y back
 - [x] Paso 2B.1: propuesta de transacción, confirmación durable y reenvíos.
 - [x] Paso 2B.2: separación de terminal/cuenta/fuente y procedimiento de alta propuesto.
 - [x] Paso 3A: creación aislada del esquema v1 y pruebas en bases temporales.
-- [ ] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
+- [x] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, restricciones SQL, durabilidad y errores, admisión de secuencias
   antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -370,7 +393,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por 3B y las definiciones de 2B necesarias para ese bloque. No se creó una
+Retomar por ingesta aislada y las definiciones de 2B necesarias para ese bloque. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

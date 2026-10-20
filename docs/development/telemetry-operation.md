@@ -65,6 +65,25 @@ El supervisor transmite la ruta solo al receptor y mantiene las mismas
 comprobaciones de arranque y limpieza. No habilitar este modo para una terminal
 real hasta completar ese paso operativo.
 
+## Copia local de la base SQLite
+
+Con la base ya creada, este comando solo muestra qué archivo se copiaría:
+
+```powershell
+uv run python scripts/backup_telemetry_db.py --filename piloto.sqlite3
+```
+
+Agregar `--apply` crea una carpeta nueva bajo `_storage/backups/` con
+`data.sqlite3` y `manifest.json` (tamaño, fecha y SHA-256). El comando usa la
+copia online de SQLite, comprueba la integridad de la copia y permite que el
+receptor mantenga abierta la base. No reemplaza ni elimina copias anteriores.
+Una falla puede dejar una carpeta `.tmp-telemetry-*` para inspección manual.
+
+Esta copia está en la misma máquina: sirve para errores locales, pero no protege
+contra pérdida de la VPS. Para operación continua habrá que definir periodicidad,
+destino externo controlado, verificación de restauración y retención. Google Drive,
+si se usa como transporte, no se convierte en fuente de verdad.
+
 Vista previa sin token, red ni procesos nuevos:
 
 ```powershell

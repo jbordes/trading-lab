@@ -464,6 +464,25 @@ revisarla manualmente, sin borrado ni reintento automático. Este paso no activa
 captura ni define aún frecuencia de backups o retención. El siguiente gate es
 acordar esas políticas y probar una sesión breve con la terminal de pruebas.
 
+### Bloque implementado: copia local consistente (3H)
+
+`scripts/backup_telemetry_db.py` muestra una vista previa por defecto. Con
+`--apply`, usa la API online de SQLite para copiar una base existente en una
+carpeta nueva bajo `_storage/backups/`. Verifica `quick_check` y claves foráneas,
+calcula SHA-256 y publica `data.sqlite3` con `manifest.json`. No pausa el receptor,
+no modifica la base de origen y no sobrescribe ni borra copias anteriores. Las
+pruebas cubren una base abierta, manifest, contenido copiado y ausencia de cambios
+en el origen. Una falla puede dejar una carpeta temporal o parcial: inspeccionarla
+manualmente; no hay limpieza automática.
+
+Política inicial propuesta para la prueba demo: copia antes de una migración o
+modificación manual y al terminar cada jornada de captura; conservar todas las
+copias del piloto mientras se mide el volumen. Registrar tamaño de base y
+crecimiento diario. Antes de una captura continua, decidir con el operador un
+destino fuera de la VPS, frecuencia, prueba de restauración y plazo de retención.
+Una copia ubicada solo en la misma VPS no cubre la pérdida de esa máquina. No se
+habilita borrado automático ni se fija hoy un plazo arbitrario de eliminación.
+
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
 - [x] Definición breve: estados y umbrales de recepción por fuente acordados.
@@ -479,6 +498,7 @@ acordar esas políticas y probar una sesión breve con la terminal de pruebas.
 - [x] Paso 3E: vista en memoria sincronizada con mensajes confirmados y recuperada al inicio.
 - [x] Paso 3F: receptor HTTP y supervisor con SQLite opcional, fuente única y pruebas locales.
 - [x] Paso 3G: comando de primera provisión con vista previa y creación explícita.
+- [x] Paso 3H: copia local SQLite verificada con manifest y sin borrado automático.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, durabilidad y errores de la integración, admisión de
   sesiones antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -497,7 +517,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por backup/retención y prueba operativa acotada. No se creó una
+Retomar por política de retención, destino externo y prueba operativa acotada. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

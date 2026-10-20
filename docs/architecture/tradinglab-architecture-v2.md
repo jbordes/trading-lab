@@ -104,7 +104,9 @@ registro local de cuentas/fuentes y guardado transaccional de mensajes. El
 [ADR-0007](../adr/0007-opt-in-sqlite-telemetry-receiver.md) permite al receptor
 usar una base local preexistente y una sola fuente autorizada por token como modo
 explícito. El arranque por defecto sigue usando memoria. Antes de activar el modo
-persistente en una terminal real faltan provisión operativa, retención y backups.
+persistente en una terminal real faltan probar la provisión operativa, acordar
+retención y destino externo de backups. Existe una copia SQLite local verificable
+para el piloto, documentada en [operación](../development/telemetry-operation.md).
 
 ## 3. Principios de diseño
 

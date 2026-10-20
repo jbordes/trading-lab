@@ -97,6 +97,11 @@ Las decisiones y el diseño se detallan en
 MQL5 por terminal como fuente operativa; la API Python queda limitada a
 diagnóstico o reconciliación aislada con identidad explícita.
 
+La persistencia local se incorpora incrementalmente según
+[ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque
+implementa solamente la creación segura del esquema SQLite, sin conectarlo al
+receptor: el flujo operativo sigue usando memoria hasta validar la ingesta durable.
+
 ## 3. Principios de diseño
 
 1. **Una fuente de verdad por tipo de información.** No se duplicarán resultados, decisiones o configuraciones sin indicar cuál copia es autoritativa.

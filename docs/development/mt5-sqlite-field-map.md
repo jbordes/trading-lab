@@ -2,7 +2,8 @@
 
 **Fecha:** 2026-10-20
 
-**Estado:** pasos 1 y 2A documentales completados; diseño propuesto, sin implementación.
+**Estado:** diseño incremental; creación aislada del esquema v1 implementada.
+La ingesta SQLite y su integración operativa siguen pendientes.
 
 ## Alcance y referencia
 
@@ -139,6 +140,8 @@ Reglas del esquema:
   unsigned de MQL5. No depender del límite signed de INTEGER de SQLite ni ordenar
   secuencias numéricamente mediante orden lexicográfico. Los tickets y Magic
   Numbers conservan su representación textual en el mensaje.
+  El esquema v1 mantiene el límite actual del contrato: 1 a 2^63−1, aunque
+  MQL5 use un contador unsigned. Ampliarlo requiere cambiar y probar el contrato.
 - Las fechas UTC técnicas usan un formato único validado. Los tiempos de deals
   del servidor permanecen crudos dentro del payload hasta resolver su conversión.
   `message_id` indica orden de inserción, no orden de operaciones ni de captura.
@@ -320,6 +323,25 @@ no una descripción de lo ya implementado ni un cambio del adaptador Python.
 
 ## TODO para retomar: pasos cerrables
 
+### Bloque implementado: creación del esquema v1
+
+`src/tradinglab/telemetry/sqlite_store.py` expone `create_database(Path)` para una
+ruta nueva `.sqlite3` cuyo directorio ya exista. No hay CLI ni conexión al receptor.
+En operación la ruta deberá estar bajo `_storage/`; las pruebas usan directorios
+temporales. La función no descubre terminales, no recibe credenciales y no crea
+directorios ni reemplaza archivos existentes. Si falla la creación, puede quedar
+un archivo reservado: revisar manualmente, nunca borrarlo o migrarlo automáticamente.
+
+Implementa las tres tablas STRICT, versión de esquema 1, claves foráneas,
+unicidad de mensajes, índice de captura y prohibición de reasignar una fuente.
+Las restricciones SQL comprueban tipos y límites básicos; fechas, identificadores,
+contenido completo del payload y correspondencia con su hash requerirán validación
+en la API de almacenamiento. No escribir datos de producto mediante SQL directo.
+
+Próximo bloque de código: apertura validada de bases v1 y registro idempotente de
+cuentas/fuentes con pruebas. Luego, ingesta transaccional y reenvíos. Antes de
+activar captura continua, cerrar autorización, recuperación, retención y backups.
+
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
 - [x] Definición breve: estados y umbrales de recepción por fuente acordados.
@@ -328,6 +350,8 @@ no una descripción de lo ya implementado ni un cambio del adaptador Python.
   de acceso al backend. Validación visual manual por el usuario.
 - [x] Paso 2B.1: propuesta de transacción, confirmación durable y reenvíos.
 - [x] Paso 2B.2: separación de terminal/cuenta/fuente y procedimiento de alta propuesto.
+- [x] Paso 3A: creación aislada del esquema v1 y pruebas en bases temporales.
+- [ ] Paso 3B: apertura validada y API de registro idempotente de cuentas/fuentes.
 - [ ] Resto del paso 2B: acordar el esquema; concretar el mecanismo de alta local
   y autorización por fuente, restricciones SQL, durabilidad y errores, admisión de secuencias
   antiguas, recuperación de vistas, revisiones en proyecciones, retención y backup.
@@ -346,6 +370,11 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por el paso 2B. Esta rama solo contiene documentación de diseño: no crea
-base de datos, no cambia el collector ni configura terminales. Integración por PR
-y merge humano; ninguna publicación directa a main forma parte de este paso.
+Retomar por 3B y las definiciones de 2B necesarias para ese bloque. No se creó una
+base operativa ni se cambió el collector o las terminales. Integración por PR y
+merge humano; ninguna publicación directa a main forma parte de este paso.
+
+Mejora separada del harness pendiente: permitir cerrar cambios exclusivamente
+documentales con validaciones de documentos, enlaces, secretos y política de
+sesiones, sin ejecutar tests de producto. Hasta cambiar la regla vigente, mantener
+la validación full al cierre; no mezclar esa modificación con la persistencia.

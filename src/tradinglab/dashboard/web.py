@@ -8,7 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
@@ -289,8 +289,24 @@ def create_server(
             origins = self.headers.get_all("Origin", failobj=[])
             if not origins:
                 return True
-            hosts = self.headers.get_all("Host", failobj=[])
-            return len(origins) == 1 and len(hosts) == 1 and origins[0] == f"http://{hosts[0]}"
+            if len(origins) != 1:
+                return False
+            try:
+                origin = urlsplit(origins[0])
+                origin_port = origin.port
+            except ValueError:
+                return False
+            return (
+                origin.scheme.lower() == "http"
+                and origin.hostname is not None
+                and origin.hostname.lower() in {"127.0.0.1", "localhost"}
+                and origin_port == self.server.server_port
+                and origin.username is None
+                and origin.password is None
+                and origin.path in {"", "/"}
+                and not origin.query
+                and not origin.fragment
+            )
 
         def _empty_post_body(self) -> bool:
             if self.headers.get("Transfer-Encoding") is not None:

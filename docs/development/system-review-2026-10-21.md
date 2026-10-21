@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-21 (Europe/Madrid).
 Base de performance y seguridad: `cd80098`, main después del PR #23.
-Estado: análisis terminado para el alcance indicado; mejoras pendientes de aprobación e implementación.
+Estado: análisis terminado para el alcance indicado; remediación de seguridad registrada debajo.
 
 ## Alcance y evidencia
 
@@ -135,6 +135,21 @@ Modelo de confianza actual: cuenta demo aprobada, servicios en `127.0.0.1`,
 operador local y token de telemetría. Loopback restringe acceso de red, pero no
 autentica procesos ni usuarios locales. No existe todavía un acceso remoto aprobado.
 
+### Estado de remediación
+
+| Hallazgo | Estado |
+| --- | --- |
+| S1: autenticación y validación de Host | Integrado mediante PR #25 |
+| S2: redirecciones y proxies implícitos | Implementado en `fix/dashboard-http-hardening`; pendiente de merge humano |
+| S3: conexiones y plazo del servidor | Implementado en `fix/dashboard-http-hardening`; pendiente de merge humano |
+
+La remediación de S2 fija el destino en loopback, desactiva proxies implícitos y
+convierte cualquier respuesta 30x de snapshot o `health` en un error controlado.
+La regresión comprueba que el destino de la redirección no recibe una solicitud.
+La de S3 reutiliza el servidor HTTP acotado: admite como máximo 16 conexiones y
+aplica un plazo total de cinco segundos por conexión de forma predeterminada. Las
+pruebas cubren clientes lentos, rechazo por exceso y liberación durante el cierre.
+
 ### S1. Dashboard sin autenticación y sin validación de Host — alta antes de acceso remoto
 
 `dashboard/web.py` publica `/dashboard` y `/api/state` sin sesión ni credencial.
@@ -229,16 +244,15 @@ lentos vencen, exceso de conexiones se limita y shutdown libera recursos.
 
 ## Orden propuesto para retomar
 
-1. S2 y S3: aislar el cliente HTTP y limitar el servidor web, con regresiones locales.
-2. S1: validación de Host en el piloto; autenticación completa antes de acceso remoto.
-3. P1: resolver contención conservando consistencia y durabilidad.
-4. P2: optimizar consulta de secuencias con mediciones comparables.
-5. P3: acordar crecimiento, proyecciones y captura incremental sin perder evidencia.
-6. P4: simplificar validaciones internas si el perfil sigue justificándolo.
+1. Integrar mediante revisión humana la remediación ya implementada de S2 y S3.
+2. P1: resolver contención conservando consistencia y durabilidad.
+3. P2: optimizar consulta de secuencias con mediciones comparables.
+4. P3: acordar crecimiento, proyecciones y captura incremental sin perder evidencia.
+5. P4: simplificar validaciones internas si el perfil sigue justificándolo.
 
 Cada implementación requiere rama/PR y merge humano. Este documento no autoriza
-cambios operativos ni declara implementadas las propuestas. El bloque de errores
-está integrado; performance y seguridad quedan pendientes de implementación.
+cambios operativos. El bloque de errores y S1 están integrados; S2 y S3 esperan
+merge humano y las propuestas de performance continúan pendientes.
 
 ## Cadencia de revisión acordada
 

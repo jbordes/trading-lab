@@ -202,11 +202,12 @@ Las decisiones y ejemplos pendientes se recopilan en la
 La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
 cierre de cinco bugs y los hallazgos medidos de performance y seguridad.
 Consultar allí las prioridades, criterios de aceptación y la cadencia de revisión
-cada seis PRs mergeados. El primer endurecimiento separa la autenticación humana
-del token del EA, protege `/dashboard` y `/api/state` con sesiones locales y
-rechaza autoridades HTTP ajenas. Continúan pendientes el rechazo de redirecciones
-del cliente, los límites del servidor web y las mejoras de performance. Ningún
-control actual autoriza ampliar la exposición del piloto.
+cada seis PRs mergeados. El endurecimiento separa la autenticación humana del
+token del EA, protege `/dashboard` y `/api/state` con sesiones locales y rechaza
+autoridades HTTP ajenas. La remediación siguiente impide redirecciones y proxies
+implícitos del cliente local y aplica admisión acotada y plazo por conexión al
+servidor web; espera merge humano. Continúan pendientes las mejoras de performance.
+Ningún control actual autoriza ampliar la exposición del piloto.
 
 ## Fuera del piloto
 

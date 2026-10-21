@@ -103,6 +103,11 @@ estado del último snapshot, deals históricos únicos y Magic Numbers observado
 uv run python scripts/inspect_telemetry_db.py --filename piloto.sqlite3
 ```
 
+Los deals históricos se deduplican por identidad interna de cuenta y ticket. Si
+una cuenta cambia de terminal o collector, releer el mismo ticket desde la nueva
+fuente no lo cuenta dos veces; el mismo ticket en cuentas diferentes permanece
+separado.
+
 La base debe existir bajo `_storage/`. El comando abre SQLite en modo `ro`, activa
 `query_only`, valida la versión y puede ejecutarse mientras el receptor continúa
 capturando. `--verify` agrega `quick_check` y verificación de relaciones; usarlo

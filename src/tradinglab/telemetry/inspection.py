@@ -121,10 +121,11 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
     history_status = next(iter(history_statuses)) if len(history_statuses) == 1 else None
     unique_deals = connection.execute(
         """SELECT COUNT(*) FROM (
-             SELECT DISTINCT message.source_id,
+             SELECT DISTINCT source.account_id,
                     json_extract(deal.value, '$.ticket') AS ticket
-             FROM telemetry_messages AS message,
-                  json_each(message.payload_json, '$.payload.history.deals') AS deal
+             FROM telemetry_messages AS message
+             JOIN sources AS source ON source.source_id = message.source_id
+             JOIN json_each(message.payload_json, '$.payload.history.deals') AS deal
              WHERE json_extract(message.payload_json, '$.kind') = 'account_snapshot'
            )"""
     ).fetchone()[0]

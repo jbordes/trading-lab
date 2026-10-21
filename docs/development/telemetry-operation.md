@@ -93,6 +93,22 @@ se exigirán un destino externo controlado, una prueba de restauración y objeti
 de pérdida y recuperación. Google Drive, si se usa como transporte, no se
 convierte en fuente de verdad.
 
+## Inspección segura de la base
+
+El inventario de cobertura es de solo lectura y no imprime cuentas, tickets,
+comentarios ni payloads. Resume fuentes, sesiones, tipos de mensaje, periodo,
+estado del último snapshot, deals históricos únicos y Magic Numbers observados:
+
+```powershell
+uv run python scripts/inspect_telemetry_db.py --filename piloto.sqlite3
+```
+
+La base debe existir bajo `_storage/`. El comando abre SQLite en modo `ro`, activa
+`query_only`, valida la versión y puede ejecutarse mientras el receptor continúa
+capturando. `--verify` agrega `quick_check` y verificación de relaciones; usarlo
+en controles puntuales porque recorre más información y puede ser costoso cuando
+la base crezca.
+
 Vista previa sin token, red ni procesos nuevos:
 
 ```powershell

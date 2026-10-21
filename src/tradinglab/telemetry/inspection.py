@@ -7,7 +7,10 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
-from tradinglab.telemetry.contract import parse_envelope
+from tradinglab.telemetry.contract import (
+    DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
+    parse_envelope,
+)
 from tradinglab.telemetry.provisioning import DATABASE_NAME
 from tradinglab.telemetry.sqlite_store import SCHEMA_VERSION
 
@@ -101,7 +104,10 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
                     ) AS position
              FROM telemetry_messages
              WHERE json_extract(payload_json, '$.kind') = 'account_snapshot'
-           ) WHERE position = 1"""
+               AND julianday(captured_at_utc) <= julianday(received_at_utc)
+                   + (? / 86400.0)
+           ) WHERE position = 1""",
+        (DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,),
     ).fetchall()
     positions = orders = 0
     history_statuses: set[str | None] = set()

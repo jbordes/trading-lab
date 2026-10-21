@@ -18,6 +18,7 @@ from tradinglab.dashboard.snapshot import (
     utc_iso,
 )
 from tradinglab.telemetry.contract import (
+    DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
     MAX_BODY_BYTES,
     TelemetryEnvelope,
@@ -160,7 +161,7 @@ class TelemetrySnapshotSource:
         *,
         source_id: str,
         max_age: timedelta = timedelta(seconds=30),
-        future_tolerance: timedelta = timedelta(seconds=30),
+        future_tolerance: timedelta = timedelta(seconds=DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS),
     ) -> None:
         if not IDENTIFIER.fullmatch(source_id):
             raise ValueError("source_id de telemetría inválido")

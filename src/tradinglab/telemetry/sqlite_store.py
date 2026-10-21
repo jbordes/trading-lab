@@ -7,10 +7,15 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope, parse_envelope
+from tradinglab.telemetry.contract import (
+    DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
+    IDENTIFIER,
+    TelemetryEnvelope,
+    parse_envelope,
+)
 
 SCHEMA_VERSION = 1
 
@@ -119,6 +124,12 @@ def _timestamp(value: datetime) -> str:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("La fecha debe incluir zona horaria")
     return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _capture_is_plausible(snapshot: RestoredSnapshot) -> bool:
+    captured_at = datetime.fromisoformat(snapshot.envelope.captured_at)
+    tolerance = timedelta(seconds=DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS)
+    return captured_at <= snapshot.received_at + tolerance
 
 
 def _schema_objects(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:
@@ -257,8 +268,9 @@ class TelemetryRegistry:
         """Read one verified snapshot for a registered source.
 
         Capture time determines which observation is newest; insertion order only
-        breaks ties. The returned timestamps are historical evidence, never an
-        assertion that the collector is currently connected.
+        breaks ties. A capture too far ahead of its trusted reception time remains
+        stored but cannot displace a plausible observation. The returned timestamps
+        are historical evidence, never an assertion that the collector is connected.
         """
         _identifier(source_id)
         try:
@@ -281,38 +293,62 @@ class TelemetryRegistry:
             ).fetchone()
             if row is None:
                 return None
-            (
-                message_id,
-                session_id,
-                sequence,
-                captured,
-                received,
-                schema,
-                collector,
-                canonical,
-                digest,
-            ) = row
-            payload = canonical.encode("utf-8")
-            if hashlib.sha256(payload).hexdigest() != digest:
-                raise TelemetryStorageError("El mensaje guardado no coincide con su hash")
-            envelope = parse_envelope(payload)
-            if (
-                canonical != envelope.canonical_bytes().decode("utf-8")
-                or (envelope.source_id, envelope.session_id, str(envelope.sequence))
-                != (source_id, session_id, sequence)
-                or _timestamp(datetime.fromisoformat(envelope.captured_at)) != captured
-                or (envelope.schema_version, envelope.collector_version) != (schema, collector)
-                or envelope.kind != "account_snapshot"
-            ):
-                raise TelemetryStorageError("Columnas y mensaje guardado no coinciden")
-            received_at = datetime.fromisoformat(received)
-            if received_at.tzinfo is None or _timestamp(received_at) != received:
-                raise TelemetryStorageError("Hora de recepción guardada inválida")
-            return RestoredSnapshot(envelope, received_at, message_id)
+            latest = self._restore_snapshot_row(row, source_id=source_id)
+            if _capture_is_plausible(latest):
+                return latest
+
+            rows = self._connection.execute(
+                """SELECT message_id, session_id, sequence, captured_at_utc,
+                          received_at_utc, schema_version, collector_version,
+                          payload_json, content_sha256
+                   FROM telemetry_messages
+                   WHERE source_id = ?
+                     AND json_extract(payload_json, '$.kind') = 'account_snapshot'
+                     AND julianday(captured_at_utc) <= julianday(received_at_utc)
+                         + (? / 86400.0)
+                   ORDER BY captured_at_utc DESC, message_id DESC""",
+                (source_id, DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS),
+            )
+            for eligible_row in rows:
+                restored = self._restore_snapshot_row(eligible_row, source_id=source_id)
+                if _capture_is_plausible(restored):
+                    return restored
+            return None
         except MessageAdmissionError:
             raise
         except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
             raise TelemetryStorageError("No se pudo recuperar el snapshot guardado") from exc
+
+    @staticmethod
+    def _restore_snapshot_row(row: tuple[object, ...], *, source_id: str) -> RestoredSnapshot:
+        (
+            message_id,
+            session_id,
+            sequence,
+            captured,
+            received,
+            schema,
+            collector,
+            canonical,
+            digest,
+        ) = row
+        payload = canonical.encode("utf-8")
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise TelemetryStorageError("El mensaje guardado no coincide con su hash")
+        envelope = parse_envelope(payload)
+        if (
+            canonical != envelope.canonical_bytes().decode("utf-8")
+            or (envelope.source_id, envelope.session_id, str(envelope.sequence))
+            != (source_id, session_id, sequence)
+            or _timestamp(datetime.fromisoformat(envelope.captured_at)) != captured
+            or (envelope.schema_version, envelope.collector_version) != (schema, collector)
+            or envelope.kind != "account_snapshot"
+        ):
+            raise TelemetryStorageError("Columnas y mensaje guardado no coinciden")
+        received_at = datetime.fromisoformat(received)
+        if received_at.tzinfo is None or _timestamp(received_at) != received:
+            raise TelemetryStorageError("Hora de recepción guardada inválida")
+        return RestoredSnapshot(envelope, received_at, message_id)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:

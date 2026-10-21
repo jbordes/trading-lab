@@ -140,6 +140,28 @@ class TelemetryInspectionTest(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             InspectionPlan(self.root, "missing.sqlite3").inspect()
 
+    def test_latest_counts_ignore_a_capture_ahead_of_its_reception(self) -> None:
+        plausible = json.loads(message(1, self.now, magic="11122", ticket="500"))
+        plausible["payload"]["orders_total"] = 0
+        plausible["payload"]["orders"] = []
+        future = message(
+            2,
+            self.now + timedelta(days=1),
+            magic="222",
+            ticket="501",
+        )
+        with open_registry(self.database) as registry:
+            registry.store_message(
+                json.dumps(plausible, separators=(",", ":")).encode(),
+                received_at=self.now,
+            )
+            registry.store_message(future, received_at=self.now + timedelta(seconds=5))
+
+        summary = InspectionPlan(self.root, "pilot.sqlite3").inspect()
+
+        self.assertEqual(summary.message_count, 2)
+        self.assertEqual(summary.latest_orders, 0)
+
     def test_deals_and_latest_counts_remain_scoped_across_sources(self) -> None:
         with open_registry(self.database) as registry:
             registry.register_source("second-source", "demo-account", created_at=self.now)

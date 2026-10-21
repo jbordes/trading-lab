@@ -307,6 +307,23 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(len(state["history"]), 2)
         self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:05Z")
 
+    def test_state_compares_fractional_instants_and_rejects_invalid_since(self) -> None:
+        instants = iter([self.observed_at, self.observed_at + timedelta(milliseconds=500)])
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: next(instants),
+        )
+        service.poll_once()
+        service.poll_once()
+
+        state = service.state(history_since="2026-10-14T19:30:00Z")
+
+        self.assertEqual(len(state["history"]), 1)
+        self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:00.500000Z")
+        with self.assertRaisesRegex(ValueError, "history_since"):
+            service.state(history_since="not-an-instant")
+
     def test_statics_serve_etag_and_304(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
         server = create_server(service, port=0)
@@ -694,6 +711,11 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
                 urllib.request.urlopen(request, timeout=2)
             self.assertEqual(raised.exception.code, 405)
             raised.exception.close()
+
+            with self.assertRaises(urllib.error.HTTPError) as invalid_since:
+                urllib.request.urlopen(f"{base_url}/api/state?since=invalid", timeout=2)
+            self.assertEqual(invalid_since.exception.code, 400)
+            invalid_since.exception.close()
         finally:
             server.shutdown()
             server.server_close()

@@ -119,15 +119,16 @@ class LiveDashboardService:
         omitted.
         """
 
+        threshold = _parse_instant(history_since, "history_since") if history_since else None
         with self._lock:
             history = [dict(sample) for sample in self._history]
             latest = self._latest.as_dict() if self._latest else None
             truncated = False
-            if history_since is not None:
+            if threshold is not None:
                 filtered = [
                     sample
                     for sample in history
-                    if str(sample.get("observed_at", "")) > history_since
+                    if _parse_instant(sample.get("observed_at"), "observed_at") > threshold
                 ]
                 truncated = len(filtered) < len(history)
                 history = filtered
@@ -206,3 +207,15 @@ def _utc_iso(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("El reloj debe incluir zona horaria")
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_instant(value: object, field: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} debe ser un instante ISO con zona horaria")
+    try:
+        instant = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError as exc:
+        raise ValueError(f"{field} debe ser un instante ISO con zona horaria") from exc
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError(f"{field} debe ser un instante ISO con zona horaria")
+    return instant.astimezone(UTC)

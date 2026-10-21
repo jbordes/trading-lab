@@ -87,9 +87,11 @@ operaciones reales se revisará con el socio. Si falta espacio, detener la captu
 y decidir cómo ampliar o exportar; no borrar para liberar espacio sin aprobación.
 
 Esta copia está en la misma máquina: sirve para errores locales, pero no protege
-contra pérdida de la VPS. Para operación continua faltan un destino externo
-controlado, una prueba de restauración y objetivos de pérdida y recuperación.
-Google Drive, si se usa como transporte, no se convierte en fuente de verdad.
+contra pérdida de la VPS. El [ADR-0009](../adr/0009-defer-external-telemetry-backup.md)
+acepta ese riesgo únicamente para el piloto demo descartable. Antes de producción
+se exigirán un destino externo controlado, una prueba de restauración y objetivos
+de pérdida y recuperación. Google Drive, si se usa como transporte, no se
+convierte en fuente de verdad.
 
 Vista previa sin token, red ni procesos nuevos:
 

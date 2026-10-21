@@ -479,9 +479,10 @@ La [política de retención del piloto](../adr/0008-pilot-telemetry-retention.md
 conserva mensajes y copias, sin borrado automático: copia antes de cambiar la
 base y al menos una por día con captura; registro diario de tamaños, espacio
 libre y verificación. Revisar tras la primera semana completa con operaciones
-reales. Antes de depender de captura continua, faltan destino fuera de la VPS,
-prueba de restauración y objetivos de pérdida y recuperación. Una copia local no
-cubre la pérdida de esa máquina.
+reales. El [ADR-0009](../adr/0009-defer-external-telemetry-backup.md) posterga el
+destino fuera de la VPS, la restauración y los objetivos de recuperación hasta
+la preparación de producción. El piloto acepta que sus datos demo son
+descartables; una copia local no cubre la pérdida de esa máquina.
 
 - [x] Paso 1: mapa de las 23 columnas, disponibilidad actual, límites y preguntas.
 - [x] Paso 2A: propuesta mínima de tablas, claves, relaciones y límites del alcance.
@@ -518,7 +519,7 @@ históricos deseados; inicio de día, zona horaria y precisión de observación.
 La selección de operaciones para métricas y capital de referencia siguen en la
 [guía de métricas](guia-metricas-para-el-socio.md).
 
-Retomar por destino externo, prueba de restauración y prueba operativa acotada. No se creó una
+Retomar por una prueba operativa acotada con datos demo reales. No se creó una
 base operativa ni se cambió el collector o las terminales. Integración por PR y
 merge humano; ninguna publicación directa a main forma parte de este paso.
 

@@ -5,13 +5,14 @@ from __future__ import annotations
 import gzip
 import json
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
+from tradinglab.telemetry.http_server import BoundedHTTPServer
 
 STATIC_ROOT = Path(__file__).with_name("static")
 STATIC_ROUTES = {
@@ -61,11 +62,25 @@ def create_server(
     *,
     port: int,
     dashboard_token: str,
-) -> ThreadingHTTPServer:
+    max_connections: int = 16,
+    request_timeout: float = 5.0,
+) -> BoundedHTTPServer:
     """Create an authenticated server bound exclusively to IPv4 loopback."""
 
     if not 0 <= port <= 65535:
         raise ValueError("Puerto fuera de rango")
+    if (
+        isinstance(max_connections, bool)
+        or not isinstance(max_connections, int)
+        or not 1 <= max_connections <= 32
+    ):
+        raise ValueError("max_connections debe ser 1..32")
+    if (
+        isinstance(request_timeout, bool)
+        or not isinstance(request_timeout, (int, float))
+        or not 0.05 <= request_timeout <= 30
+    ):
+        raise ValueError("request_timeout debe ser 0.05..30 segundos")
     auth = DashboardAuth(dashboard_token)
 
     class DashboardHandler(BaseHTTPRequestHandler):
@@ -329,4 +344,9 @@ def create_server(
             if not head_only:
                 self.wfile.write(data)
 
-    return ThreadingHTTPServer(("127.0.0.1", port), DashboardHandler)
+    return BoundedHTTPServer(
+        ("127.0.0.1", port),
+        DashboardHandler,
+        max_connections=max_connections,
+        request_timeout=float(request_timeout),
+    )

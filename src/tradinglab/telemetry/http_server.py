@@ -1,4 +1,4 @@
-"""Connection admission and bounded network lifetime for the local receiver."""
+"""Connection admission and bounded network lifetime for local HTTP services."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-class BoundedTelemetryServer(ThreadingHTTPServer):
+class BoundedHTTPServer(ThreadingHTTPServer):
     """Limit workers before spawning; interrupt stalled and trickling sockets."""
 
     daemon_threads = True
@@ -98,3 +98,8 @@ class BoundedTelemetryServer(ThreadingHTTPServer):
         for request in active:
             self._interrupt(request)
         super().server_close()
+
+
+# Compatibility name for the receiver while the bounded server is shared by
+# other local HTTP services.
+BoundedTelemetryServer = BoundedHTTPServer

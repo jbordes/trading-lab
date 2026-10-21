@@ -46,7 +46,52 @@ comprueba salud y HTTP/1.1 en el receptor antes de lanzar el dashboard y vigila
 que ninguno termine. Si uno termina, cierra los hijos de esta ejecución y
 sale con error. Un segundo arranque con puertos ocupados falla sin detener
 ni adoptar procesos existentes. Ctrl+C detiene ambos; no detiene el EA.
-El almacenamiento del receptor es volátil: al detenerlo se pierde su buffer.
+Con el comando mostrado, el almacenamiento del receptor es volátil: al detenerlo
+se pierde su buffer. Hay un modo SQLite opcional con `--sqlite-db` para una base
+preexistente bajo `_storage/` y una fuente registrada. La base no se crea al
+arrancar. Hay un comando de primera provisión con vista previa:
+
+```powershell
+uv run python scripts/provision_telemetry_db.py --filename piloto.sqlite3 --account-id cuenta-demo-interna --label "Demo de pruebas" --server SERVIDOR-DEMO-VERIFICADO --currency USD --source-id juampi-demo-01
+```
+
+El operador debe verificar en MT5 la cuenta demo activa, el servidor y la moneda;
+`SERVIDOR-DEMO-VERIFICADO` es solo un marcador de ejemplo. Después de revisar la
+vista previa, repetir exactamente el comando con `--apply` para crear una base
+nueva bajo `_storage/`. Nunca pasar el login completo ni el token como argumentos.
+Una base ya existente no se modifica. La frecuencia de backup y la retención aún
+deben acordarse antes de operar el receptor SQLite continuamente.
+El supervisor transmite la ruta solo al receptor y mantiene las mismas
+comprobaciones de arranque y limpieza. No habilitar este modo para una terminal
+real hasta completar ese paso operativo.
+
+## Copia local de la base SQLite
+
+Con la base ya creada, este comando solo muestra qué archivo se copiaría:
+
+```powershell
+uv run python scripts/backup_telemetry_db.py --filename piloto.sqlite3
+```
+
+Agregar `--apply` crea una carpeta nueva bajo `_storage/backups/` con
+`data.sqlite3` y `manifest.json` (tamaño, fecha y SHA-256). El comando usa la
+copia online de SQLite, comprueba la integridad de la copia y permite que el
+receptor mantenga abierta la base. No reemplaza ni elimina copias anteriores.
+Una falla puede dejar una carpeta `.tmp-telemetry-*` para inspección manual.
+
+La [política del piloto](../adr/0008-pilot-telemetry-retention.md) conserva todos
+los mensajes y copias sin borrado automático. Exige una copia antes de cambiar la
+base y al menos una por día con captura, más un registro diario del tamaño de la
+base, las copias, el espacio libre y la verificación. Tras una semana completa con
+operaciones reales se revisará con el socio. Si falta espacio, detener la captura
+y decidir cómo ampliar o exportar; no borrar para liberar espacio sin aprobación.
+
+Esta copia está en la misma máquina: sirve para errores locales, pero no protege
+contra pérdida de la VPS. El [ADR-0009](../adr/0009-defer-external-telemetry-backup.md)
+acepta ese riesgo únicamente para el piloto demo descartable. Antes de producción
+se exigirán un destino externo controlado, una prueba de restauración y objetivos
+de pérdida y recuperación. Google Drive, si se usa como transporte, no se
+convierte en fuente de verdad.
 
 Vista previa sin token, red ni procesos nuevos:
 

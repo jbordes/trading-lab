@@ -21,6 +21,8 @@ def port(value: str) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=port, default=8766, help="Puerto local de ingestión.")
+    parser.add_argument("--sqlite-db", type=Path, help="Base SQLite existente bajo _storage/.")
+    parser.add_argument("--source-id", help="Fuente única autorizada para esta base y token.")
     parser.add_argument(
         "--max-messages",
         type=int,
@@ -61,11 +63,25 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "src"))
     from tradinglab.telemetry.ingest import TelemetryBuffer, create_telemetry_server
+    from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
+    from tradinglab.telemetry.sqlite_store import TelemetryStorageError
 
+    persistent: PersistentTelemetryReceiver | None = None
     try:
-        buffer = TelemetryBuffer(
-            max_messages=args.max_messages, max_retained_bytes=args.max_retained_mib * 1024 * 1024
-        )
+        if (args.sqlite_db is None) != (args.source_id is None):
+            raise ValueError("--sqlite-db y --source-id deben indicarse juntos")
+        if args.sqlite_db is not None:
+            storage_root = (root / "_storage").resolve()
+            database = args.sqlite_db.resolve(strict=True)
+            if not database.is_relative_to(storage_root):
+                raise ValueError("La base SQLite debe estar bajo _storage/")
+            persistent = PersistentTelemetryReceiver(database, source_id=args.source_id)
+            buffer = persistent
+        else:
+            buffer = TelemetryBuffer(
+                max_messages=args.max_messages,
+                max_retained_bytes=args.max_retained_mib * 1024 * 1024,
+            )
         server = create_telemetry_server(
             buffer,
             token=credential,
@@ -73,7 +89,9 @@ def main(argv: list[str] | None = None) -> int:
             max_connections=args.max_connections,
             request_timeout=args.request_timeout,
         )
-    except ValueError as exc:
+    except (ValueError, TelemetryStorageError, OSError) as exc:
+        if persistent is not None:
+            persistent.close()
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
@@ -85,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDeteniendo receptor.")
     finally:
         server.server_close()
+        if persistent is not None:
+            persistent.close()
     return 0
 
 

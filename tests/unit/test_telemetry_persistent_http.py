@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from datetime import UTC, datetime
+from pathlib import Path
+
+from test_mt5_telemetry import TOKEN, encoded, snapshot_message
+
+from tradinglab.telemetry.ingest import create_telemetry_server
+from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
+from tradinglab.telemetry.sqlite_store import create_database, open_registry
+
+SOURCE = "demo-terminal-01"
+
+
+class PersistentHttpTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.database = Path(temporary.name) / "receiver.sqlite3"
+        create_database(self.database)
+        now = datetime(2026, 10, 20, 12, tzinfo=UTC)
+        with open_registry(self.database) as registry:
+            registry.register_account("a", "Demo", "DEMO-SERVER", "USD", created_at=now)
+            registry.register_source(SOURCE, "a", created_at=now)
+        self.start_receiver()
+        self.addCleanup(self.stop_receiver)
+
+    def start_receiver(self) -> None:
+        self.backend = PersistentTelemetryReceiver(
+            self.database,
+            source_id=SOURCE,
+            clock=lambda: datetime(2026, 10, 20, 12, tzinfo=UTC),
+        )
+        self.server = create_telemetry_server(self.backend, token=TOKEN, port=0)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def stop_receiver(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+        self.backend.close()
+
+    def request(
+        self, route: str, *, message: dict | None = None, token: str = TOKEN
+    ) -> tuple[int, dict]:
+        headers = {"Authorization": f"Bearer {token}"}
+        if message is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(
+            self.base + route,
+            data=encoded(message) if message is not None else None,
+            headers=headers,
+            method="POST" if message is not None else "GET",
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=3)
+        except urllib.error.HTTPError as exc:
+            response = exc
+        with response:
+            return response.status, json.loads(response.read())
+
+    def test_recovery_retry_and_health_after_restart(self) -> None:
+        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 202)
+        before = self.request(f"/v1/snapshot?source_id={SOURCE}")
+        self.assertEqual(before[1]["sequence"], 1)
+        self.stop_receiver()
+        self.start_receiver()
+        self.assertEqual(self.request(f"/v1/snapshot?source_id={SOURCE}"), before)
+        health = self.request("/health")[1]
+        self.assertEqual((health["storage"], health["accepted"]), ("sqlite", 0))
+        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 200)
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM telemetry_messages").fetchone()[0], 1
+            )
+
+    def test_source_binding_auth_and_conflict(self) -> None:
+        self.assertEqual(
+            self.request("/v1/telemetry", message=snapshot_message(), token="x")[0], 401
+        )
+        self.assertEqual(
+            self.request("/v1/telemetry", message=snapshot_message(source_id="other"))[0], 403
+        )
+        self.assertEqual(self.request("/v1/snapshot?source_id=other")[0], 404)
+        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 202)
+        changed = snapshot_message()
+        changed["payload"]["account"]["balance"] = 2.0
+        self.assertEqual(self.request("/v1/telemetry", message=changed)[0], 409)
+        self.assertEqual(
+            self.request(f"/v1/snapshot?source_id={SOURCE}")[1]["payload"]["account"]["balance"],
+            100000.0,
+        )
+
+    def test_concurrent_requests_insert_once_and_stale_is_rejected(self) -> None:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(
+                pool.map(
+                    lambda _: self.request("/v1/telemetry", message=snapshot_message())[0], range(2)
+                )
+            )
+        self.assertEqual(sorted(responses), [200, 202])
+        self.assertEqual(
+            self.request("/v1/telemetry", message=snapshot_message(sequence=3))[0], 202
+        )
+        self.assertEqual(
+            self.request("/v1/telemetry", message=snapshot_message(sequence=2))[0], 409
+        )
+        self.assertEqual(self.request("/health")[1]["missing_sequences"], 1)
+
+    def test_unknown_source_fails_before_binding(self) -> None:
+        with self.assertRaises(ValueError):
+            PersistentTelemetryReceiver(self.database, source_id="bad/source")
+        from tradinglab.telemetry.sqlite_store import MessageAdmissionError
+
+        with self.assertRaises(MessageAdmissionError):
+            PersistentTelemetryReceiver(self.database, source_id="not-registered")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -20,11 +21,57 @@ from tradinglab.telemetry.runtime import (  # noqa: E402
     run_runtime,
     stop_child,
 )
+from tradinglab.telemetry.sqlite_store import create_database  # noqa: E402
 
 TEST_ENV = {"TRADINGLAB_TELEMETRY_TOKEN": "test-runtime-credential-not-for-use"}
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_sqlite_mode_passes_existing_database_and_source_to_receiver(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            storage = root / "_storage"
+            storage.mkdir()
+            database = storage / "pilot.sqlite3"
+            create_database(database)
+            receiver, dashboard = Mock(), Mock()
+            receiver.poll.return_value = None
+            dashboard.poll.return_value = 1
+            spawn = Mock(side_effect=[receiver, dashboard])
+            with self.assertRaisesRegex(RuntimeError, "dashboard"):
+                run_runtime(
+                    root,
+                    RuntimeConfig("demo", sqlite_db=database),
+                    TEST_ENV,
+                    spawn=spawn,
+                    check_port=Mock(),
+                    ready=Mock(return_value=True),
+                    report=Mock(),
+                )
+            receiver_args = spawn.call_args_list[0].args[0]
+            self.assertEqual(
+                receiver_args[-4:],
+                ["--sqlite-db", str(database.resolve()), "--source-id", "demo"],
+            )
+            self.assertNotIn("--sqlite-db", spawn.call_args_list[1].args[0])
+
+    def test_sqlite_mode_rejects_missing_and_outside_paths_before_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spawn = Mock()
+            for database in (root / "missing.sqlite3", root / "outside.sqlite3"):
+                if database.name == "outside.sqlite3":
+                    create_database(database)
+                with self.subTest(database=database), self.assertRaises(ValueError):
+                    run_runtime(
+                        root,
+                        RuntimeConfig("demo", sqlite_db=database),
+                        TEST_ENV,
+                        spawn=spawn,
+                        check_port=Mock(),
+                    )
+            spawn.assert_not_called()
+
     def test_invalid_configuration(self) -> None:
         for args in (("",), ("bad/source",), ("demo", 0), ("demo", 8776, 8776)):
             with self.subTest(args=args), self.assertRaises(ValueError):

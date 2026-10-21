@@ -162,7 +162,7 @@ class TelemetryInspectionTest(unittest.TestCase):
         self.assertEqual(summary.message_count, 2)
         self.assertEqual(summary.latest_orders, 0)
 
-    def test_deals_and_latest_counts_remain_scoped_across_sources(self) -> None:
+    def test_deals_are_deduplicated_by_account_across_sources(self) -> None:
         with open_registry(self.database) as registry:
             registry.register_source("second-source", "demo-account", created_at=self.now)
             registry.store_message(
@@ -182,6 +182,34 @@ class TelemetryInspectionTest(unittest.TestCase):
         self.assertEqual(summary.source_ids, ("demo-source", "second-source"))
         self.assertEqual(summary.session_count, 2)
         self.assertEqual(summary.latest_orders, 2)
+        self.assertEqual(summary.unique_historical_deals, 1)
+
+    def test_same_deal_ticket_remains_distinct_between_accounts(self) -> None:
+        with open_registry(self.database) as registry:
+            registry.register_account(
+                "second-account",
+                "Second demo",
+                "DEMO",
+                "USD",
+                created_at=self.now,
+            )
+            registry.register_source("second-source", "second-account", created_at=self.now)
+            registry.store_message(
+                message(1, self.now, magic="11122", ticket="500"), received_at=self.now
+            )
+            registry.store_message(
+                message(
+                    1,
+                    self.now,
+                    magic="11122",
+                    ticket="500",
+                    source_id="second-source",
+                ),
+                received_at=self.now,
+            )
+
+        summary = InspectionPlan(self.root, "pilot.sqlite3").inspect()
+
         self.assertEqual(summary.unique_historical_deals, 2)
 
 

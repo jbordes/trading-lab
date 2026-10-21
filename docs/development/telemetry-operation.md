@@ -109,10 +109,12 @@ fuente no lo cuenta dos veces; el mismo ticket en cuentas diferentes permanece
 separado.
 
 La base debe existir bajo `_storage/`. El comando abre SQLite en modo `ro`, activa
-`query_only`, valida la versión y puede ejecutarse mientras el receptor continúa
-capturando. `--verify` agrega `quick_check` y verificación de relaciones; usarlo
-en controles puntuales porque recorre más información y puede ser costoso cuando
-la base crezca.
+`query_only`, valida la versión y calcula todas las cifras dentro de una única
+transacción de lectura para que representen el mismo instante. Puede ejecutarse
+mientras el receptor continúa capturando; una escritura concurrente podría
+esperar brevemente hasta que termine el resumen. `--verify` agrega `quick_check`
+y verificación de relaciones; usarlo en controles puntuales porque recorre más
+información y puede ser costoso cuando la base crezca.
 
 Vista previa sin token, red ni procesos nuevos:
 

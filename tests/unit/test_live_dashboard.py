@@ -645,6 +645,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('class="technical-health"', dashboard)
         self.assertIn('<select id="magic-filter">', dashboard)
         self.assertIn("Todos los bots", dashboard)
+        self.assertIn('id="operations-note" role="status"', dashboard)
         self.assertNotIn('id="freshness" aria-live', dashboard)
         self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
         self.assertLess(
@@ -654,6 +655,11 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         for view in ("overview", "operations", "activity"):
             self.assertIn(f'aria-controls="{view}-view"', dashboard)
             self.assertIn(f'id="{view}-view"', dashboard)
+
+        app = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Los filtros solo abarcan el detalle recibido", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(

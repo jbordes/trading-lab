@@ -168,6 +168,11 @@ del receptor, la actualización de la vista y sus contadores técnicos. La venta
 de deals recibida por telemetría se incorporará después de validar la escala
 horaria del servidor.
 
+Cuando el total informado por MT5 supera el detalle incluido por el collector,
+Operaciones muestra la cantidad recibida sobre el total y advierte que los
+filtros solo abarcan esas filas. Una lista parcial nunca se presenta como si fuera
+el estado completo de la cuenta.
+
 El modo simulado se identifica en las tres vistas. La carga inicial, ausencia de
 operaciones, filtros sin resultados y desconexión son estados distintos. La edad
 de la muestra afecta al indicador de conexión y al resumen de salud; el reloj

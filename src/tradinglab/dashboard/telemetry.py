@@ -215,6 +215,9 @@ class TelemetrySnapshotSource:
             open_positions=payload["positions_total"],
             active_orders=payload["orders_total"],
             operations=tuple(positions + orders),
+            operations_truncated=(
+                len(positions) < payload["positions_total"] or len(orders) < payload["orders_total"]
+            ),
             # Deal timestamps retain the MT5 server scale until it is validated.
             recent_activity=(),
             activity_window_hours=activity_window_hours,

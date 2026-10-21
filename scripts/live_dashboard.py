@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
+import warnings
 from datetime import timedelta
 from pathlib import Path
 
@@ -61,6 +63,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "src"))
+    from tradinglab.dashboard.auth import DASHBOARD_TOKEN_ENV, validate_dashboard_token
     from tradinglab.dashboard.service import LiveDashboardService
     from tradinglab.dashboard.snapshot import DemoSnapshotSource
     from tradinglab.dashboard.telemetry import (
@@ -71,15 +74,34 @@ def main(argv: list[str] | None = None) -> int:
     from tradinglab.dashboard.web import create_server
 
     args = parse_args(argv)
+    access = os.environ.get(DASHBOARD_TOKEN_ENV, "")
+    if not access:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                access = getpass.getpass("Token de acceso al dashboard (oculto): ")
+        except EOFError, KeyboardInterrupt, getpass.GetPassWarning:
+            print("Error: no se pudo leer el token del dashboard de forma oculta.", file=sys.stderr)
+            return 2
+    try:
+        validate_dashboard_token(access)
+    except ValueError as exc:
+        print(f"Error: configure {DASHBOARD_TOKEN_ENV}: {exc}", file=sys.stderr)
+        return 2
     if args.demo:
         source = DemoSnapshotSource()
     elif args.telemetry:
         assert args.telemetry_source is not None
-        credential = os.environ.get(TELEMETRY_TOKEN_ENV, "")
-        if len(credential) < 24:
+        ingest = os.environ.get(TELEMETRY_TOKEN_ENV, "")
+        if len(ingest) < 24:
             print(
                 f"Error: configure {TELEMETRY_TOKEN_ENV} con el mismo token del receptor.",
                 file=sys.stderr,
+            )
+            return 2
+        if ingest == access:
+            print(
+                "Error: los tokens de telemetría y dashboard deben ser distintos.", file=sys.stderr
             )
             return 2
         if args.port == args.telemetry_port:
@@ -88,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             source = TelemetrySnapshotSource(
                 LoopbackTelemetryClient(
-                    token=credential,
+                    token=ingest,
                     source_id=args.telemetry_source,
                     port=args.telemetry_port,
                 ),
@@ -106,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         interval_seconds=args.interval,
         health_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
     )
-    server = create_server(service, port=args.port)
+    server = create_server(service, port=args.port, dashboard_token=access)
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")
     print("Presione Ctrl+C para detener.")

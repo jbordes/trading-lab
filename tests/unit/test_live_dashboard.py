@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gzip
+import http.client
+import http.cookiejar
 import json
 import shutil
 import subprocess
@@ -8,6 +10,7 @@ import sys
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import namedtuple
 from datetime import UTC, datetime, timedelta
@@ -46,6 +49,21 @@ HistoricalOrder = namedtuple(
     "HistoricalOrder",
     "ticket position_id magic symbol type state volume_initial price_open time_done_msc time_done time_setup_msc time_setup comment",
 )
+ACCESS = "example-dashboard-token-not-for-production"
+
+
+def authenticated_opener(base_url: str) -> urllib.request.OpenerDirector:
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+    )
+    request = urllib.request.Request(
+        f"{base_url}/login",
+        data=urllib.parse.urlencode({"token": ACCESS}).encode(),
+    )
+    with opener.open(request, timeout=2) as response:
+        if response.geturl() != f"{base_url}/dashboard":
+            raise AssertionError("El login no redirigió al dashboard")
+    return opener
 
 
 class FakeHealthProvider:
@@ -326,7 +344,7 @@ class LiveDashboardTest(unittest.TestCase):
 
     def test_statics_serve_etag_and_304(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
-        server = create_server(service, port=0)
+        server = create_server(service, port=0, dashboard_token=ACCESS)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
@@ -355,7 +373,7 @@ class LiveDashboardTest(unittest.TestCase):
 
     def test_head_and_gzip_on_statics(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
-        server = create_server(service, port=0)
+        server = create_server(service, port=0, dashboard_token=ACCESS)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
@@ -598,12 +616,13 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
         )
         service.poll_once()
-        server = create_server(service, port=0)
+        server = create_server(service, port=0, dashboard_token=ACCESS)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
         try:
-            with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
+            opener = authenticated_opener(base_url)
+            with opener.open(f"{base_url}/api/state", timeout=2) as response:
                 payload = json.loads(response.read())
                 self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
                 self.assertEqual(payload["source_health"]["availability"], "not_applicable")
@@ -620,7 +639,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
 
     def test_project_and_dashboard_routes_serve_their_pages(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
-        server = create_server(service, port=0)
+        server = create_server(service, port=0, dashboard_token=ACCESS)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
@@ -629,8 +648,10 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
                 self.assertIn("text/html", response.headers["Content-Type"])
                 self.assertIn(b"TradingLab", response.read())
             with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
-                self.assertIn(b"Panel de la cuenta", response.read())
-            with urllib.request.urlopen(f"{base_url}/dashboard/", timeout=2) as response:
+                self.assertEqual(response.geturl(), f"{base_url}/login")
+                self.assertIn(b"Acceder al panel", response.read())
+            opener = authenticated_opener(base_url)
+            with opener.open(f"{base_url}/dashboard/", timeout=2) as response:
                 self.assertIn(b"Panel de la cuenta", response.read())
             with urllib.request.urlopen(f"{base_url}/assets/theme.js", timeout=2) as response:
                 self.assertIn("javascript", response.headers["Content-Type"])
@@ -685,12 +706,18 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             clock=lambda: self.observed_at,
         )
         service.poll_once()
-        server = create_server(service, port=0)
+        server = create_server(service, port=0, dashboard_token=ACCESS)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
         try:
-            with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
+            with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                urllib.request.urlopen(f"{base_url}/api/state", timeout=2)
+            self.assertEqual(unauthorized.exception.code, 401)
+            unauthorized.exception.close()
+
+            opener = authenticated_opener(base_url)
+            with opener.open(f"{base_url}/api/state", timeout=2) as response:
                 payload = json.loads(response.read())
                 self.assertEqual(payload["status"], "connected")
                 self.assertEqual(payload["schema_version"], "live-dashboard-state-v3")
@@ -700,7 +727,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
                 self.assertEqual(payload["capture"]["success_count"], 1)
                 self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
 
-            with urllib.request.urlopen(f"{base_url}/dashboard", timeout=2) as response:
+            with opener.open(f"{base_url}/dashboard", timeout=2) as response:
                 page = response.read().decode()
                 self.assertIn('id="operations-view"', page)
                 self.assertIn('id="magic-filter"', page)
@@ -708,14 +735,72 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
 
             request = urllib.request.Request(f"{base_url}/api/state", method="POST")
             with self.assertRaises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(request, timeout=2)
+                opener.open(request, timeout=2)
             self.assertEqual(raised.exception.code, 405)
             raised.exception.close()
 
             with self.assertRaises(urllib.error.HTTPError) as invalid_since:
-                urllib.request.urlopen(f"{base_url}/api/state?since=invalid", timeout=2)
+                opener.open(f"{base_url}/api/state?since=invalid", timeout=2)
             self.assertEqual(invalid_since.exception.code, 400)
             invalid_since.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_login_logout_and_host_validation_protect_dashboard_data(self) -> None:
+        service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
+        service.poll_once()
+        server = create_server(service, port=0, dashboard_token=ACCESS)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+            encoded_access = urllib.parse.urlencode({"token": ACCESS})
+            connection.request(
+                "POST",
+                "/login",
+                body=encoded_access,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            login_response = connection.getresponse()
+            cookie_header = login_response.getheader("Set-Cookie", "")
+            self.assertEqual(login_response.status, 303)
+            self.assertIn("HttpOnly", cookie_header)
+            self.assertIn("SameSite=Strict", cookie_header)
+            self.assertNotIn(ACCESS, cookie_header)
+            login_response.read()
+            connection.close()
+
+            invalid = urllib.request.Request(
+                f"{base_url}/login",
+                data=urllib.parse.urlencode(
+                    {"token": "example-invalid-token-with-safe-length"}
+                ).encode(),
+            )
+            with self.assertRaises(urllib.error.HTTPError) as rejected:
+                urllib.request.urlopen(invalid, timeout=2)
+            self.assertEqual(rejected.exception.code, 401)
+            self.assertNotIn("Set-Cookie", rejected.exception.headers)
+            rejected.exception.close()
+
+            foreign_host = urllib.request.Request(
+                f"{base_url}/api/state", headers={"Host": "untrusted.example"}
+            )
+            with self.assertRaises(urllib.error.HTTPError) as rejected_host:
+                urllib.request.urlopen(foreign_host, timeout=2)
+            self.assertEqual(rejected_host.exception.code, 421)
+            rejected_host.exception.close()
+
+            opener = authenticated_opener(base_url)
+            logout = urllib.request.Request(f"{base_url}/logout", data=b"")
+            with opener.open(logout, timeout=2) as response:
+                self.assertEqual(response.geturl(), f"{base_url}/login")
+            with self.assertRaises(urllib.error.HTTPError) as logged_out:
+                opener.open(f"{base_url}/api/state", timeout=2)
+            self.assertEqual(logged_out.exception.code, 401)
+            logged_out.exception.close()
         finally:
             server.shutdown()
             server.server_close()

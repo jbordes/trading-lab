@@ -27,12 +27,17 @@ uv sync --locked
 uv run python scripts/start_telemetry.py --source-id juampi-demo-01
 ```
 
-El comando pide el mismo token configurado en el EA mediante entrada oculta.
-Introducirlo únicamente en esa consola local, nunca en chats, comandos,
-documentación ni Git. Si ya existe `TRADINGLAB_TELEMETRY_TOKEN` en el entorno,
-se utiliza sin mostrarlo. No se leen presets, credenciales de broker ni `.env`.
-El token se conserva solo en la memoria y el entorno de los procesos.
-Si no se dispone del token, el operador debe configurar localmente un nuevo
+El comando pide dos valores mediante entradas ocultas:
+
+1. el token de telemetría configurado en el EA, para autenticar EA y receptor;
+2. otro token, necesariamente distinto, para el login humano del dashboard.
+
+Introducirlos únicamente en esa consola local, nunca en chats, comandos,
+documentación ni Git. Si ya existen `TRADINGLAB_TELEMETRY_TOKEN` y
+`TRADINGLAB_DASHBOARD_TOKEN` en el entorno, se utilizan sin mostrarlos. No se
+leen presets, credenciales de broker ni `.env`. Los secretos se conservan solo
+en la memoria y el entorno de los procesos.
+Si no se dispone del token de telemetría, el operador debe configurar localmente un nuevo
 valor coincidente en el EA y en el arranque; el comando no cambia MT5.
 
 También se puede usar el intérprete ya preparado, cuando uv no esté en PATH:
@@ -46,6 +51,17 @@ comprueba salud y HTTP/1.1 en el receptor antes de lanzar el dashboard y vigila
 que ninguno termine. Si uno termina, cierra los hijos de esta ejecución y
 sale con error. Un segundo arranque con puertos ocupados falla sin detener
 ni adoptar procesos existentes. Ctrl+C detiene ambos; no detiene el EA.
+Al abrir `http://127.0.0.1:8775/dashboard`, el navegador redirige a `/login`.
+Ingresar allí únicamente el token del dashboard. Nunca ingresar el token del EA.
+El acceso crea una cookie opaca `HttpOnly` que vence en doce horas; cerrar sesión
+o reiniciar el servidor la revoca. La portada y la salud mínima permanecen
+públicas, pero el panel y `/api/state` requieren sesión.
+
+Esta autenticación protege el piloto local frente a accesos casuales de otros
+procesos o usuarios de la máquina. No autoriza cambiar `127.0.0.1`, publicar el
+puerto ni abrirlo en firewall. El acceso remoto requerirá TLS y una decisión de
+despliegue adicional.
+
 Con el comando mostrado, el almacenamiento del receptor es volátil: al detenerlo
 se pierde su buffer. Hay un modo SQLite opcional con `--sqlite-db` para una base
 preexistente bajo `_storage/` y una fuente registrada. La base no se crea al
@@ -149,6 +165,8 @@ supervisor temporal no equivale a garantizar disponibilidad permanente.
 | Conexión rechazada en 8776 | Arrancar el conjunto; comprobar si su consola terminó con error. |
 | Puerto ocupado | Identificar el proceso que lo usa; no matarlo a ciegas ni arrancar otro receptor. |
 | HTTP 401 en MT5 | El token del EA y el del receptor no coinciden. Corregirlo localmente. |
+| El dashboard muestra el login | Ingresar el token separado del dashboard; no usar el del EA. |
+| El login rechaza el token | Reiniciar el conjunto con el valor correcto o revisar `TRADINGLAB_DASHBOARD_TOKEN`; no modificar MT5. |
 | WebRequest 4014 | Revisar autorización de `http://127.0.0.1:8776` en esa instancia MT5. |
 | `1001/1003` | Verificar HTTP/1.1 y código actualizado; fue la incompatibilidad documentada en el piloto. |
 | `accepted` avanza pero fuente desconectada | Revisar SourceId y antigüedad de la muestra. |

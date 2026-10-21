@@ -143,6 +143,25 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
 }
 .button-primary:hover { background: var(--accent-hover); color: var(--on-accent); }
 
+/* ---------- Acceso al panel ---------- */
+
+.login-shell { width: min(100% - 32px, 680px); min-height: 100dvh; margin: 0 auto; }
+.login-shell > main { display: grid; min-height: calc(100dvh - 88px); place-items: center; padding: 40px 0 80px; }
+.login-card { width: min(100%, 440px); padding: 32px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.login-card h1 { margin-bottom: 12px; font-size: 1.75rem; letter-spacing: -0.04em; }
+.login-card > p:not(.eyebrow) { color: var(--ink-2); font-size: 0.9375rem; }
+.login-card form { display: grid; gap: 12px; margin: 28px 0 16px; }
+.login-card label { color: var(--ink-2); font-size: 0.8125rem; font-weight: 600; }
+.login-card input { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--control-border); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; }
+.login-card input:focus { border-color: var(--accent); }
+.login-card button { border: 0; font: inherit; cursor: pointer; }
+.login-card > small { color: var(--ink-3); font-size: 0.75rem; }
+.login-error { padding: 10px 12px; border-radius: var(--radius-md); color: var(--loss); background: var(--loss-bg); }
+.logout-form { margin-top: auto; }
+.logout-button { width: 100%; min-height: 44px; padding: 8px 14px; border: 1px solid var(--control-border); border-radius: var(--radius-md); background: transparent; color: var(--ink-2); font: inherit; font-size: 0.875rem; cursor: pointer; }
+.logout-button:hover { color: var(--ink); border-color: var(--accent); }
+.logout-form + .theme-toggle { margin-top: 8px; }
+
 
 /* ---------- Dashboard: estructura compartida ---------- */
 

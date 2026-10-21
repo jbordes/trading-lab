@@ -92,10 +92,13 @@ El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza
 
 Las decisiones y el diseño se detallan en
 [ADR-0002](../adr/0002-local-live-risk-dashboard.md),
-[ADR-0004](../adr/0004-mt5-collector-primary-source.md) y
+[ADR-0004](../adr/0004-mt5-collector-primary-source.md),
+[ADR-0010](../adr/0010-separate-dashboard-authentication.md) y
 [Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza un collector
 MQL5 por terminal como fuente operativa; la API Python queda limitada a
-diagnóstico o reconciliación aislada con identidad explícita.
+diagnóstico o reconciliación aislada con identidad explícita. El acceso humano
+al dashboard usa una credencial distinta del token de telemetría; ninguna llega
+al navegador salvo el token humano durante el login local.
 
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque

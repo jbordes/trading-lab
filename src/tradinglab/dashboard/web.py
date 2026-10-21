@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
+from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
 
 STATIC_ROOT = Path(__file__).with_name("static")
 STATIC_ROUTES = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/login": ("login.html", "text/html; charset=utf-8"),
     "/dashboard": ("dashboard.html", "text/html; charset=utf-8"),
     "/dashboard/": ("dashboard.html", "text/html; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -58,11 +60,13 @@ def create_server(
     service: LiveDashboardService,
     *,
     port: int,
+    dashboard_token: str,
 ) -> ThreadingHTTPServer:
-    """Create a server bound exclusively to the IPv4 loopback interface."""
+    """Create an authenticated server bound exclusively to IPv4 loopback."""
 
     if not 0 <= port <= 65535:
         raise ValueError("Puerto fuera de rango")
+    auth = DashboardAuth(dashboard_token)
 
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "TradingLabDashboard/0.1"
@@ -76,9 +80,26 @@ def create_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._valid_host():
+                self._send_json(
+                    {"error": "host_not_allowed"}, status=HTTPStatus.MISDIRECTED_REQUEST
+                )
+                return
             path, _, raw_query = self.path.partition("?")
             query = parse_qs(raw_query)
+            session = self._authorized_session()
+            if path == "/login":
+                if session is not None:
+                    self._send_redirect("/dashboard")
+                else:
+                    self._send_login()
+                return
             if path == "/api/state":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
                 since = (query.get("since") or [None])[0]
                 try:
                     state = service.state(history_since=since)
@@ -93,6 +114,9 @@ def create_server(
                 return
             static = STATIC_ROUTES.get(path)
             if static:
+                if path in {"/dashboard", "/dashboard/"} and session is None:
+                    self._send_redirect("/login")
+                    return
                 filename, content_type = static
                 data, etag = _read_static(filename)
                 if self.headers.get("If-None-Match") == etag:
@@ -103,7 +127,19 @@ def create_server(
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def do_HEAD(self) -> None:  # noqa: N802
+            if not self._valid_host():
+                self._send_json(
+                    {"error": "host_not_allowed"}, status=HTTPStatus.MISDIRECTED_REQUEST
+                )
+                return
             path = self.path.split("?", 1)[0]
+            session = self._authorized_session()
+            if path == "/login" and session is not None:
+                self._send_redirect("/dashboard")
+                return
+            if path in {"/dashboard", "/dashboard/"} and session is None:
+                self._send_redirect("/login")
+                return
             static = STATIC_ROUTES.get(path)
             if not static:
                 self.send_error(HTTPStatus.METHOD_NOT_ALLOWED)
@@ -115,14 +151,152 @@ def create_server(
             )
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._valid_host():
+                self._send_json(
+                    {"error": "host_not_allowed"}, status=HTTPStatus.MISDIRECTED_REQUEST
+                )
+                return
+            path = self.path.split("?", 1)[0]
+            if path == "/login":
+                self._handle_login()
+                return
+            if path == "/logout":
+                if not self._valid_origin() or not self._empty_post_body():
+                    self._send_json(
+                        {"error": "invalid_logout_request"}, status=HTTPStatus.BAD_REQUEST
+                    )
+                    return
+                session = self._authorized_session()
+                if session is None:
+                    self._send_redirect("/login", clear_cookie=True)
+                    return
+                auth.logout(session)
+                self._send_redirect("/login", clear_cookie=True)
+                return
             self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "Dashboard de solo lectura")
 
         def log_message(self, format: str, *args: Any) -> None:
             del format, args
 
-        def _send_json(self, payload: object) -> None:
+        def _send_json(self, payload: object, *, status: HTTPStatus = HTTPStatus.OK) -> None:
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
-            self._send_bytes(data, "application/json; charset=utf-8")
+            self._send_bytes(data, "application/json; charset=utf-8", status=status)
+
+        def _handle_login(self) -> None:
+            if not self._valid_origin():
+                self._send_json({"error": "origin_not_allowed"}, status=HTTPStatus.FORBIDDEN)
+                return
+            content_types = self.headers.get_all("Content-Type", failobj=[])
+            lengths = self.headers.get_all("Content-Length", failobj=[])
+            if (
+                len(content_types) != 1
+                or content_types[0].split(";", 1)[0].strip().lower()
+                != "application/x-www-form-urlencoded"
+                or len(lengths) != 1
+                or self.headers.get("Transfer-Encoding") is not None
+            ):
+                self._send_json({"error": "invalid_login_request"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                length = int(lengths[0])
+            except ValueError:
+                length = -1
+            if not 0 <= length <= 4096:
+                self._send_json({"error": "invalid_login_request"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self._send_json({"error": "invalid_login_request"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                fields = parse_qs(
+                    body.decode("utf-8"),
+                    keep_blank_values=True,
+                    strict_parsing=True,
+                    max_num_fields=2,
+                )
+            except UnicodeError, ValueError:
+                self._send_json({"error": "invalid_login_request"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if set(fields) != {"token"} or len(fields["token"]) != 1:
+                self._send_json({"error": "invalid_login_request"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            session = auth.login(fields["token"][0])
+            if session is None:
+                self._send_login(invalid=True)
+                return
+            self._send_redirect("/dashboard", session=session)
+
+        def _send_login(self, *, invalid: bool = False) -> None:
+            data, etag = _read_static("login.html")
+            message = (
+                '<p class="login-error" role="alert">El token no es válido.</p>'.encode()
+                if invalid
+                else b""
+            )
+            data = data.replace(b"<!--LOGIN_ERROR-->", message)
+            self._send_bytes(
+                data,
+                "text/html; charset=utf-8",
+                etag=etag,
+                status=HTTPStatus.UNAUTHORIZED if invalid else HTTPStatus.OK,
+            )
+
+        def _send_redirect(
+            self,
+            location: str,
+            *,
+            session: str | None = None,
+            clear_cookie: bool = False,
+        ) -> None:
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            if session is not None:
+                self.send_header(
+                    "Set-Cookie",
+                    f"{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Strict; "
+                    f"Max-Age={auth.session_seconds}",
+                )
+            elif clear_cookie:
+                self.send_header(
+                    "Set-Cookie",
+                    f"{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+                )
+            self.end_headers()
+
+        def _authorized_session(self) -> str | None:
+            cookies = self.headers.get_all("Cookie", failobj=[])
+            if len(cookies) > 1:
+                return None
+            return auth.authorized_session(cookies[0] if cookies else None)
+
+        def _valid_host(self) -> bool:
+            hosts = self.headers.get_all("Host", failobj=[])
+            if len(hosts) != 1:
+                return False
+            authority = hosts[0].strip().lower()
+            port = self.server.server_port
+            return authority in {
+                "127.0.0.1",
+                "localhost",
+                f"127.0.0.1:{port}",
+                f"localhost:{port}",
+            }
+
+        def _valid_origin(self) -> bool:
+            origins = self.headers.get_all("Origin", failobj=[])
+            if not origins:
+                return True
+            hosts = self.headers.get_all("Host", failobj=[])
+            return len(origins) == 1 and len(hosts) == 1 and origins[0] == f"http://{hosts[0]}"
+
+        def _empty_post_body(self) -> bool:
+            if self.headers.get("Transfer-Encoding") is not None:
+                return False
+            lengths = self.headers.get_all("Content-Length", failobj=[])
+            return not lengths or (len(lengths) == 1 and lengths[0] == "0")
 
         def _send_not_modified(self, etag: str) -> None:
             self.send_response(HTTPStatus.NOT_MODIFIED)
@@ -139,8 +313,9 @@ def create_server(
             etag: str | None = None,
             cache_control: str = "no-store",
             head_only: bool = False,
+            status: HTTPStatus = HTTPStatus.OK,
         ) -> None:
-            self.send_response(HTTPStatus.OK)
+            self.send_response(status)
             accept_encoding = self.headers.get("Accept-Encoding", "")
             if len(data) > 1024 and "gzip" in accept_encoding:
                 compressed = gzip.compress(data)

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es-AR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Acceso al panel · TradingLab</title>
+    <link rel="icon" type="image/x-icon" href="/assets/favicon-black.ico?v=fitted-1" data-theme-icon="light">
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/assets/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <div class="login-shell">
+      <header class="public-header">
+        <a class="brand" href="/" aria-label="TradingLab, inicio"><span class="brand-mark" aria-hidden="true"></span><strong>TradingLab</strong></a>
+        <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
+      </header>
+      <main id="contenido" tabindex="-1">
+        <section class="login-card" aria-labelledby="login-title">
+          <p class="eyebrow">Área de trabajo</p>
+          <h1 id="login-title">Acceder al panel</h1>
+          <p>Ingresá el token de acceso del dashboard. No es el token configurado en el EA.</p>
+          <!--LOGIN_ERROR-->
+          <form action="/login" method="post">
+            <label for="dashboard-token">Token del dashboard</label>
+            <input id="dashboard-token" name="token" type="password" required autocomplete="current-password" minlength="24" maxlength="256" autofocus>
+            <button class="button-primary" type="submit">Ingresar</button>
+          </form>
+          <small>La sesión se conserva únicamente en este navegador y expira automáticamente.</small>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

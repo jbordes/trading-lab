@@ -116,7 +116,9 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 `tests/browser/dashboard-smoke.cjs` es un check opcional con Node y Chrome aislado
 con depuración remota (puerto 9340); no son dependencias del producto ni del
 harness rápido. Requiere iniciar primero `scripts/live_dashboard.py --demo --port
-8786`. Ejecutar `node tests/browser/dashboard-smoke.cjs`; rechaza una fuente que
+8786` y disponer el mismo token de acceso únicamente en la variable local
+`TRADINGLAB_DASHBOARD_TOKEN` del proceso de prueba. Ejecutar
+`node tests/browser/dashboard-smoke.cjs`; rechaza una fuente que
 no sea demo y limita las direcciones a `127.0.0.1`. Nunca conectar el script al
 perfil habitual de Chrome. Para iniciar un perfil de pruebas, pasar a Chrome
 `--headless=new --remote-debugging-port=9340` y un `--user-data-dir` nuevo bajo

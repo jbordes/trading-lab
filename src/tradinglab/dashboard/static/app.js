@@ -851,6 +851,10 @@ async function performRefresh() {
   try {
     const query = lastPollSince ? `?since=${encodeURIComponent(lastPollSince)}` : "";
     const response = await fetch(`/api/state${query}`, { cache: "no-store", signal: controller.signal });
+    if (response.status === 401) {
+      window.location.assign("/login");
+      return;
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     serviceReachable = true;
     renderState(await response.json());

@@ -197,6 +197,14 @@ Las decisiones y ejemplos pendientes se recopilan en la
 5. Resolver identidad de bot o estrategia en StocksTrader.
 6. Comparar frescura y consistencia con su plataforma web.
 
+## Seguimiento de robustez
+
+La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
+cierre de cinco bugs y los hallazgos medidos de performance y seguridad.
+Consultar allí las prioridades, criterios de aceptación y la cadencia de revisión
+cada seis PRs mergeados. Las propuestas de seguridad y performance aún no están
+implementadas; retomarlas mediante PRs antes de ampliar la exposición del piloto.
+
 ## Fuera del piloto
 
 - exposición pública o dentro de la LAN;

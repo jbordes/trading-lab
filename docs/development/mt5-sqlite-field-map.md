@@ -393,17 +393,22 @@ muerte abrupta de proceso. No se cambia el protocolo HTTP ni se habilita captura
 ### Bloque implementado: último snapshot persistido por fuente (3D)
 
 `latest_account_snapshot(source_id)` devuelve como máximo un snapshot para una
-fuente registrada, o `None` cuando aún no tiene capturas. Omite heartbeats y usa
-la fecha de captura más reciente; ante empate, el orden de inserción. Así una
-muestra atrasada entregada después no desplaza una captura más nueva. Las fuentes
-se consultan por separado; no hay fallback hacia otra terminal.
+fuente registrada, o `None` cuando aún no tiene capturas elegibles. Omite
+heartbeats y usa la fecha de captura más reciente; ante empate, el orden de
+inserción. Así una muestra atrasada entregada después no desplaza una captura más
+nueva. Una muestra cuya captura supere en más de 30 segundos su hora de recepción
+se conserva como evidencia, pero no puede convertirse en la vista vigente ni
+bloquear muestras posteriores después de corregir el reloj. Las fuentes se
+consultan por separado; no hay fallback hacia otra terminal.
 
 El resultado incluye el sobre original validado, su hora de recepción original y
 su `message_id`. La lectura comprueba hash y coherencia de las columnas con el
 sobre. Un dato alterado causa un error explícito. No actualiza fechas, contadores
 ni marcas de conexión. El consumidor futuro deberá calcular antigüedad con su
-reloj, mostrar claramente que la observación fue recuperada y tratar una fecha
-de captura futura como anomalía, no como frescura.
+reloj y mostrar claramente que la observación fue recuperada. La misma tolerancia
+de 30 segundos protege tanto la selección persistente como la lectura del
+dashboard; una fecha futura fuera de ese margen se trata como anomalía, no como
+frescura.
 
 La consulta devuelve una sola observación; no reconstruye una ventana de equity,
 historial completo ni estado operativo del collector. Continúa aislada del HTTP.

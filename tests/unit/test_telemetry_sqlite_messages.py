@@ -176,6 +176,26 @@ class StoredMessagesTest(unittest.TestCase):
             registry.store_message(encoded(snapshot_message()), received_at=self.now)
             self.assertIsNone(registry.latest_account_snapshot("other-source"))
 
+    def test_future_capture_is_preserved_without_hiding_clock_recovery(self) -> None:
+        previous = snapshot_message()
+        previous["captured_at"] = "2026-10-20T11:59:00Z"
+        future = snapshot_message(sequence=2)
+        future["captured_at"] = "2026-10-21T12:00:00Z"
+        corrected = snapshot_message(sequence=3)
+        corrected["captured_at"] = "2026-10-20T12:00:10Z"
+
+        with open_registry(self.path) as registry:
+            registry.store_message(encoded(previous), received_at=self.now)
+            registry.store_message(encoded(future), received_at=self.now + timedelta(seconds=5))
+            self.assertEqual(
+                registry.latest_account_snapshot("demo-terminal-01").envelope.sequence, 1
+            )
+            registry.store_message(encoded(corrected), received_at=self.now + timedelta(seconds=10))
+            restored = registry.latest_account_snapshot("demo-terminal-01")
+
+        self.assertEqual(restored.envelope.sequence, 3)
+        self.assertEqual(len(self.rows()), 3)
+
     def test_restore_detects_tampered_content_and_columns(self) -> None:
         with open_registry(self.path) as registry:
             registry.store_message(encoded(snapshot_message()), received_at=self.now)

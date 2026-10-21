@@ -4,8 +4,9 @@
 
 **Estado:** vigente para el piloto
 
-**Decisiones:** [ADR-0002](../adr/0002-local-live-risk-dashboard.md) y
-[ADR-0004](../adr/0004-mt5-collector-primary-source.md)
+**Decisiones:** [ADR-0002](../adr/0002-local-live-risk-dashboard.md),
+[ADR-0004](../adr/0004-mt5-collector-primary-source.md) y
+[ADR-0010](../adr/0010-separate-dashboard-authentication.md)
 
 ## Objetivo
 
@@ -28,6 +29,8 @@ TelemetrySnapshotSource --> buffer acotado en memoria
                                   |
                                   v
                         HTTP solo 127.0.0.1
+                                  |
+                       login con token humano
                                   |
                                   v
                         dashboard sin build
@@ -142,15 +145,18 @@ de Python. No descarga scripts de terceros ni necesita Node. `/` presenta el
 proyecto y ofrece una entrada al panel; `/dashboard` es el espacio de trabajo
 de la cuenta, con Resumen, Operaciones y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
-sigue la preferencia del sistema, sin flash al recargar.
+sigue la preferencia del sistema, sin flash al recargar. La portada permanece
+pública; el panel y su API exigen una sesión local obtenida con un token humano
+distinto del secreto del EA. El navegador conserva únicamente una cookie opaca,
+temporal y `HttpOnly`; el token de telemetría no sale del backend.
 
 Solo el panel muestra la navegación de sus secciones: barra lateral en escritorio
 y barra inferior en pantallas estrechas. La portada tiene encabezado propio, sin
 accesos directos a vistas internas. Ambas páginas comparten el logo provisto por
 el proyecto. Esta organización prepara el uso móvil, pero no implica una app
-instalable ni crea destinos para funciones aún no implementadas. El login con
-token previsto requerirá proteger en el servidor `/dashboard` y las rutas de
-datos; la separación visual actual no es autenticación.
+instalable ni crea destinos para funciones aún no implementadas. El acceso
+continúa restringido a loopback. Esta sesión no sustituye TLS ni una identidad
+multiusuario y no habilita publicar el dashboard en la LAN o Internet.
 
 El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
 principal neutral, el resultado abierto con semántica de signo y color, balance y

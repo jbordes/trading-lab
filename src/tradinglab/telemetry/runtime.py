@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from tradinglab.dashboard.auth import DASHBOARD_TOKEN_ENV, validate_dashboard_token
 from tradinglab.telemetry.contract import IDENTIFIER
 
 
@@ -89,9 +90,15 @@ def run_runtime(
     report: Callable[[str], None] = print,
 ) -> None:
     """Start both services, supervise them, and clean up on every exit path."""
-    credential = environment.get("TRADINGLAB_TELEMETRY_TOKEN", "")
-    if len(credential) < 24 or any(not 33 <= ord(char) <= 126 for char in credential):
+    telemetry_credential = environment.get("TRADINGLAB_TELEMETRY_TOKEN", "")
+    if len(telemetry_credential) < 24 or any(
+        not 33 <= ord(char) <= 126 for char in telemetry_credential
+    ):
         raise ValueError("El token debe tener al menos 24 caracteres ASCII sin espacios")
+    dashboard_credential = environment.get(DASHBOARD_TOKEN_ENV, "")
+    validate_dashboard_token(dashboard_credential)
+    if dashboard_credential == telemetry_credential:
+        raise ValueError("Los tokens de telemetría y dashboard deben ser distintos")
     check_port(config.receiver_port)
     check_port(config.dashboard_port)
     database: Path | None = None
@@ -105,8 +112,11 @@ def run_runtime(
         ):
             raise ValueError("La base SQLite debe existir bajo _storage/ y ser .sqlite3")
     children: list[subprocess.Popen[bytes]] = []
-    child_environment = dict(environment)
-    child_environment["PYTHONUNBUFFERED"] = "1"
+    receiver_environment = dict(environment)
+    receiver_environment.pop(DASHBOARD_TOKEN_ENV, None)
+    receiver_environment["PYTHONUNBUFFERED"] = "1"
+    dashboard_environment = dict(environment)
+    dashboard_environment["PYTHONUNBUFFERED"] = "1"
     try:
         receiver_command = [
             sys.executable,
@@ -119,7 +129,7 @@ def run_runtime(
         receiver = spawn(
             receiver_command,
             cwd=root,
-            env=child_environment,
+            env=receiver_environment,
             shell=False,
         )
         children.append(receiver)
@@ -145,7 +155,7 @@ def run_runtime(
                 str(config.dashboard_port),
             ],
             cwd=root,
-            env=child_environment,
+            env=dashboard_environment,
             shell=False,
         )
         children.append(dashboard)

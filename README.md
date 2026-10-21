@@ -51,6 +51,9 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
+El comando solicita de forma oculta un token local para el dashboard. Luego se
+ingresa ese mismo valor en `/login`; no se escribe en argumentos ni en Git.
+
 El modo de fuente siempre es explícito: ejecutar el comando sin `--demo` o
 `--telemetry` se rechaza y nunca intenta descubrir una terminal MT5.
 
@@ -63,8 +66,9 @@ uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-term
 ```
 
 La aplicación queda disponible únicamente en `http://127.0.0.1:8765`: `/` es la
-página del proyecto y `/dashboard` el panel de la cuenta, con tema claro y
-oscuro. La vista `Operaciones` permite filtrar posiciones abiertas y órdenes
+página del proyecto, `/login` crea una sesión local y `/dashboard` es el panel
+protegido de la cuenta, con tema claro y oscuro. El token humano debe ser distinto
+del token de telemetría configurado en el EA. La vista `Operaciones` permite filtrar posiciones abiertas y órdenes
 pendientes por Magic Number, con detalle expandible por operación. Para cuentas
 reales se utilizará una identidad separada con acceso de inversor.
 La vista `Actividad` muestra el estado de la fuente (salud del receptor local:

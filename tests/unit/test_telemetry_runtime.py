@@ -23,7 +23,10 @@ from tradinglab.telemetry.runtime import (  # noqa: E402
 )
 from tradinglab.telemetry.sqlite_store import create_database  # noqa: E402
 
-TEST_ENV = {"TRADINGLAB_TELEMETRY_TOKEN": "test-runtime-credential-not-for-use"}
+TEST_ENV = {
+    "TRADINGLAB_TELEMETRY_TOKEN": "example-runtime-credential-not-for-use",
+    "TRADINGLAB_DASHBOARD_TOKEN": "example-dashboard-credential-not-for-use",
+}
 
 
 class RuntimeTest(unittest.TestCase):
@@ -79,8 +82,22 @@ class RuntimeTest(unittest.TestCase):
 
     def test_invalid_token_does_not_open_ports_or_spawn(self) -> None:
         spawn, check = Mock(), Mock()
-        with self.assertRaises(ValueError):
-            run_runtime(Path("."), RuntimeConfig("demo"), {}, spawn=spawn, check_port=check)
+        for environment in (
+            {},
+            {"TRADINGLAB_TELEMETRY_TOKEN": TEST_ENV["TRADINGLAB_TELEMETRY_TOKEN"]},
+            {
+                "TRADINGLAB_TELEMETRY_TOKEN": TEST_ENV["TRADINGLAB_TELEMETRY_TOKEN"],
+                "TRADINGLAB_DASHBOARD_TOKEN": TEST_ENV["TRADINGLAB_TELEMETRY_TOKEN"],
+            },
+        ):
+            with self.subTest(environment=environment), self.assertRaises(ValueError):
+                run_runtime(
+                    Path("."),
+                    RuntimeConfig("demo"),
+                    environment,
+                    spawn=spawn,
+                    check_port=check,
+                )
         spawn.assert_not_called()
         check.assert_not_called()
 
@@ -115,8 +132,15 @@ class RuntimeTest(unittest.TestCase):
         dashboard.terminate.assert_not_called()
         for call in spawn.call_args_list:
             self.assertNotIn(TEST_ENV["TRADINGLAB_TELEMETRY_TOKEN"], str(call.args))
+            self.assertNotIn(TEST_ENV["TRADINGLAB_DASHBOARD_TOKEN"], str(call.args))
             self.assertFalse(call.kwargs["shell"])
+        self.assertNotIn("TRADINGLAB_DASHBOARD_TOKEN", spawn.call_args_list[0].kwargs["env"])
+        self.assertEqual(
+            spawn.call_args_list[1].kwargs["env"]["TRADINGLAB_DASHBOARD_TOKEN"],
+            TEST_ENV["TRADINGLAB_DASHBOARD_TOKEN"],
+        )
         self.assertNotIn(TEST_ENV["TRADINGLAB_TELEMETRY_TOKEN"], str(report.call_args_list))
+        self.assertNotIn(TEST_ENV["TRADINGLAB_DASHBOARD_TOKEN"], str(report.call_args_list))
 
     def test_startup_timeout_stops_receiver_without_starting_dashboard(self) -> None:
         receiver = Mock()

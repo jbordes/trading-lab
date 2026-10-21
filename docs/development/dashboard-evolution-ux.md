@@ -98,7 +98,8 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 
 ## 5. Lo que NO se construye antes de su gate
 
-- Alertas push, multi-cuenta, autenticación: fuera del piloto.
+- Alertas push, multi-cuenta y autenticación remota o multiusuario: fuera del
+  piloto. El login local con token separado sí forma parte del piloto.
 - Métricas históricas sin contrato aprobado: ni en prototipo, salvo los valores ilustrativos explícitos de la demo.
 - Vista de portfolio y rangos temporales: esperan persistencia (incremento 2).
   Los gaps de la ventana actual ya se muestran; no requieren persistencia.
@@ -110,13 +111,19 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 2. **Sobrecarga en incremento 3**: diez visualizaciones técnicas sin capa de lenguaje espantan al socio; cada gráfico entra con su frase.
 3. **Demo como espejo falso**: todo prototipo debe contrastarse con datos reales del terminal antes de darse por cerrado.
 4. **Métricas no aprobadas presentadas como válidas**: hasta el contrato, placeholder honesto o "—".
+5. **Acciones secundarias en mobile**: reubicar “Cerrar sesión”; la validación
+   manual del PR #25 confirmó su funcionamiento, pero detectó que ocupa un lugar
+   extraño en la navegación estrecha. Se corregirá junto con futuros ajustes
+   visuales y no bloquea la autenticación.
 
 ## 7. Verificación reproducible de la interfaz
 
 `tests/browser/dashboard-smoke.cjs` es un check opcional con Node y Chrome aislado
 con depuración remota (puerto 9340); no son dependencias del producto ni del
 harness rápido. Requiere iniciar primero `scripts/live_dashboard.py --demo --port
-8786`. Ejecutar `node tests/browser/dashboard-smoke.cjs`; rechaza una fuente que
+8786` y disponer el mismo token de acceso únicamente en la variable local
+`TRADINGLAB_DASHBOARD_TOKEN` del proceso de prueba. Ejecutar
+`node tests/browser/dashboard-smoke.cjs`; rechaza una fuente que
 no sea demo y limita las direcciones a `127.0.0.1`. Nunca conectar el script al
 perfil habitual de Chrome. Para iniciar un perfil de pruebas, pasar a Chrome
 `--headless=new --remote-debugging-port=9340` y un `--user-data-dir` nuevo bajo

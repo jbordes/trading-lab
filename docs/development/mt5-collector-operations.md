@@ -113,13 +113,15 @@ Un error de identidad, URL o parámetros es un rechazo correcto y no debe sortea
 
 ### 5. Conectar el dashboard
 
-Con el mismo token disponible fuera de Git:
+Con el token de telemetría disponible fuera de Git, iniciar el dashboard. El
+comando pedirá de forma oculta un segundo token para el acceso humano:
 
 ```text
 uv run python scripts/live_dashboard.py --telemetry --telemetry-source <source_id>
 ```
 
-Abrir `http://127.0.0.1:8765`. No seleccionar una fuente modificando el collector
+Abrir `http://127.0.0.1:8765/dashboard` e ingresar el segundo token en `/login`.
+No ingresar allí el token del EA. No seleccionar una fuente modificando el collector
 ni abriendo terminales en otro orden.
 
 ## Verificación de aceptación

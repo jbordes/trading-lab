@@ -41,6 +41,12 @@ def main(argv: list[str] | None = None) -> int:
                 environment["TRADINGLAB_TELEMETRY_TOKEN"] = getpass.getpass(
                     "Token del EA (oculto, solo en memoria): "
                 )
+        if not environment.get("TRADINGLAB_DASHBOARD_TOKEN"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                environment["TRADINGLAB_DASHBOARD_TOKEN"] = getpass.getpass(
+                    "Token de acceso al dashboard (oculto y distinto al del EA): "
+                )
         run_runtime(ROOT, config, environment)
     except KeyboardInterrupt:
         print("\nReceptor y dashboard detenidos. El EA puede seguir capturando en MT5.")

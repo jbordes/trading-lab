@@ -9,11 +9,24 @@ const assert = require("node:assert/strict");
 async function main() {
   const base = new URL(process.argv[2] || "http://127.0.0.1:8786");
   const debug = new URL(process.argv[3] || "http://127.0.0.1:9340");
+  const access = process.env.TRADINGLAB_DASHBOARD_TOKEN || "";
+  assert.ok(access.length >= 24, "TRADINGLAB_DASHBOARD_TOKEN is required for the isolated test");
   for (const url of [base, debug]) {
     assert.equal(url.hostname, "127.0.0.1", "Only isolated localhost services are allowed");
     assert.equal(url.protocol, "http:");
   }
-  const initial = await (await fetch(new URL("/api/state", base))).json();
+  const login = await fetch(new URL("/login", base), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: access }),
+    redirect: "manual",
+  });
+  assert.equal(login.status, 303, "Dashboard login failed");
+  const cookie = (login.headers.get("set-cookie") || "").split(";", 1)[0];
+  assert.ok(cookie.startsWith("tradinglab_session="), "Dashboard session cookie is missing");
+  const initial = await (await fetch(new URL("/api/state", base), {
+    headers: { Cookie: cookie },
+  })).json();
   assert.equal(initial.latest?.source, "demo", "Never run this test against a live account");
   const output = path.resolve(__dirname, "../../_storage/product-design-review");
   fs.mkdirSync(output, { recursive: true });
@@ -61,6 +74,13 @@ async function main() {
   try {
     await call("Page.enable");
     await call("Runtime.enable");
+    await call("Network.enable");
+    const cookieValue = cookie.slice(cookie.indexOf("=") + 1);
+    const setCookie = await call("Network.setCookie", {
+      name: "tradinglab_session", value: cookieValue, url: base.href,
+      httpOnly: true, sameSite: "Strict",
+    });
+    assert.equal(setCookie.success, true, "Chrome rejected the dashboard session cookie");
     // La prueba controla cada lectura; los polls automáticos causarían carreras con los fallos simulados.
     await call("Page.addScriptToEvaluateOnNewDocument", {
       source: "window.setInterval = () => 0; window.setTimeout = () => 0;",

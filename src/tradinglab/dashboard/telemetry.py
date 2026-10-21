@@ -53,6 +53,21 @@ _COUNTER_FIELDS = ("accepted", "duplicates", "missing_sequences", "retained", "r
 _HISTORY_STATUSES = {"complete", "truncated", "error", "unavailable"}
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Turn every redirect into an HTTPError without issuing a second request."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> None:
+        return None
+
+
 class LoopbackTelemetryClient:
     """Fetch the newest snapshot from the authenticated loopback receiver."""
 
@@ -81,6 +96,10 @@ class LoopbackTelemetryClient:
         self._health_url = f"http://127.0.0.1:{port}/health"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectRedirects(),
+        )
 
     def latest(self) -> TelemetryEnvelope:
         request = urllib.request.Request(
@@ -88,10 +107,14 @@ class LoopbackTelemetryClient:
             headers={"Authorization": self._authorization, "Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 body = response.read(MAX_BODY_BYTES + 1)
         except urllib.error.HTTPError as exc:
             exc.close()
+            if 300 <= exc.code < 400:
+                raise DashboardReadError(
+                    "El receptor intentó una redirección no permitida"
+                ) from exc
             if exc.code == 401:
                 raise DashboardReadError("El receptor rechazó la autenticación") from exc
             if exc.code == 404:
@@ -114,10 +137,14 @@ class LoopbackTelemetryClient:
             headers={"Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 body = response.read(MAX_BODY_BYTES + 1)
         except urllib.error.HTTPError as exc:
             exc.close()
+            if 300 <= exc.code < 400:
+                raise DashboardReadError(
+                    "El receptor intentó una redirección no permitida"
+                ) from exc
             raise DashboardReadError(f"El receptor respondió HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise DashboardReadError("No se pudo leer el estado del receptor local") from exc

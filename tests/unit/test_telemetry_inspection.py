@@ -6,10 +6,12 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from tradinglab.telemetry.inspection import InspectionPlan  # noqa: E402
+from tradinglab.telemetry.inspection import _summarize as summarize  # noqa: E402
 from tradinglab.telemetry.provisioning import ProvisionPlan  # noqa: E402
 from tradinglab.telemetry.sqlite_store import open_registry  # noqa: E402
 
@@ -139,6 +141,19 @@ class TelemetryInspectionTest(unittest.TestCase):
             InspectionPlan(self.root, "../pilot.sqlite3")
         with self.assertRaises(FileNotFoundError):
             InspectionPlan(self.root, "missing.sqlite3").inspect()
+
+    def test_summary_uses_one_explicit_read_transaction(self) -> None:
+        def assert_transaction(connection, database, version):
+            self.assertTrue(connection.in_transaction)
+            return summarize(connection, database, version)
+
+        with patch(
+            "tradinglab.telemetry.inspection._summarize",
+            side_effect=assert_transaction,
+        ):
+            summary = InspectionPlan(self.root, "pilot.sqlite3").inspect()
+
+        self.assertEqual(summary.message_count, 0)
 
     def test_latest_counts_ignore_a_capture_ahead_of_its_reception(self) -> None:
         plausible = json.loads(message(1, self.now, magic="11122", ticket="500"))

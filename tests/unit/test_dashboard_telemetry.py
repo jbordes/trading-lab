@@ -145,6 +145,18 @@ class DashboardTelemetryTest(unittest.TestCase):
                 with self.assertRaisesRegex(DashboardReadError, message):
                     source.collect(observed_at)
 
+    def test_marks_operation_detail_as_truncated_against_reported_totals(self) -> None:
+        item = envelope()
+        item.payload["positions_total"] = 2
+        source = TelemetrySnapshotSource(StubClient(item), source_id="demo-terminal-01")
+
+        snapshot = source.collect(datetime(2026, 10, 16, 12, 0, 5, tzinfo=UTC))
+
+        self.assertEqual(snapshot.open_positions, 2)
+        self.assertEqual(len(snapshot.operations), 2)
+        self.assertTrue(snapshot.operations_truncated)
+        self.assertTrue(snapshot.as_dict()["operations_truncated"])
+
     def test_loopback_client_reads_only_authenticated_validated_snapshot(self) -> None:
         buffer = TelemetryBuffer()
         buffer.accept(envelope())

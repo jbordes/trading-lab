@@ -37,6 +37,8 @@ const visibleOrders = document.getElementById("visible-orders");
 const clearFilter = document.getElementById("clear-filter");
 const healthOverview = document.getElementById("health-overview");
 let latestOperations = [];
+let latestOperationsTotal = 0;
+let latestOperationsTruncated = false;
 let latestCurrency = "USD";
 let latestActivity = [];
 let latestIntervalSeconds = 5;
@@ -284,7 +286,12 @@ function renderState(state) {
   setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
   setText(sourceDescription, sourceLabel(value.source));
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
-  operationsBadge.textContent = number(latestOperations.length);
+  latestOperationsTotal = Math.max(
+    latestOperations.length,
+    Number(value.open_positions || 0) + Number(value.active_orders || 0),
+  );
+  latestOperationsTruncated = value.operations_truncated === true;
+  operationsBadge.textContent = number(latestOperationsTotal);
   if (activeView === "operations") renderOperations();
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
   latestActivity = nextActivity;
@@ -537,7 +544,7 @@ function renderOperations() {
   for (const ticket of expandedOperationTickets) {
     if (!currentOperationKeys.has(ticket)) expandedOperationTickets.delete(ticket);
   }
-  const signature = `${latestCurrency}|${filter}|${kind}|${JSON.stringify(latestOperations)}`;
+  const signature = `${latestCurrency}|${filter}|${kind}|${latestOperationsTotal}|${latestOperationsTruncated}|${JSON.stringify(latestOperations)}`;
   if (signature === latestOperationsSignature) return;
   latestOperationsSignature = signature;
   const filtered = latestOperations.filter((operation) => (
@@ -548,10 +555,17 @@ function renderOperations() {
   reconcileOperations(filtered);
   operationsEmpty.hidden = filtered.length > 0;
   operationsEmpty.textContent = latestOperations.length === 0
-    ? "La fuente no informa operaciones abiertas."
+    ? latestOperationsTruncated
+      ? "La fuente informa operaciones abiertas, pero no incluyó su detalle."
+      : "La fuente no informa operaciones abiertas."
     : "Ninguna operación coincide con los filtros elegidos.";
-  operationsNote.hidden = !(telemetryMode && latestOperations.length > 0);
-  visibleOperations.textContent = filter || kind !== "all"
+  operationsNote.hidden = !(telemetryMode && (latestOperations.length > 0 || latestOperationsTruncated));
+  operationsNote.textContent = latestOperationsTruncated
+    ? `La fuente informa ${number(latestOperationsTotal)} operaciones abiertas y envió el detalle de ${number(latestOperations.length)}. Los filtros solo abarcan el detalle recibido. La hora de cada operación todavía no está validada.`
+    : "La hora de cada operación todavía no está validada. El indicador de actualización corresponde a la captura de la cuenta.";
+  visibleOperations.textContent = latestOperationsTruncated
+    ? `${number(filtered.length)} de ${number(latestOperationsTotal)}`
+    : filter || kind !== "all"
     ? `${number(filtered.length)} de ${number(latestOperations.length)}`
     : number(filtered.length);
   visiblePositions.textContent = number(filtered.filter((item) => item.kind === "position").length);

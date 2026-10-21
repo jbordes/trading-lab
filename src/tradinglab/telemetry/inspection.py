@@ -66,6 +66,7 @@ class InspectionPlan:
                 sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
             ) as connection:
                 connection.execute("PRAGMA query_only = ON")
+                connection.execute("BEGIN")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version != SCHEMA_VERSION:
                     raise TelemetryInspectionError("Versión SQLite de TradingLab no admitida")

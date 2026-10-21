@@ -307,6 +307,23 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(len(state["history"]), 2)
         self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:05Z")
 
+    def test_state_compares_fractional_instants_and_rejects_invalid_since(self) -> None:
+        instants = iter([self.observed_at, self.observed_at + timedelta(milliseconds=500)])
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            clock=lambda: next(instants),
+        )
+        service.poll_once()
+        service.poll_once()
+
+        state = service.state(history_since="2026-10-14T19:30:00Z")
+
+        self.assertEqual(len(state["history"]), 1)
+        self.assertEqual(state["history"][0]["observed_at"], "2026-10-14T19:30:00.500000Z")
+        with self.assertRaisesRegex(ValueError, "history_since"):
+            service.state(history_since="not-an-instant")
+
     def test_statics_serve_etag_and_304(self) -> None:
         service = LiveDashboardService(DemoSnapshotSource(), interval_seconds=5)
         server = create_server(service, port=0)
@@ -645,6 +662,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('class="technical-health"', dashboard)
         self.assertIn('<select id="magic-filter">', dashboard)
         self.assertIn("Todos los bots", dashboard)
+        self.assertIn('id="operations-note" role="status"', dashboard)
         self.assertNotIn('id="freshness" aria-live', dashboard)
         self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
         self.assertLess(
@@ -654,6 +672,11 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         for view in ("overview", "operations", "activity"):
             self.assertIn(f'aria-controls="{view}-view"', dashboard)
             self.assertIn(f'id="{view}-view"', dashboard)
+
+        app = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Los filtros solo abarcan el detalle recibido", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
@@ -688,6 +711,11 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
                 urllib.request.urlopen(request, timeout=2)
             self.assertEqual(raised.exception.code, 405)
             raised.exception.close()
+
+            with self.assertRaises(urllib.error.HTTPError) as invalid_since:
+                urllib.request.urlopen(f"{base_url}/api/state?since=invalid", timeout=2)
+            self.assertEqual(invalid_since.exception.code, 400)
+            invalid_since.exception.close()
         finally:
             server.shutdown()
             server.server_close()

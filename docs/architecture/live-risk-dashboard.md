@@ -168,11 +168,20 @@ del receptor, la actualización de la vista y sus contadores técnicos. La venta
 de deals recibida por telemetría se incorporará después de validar la escala
 horaria del servidor.
 
+Cuando el total informado por MT5 supera el detalle incluido por el collector,
+Operaciones muestra la cantidad recibida sobre el total y advierte que los
+filtros solo abarcan esas filas. Una lista parcial nunca se presenta como si fuera
+el estado completo de la cuenta.
+
 El modo simulado se identifica en las tres vistas. La carga inicial, ausencia de
 operaciones, filtros sin resultados y desconexión son estados distintos. La edad
 de la muestra afecta al indicador de conexión y al resumen de salud; el reloj
 visual no genera anuncios continuos para lectores de pantalla. Las métricas de
 riesgo pendientes se explican en un desplegable, sin competir con los datos actuales.
+
+Las actualizaciones incrementales comparan instantes ISO normalizados, incluida
+su fracción de segundo y zona horaria. Un cursor `since` inválido se rechaza y no
+se interpreta mediante orden alfabético ni como una lectura completa.
 
 Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
 

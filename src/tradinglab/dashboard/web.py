@@ -80,7 +80,12 @@ def create_server(
             query = parse_qs(raw_query)
             if path == "/api/state":
                 since = (query.get("since") or [None])[0]
-                self._send_json(service.state(history_since=since))
+                try:
+                    state = service.state(history_since=since)
+                except ValueError:
+                    self.send_error(HTTPStatus.BAD_REQUEST, "Parámetro since inválido")
+                    return
+                self._send_json(state)
                 return
             if path == "/health":
                 state = service.state()

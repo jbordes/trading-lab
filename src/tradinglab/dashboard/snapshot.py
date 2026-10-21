@@ -78,6 +78,7 @@ class LiveSnapshot:
     open_positions: int
     active_orders: int
     operations: tuple[OperationSnapshot, ...] = ()
+    operations_truncated: bool = False
     recent_activity: tuple[ActivitySnapshot, ...] = ()
     activity_window_hours: int = 24
 

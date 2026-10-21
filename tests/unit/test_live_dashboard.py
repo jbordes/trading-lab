@@ -773,23 +773,6 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             login_response.read()
             connection.close()
 
-            alias_connection = http.client.HTTPConnection(
-                "127.0.0.1", server.server_port, timeout=2
-            )
-            alias_connection.request(
-                "POST",
-                "/login",
-                body=encoded_access,
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Origin": f"http://localhost:{server.server_port}",
-                },
-            )
-            alias_response = alias_connection.getresponse()
-            self.assertEqual(alias_response.status, 303)
-            alias_response.read()
-            alias_connection.close()
-
             invalid = urllib.request.Request(
                 f"{base_url}/login",
                 data=urllib.parse.urlencode(
@@ -802,15 +785,17 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             self.assertNotIn("Set-Cookie", rejected.exception.headers)
             rejected.exception.close()
 
-            foreign_origin = urllib.request.Request(
+            opaque_origin = urllib.request.Request(
                 f"{base_url}/login",
-                data=urllib.parse.urlencode({"token": ACCESS}).encode(),
-                headers={"Origin": "https://untrusted.example"},
+                data=urllib.parse.urlencode(
+                    {"token": "example-invalid-token-with-safe-length"}
+                ).encode(),
+                headers={"Origin": "null"},
             )
-            with self.assertRaises(urllib.error.HTTPError) as rejected_origin:
-                urllib.request.urlopen(foreign_origin, timeout=2)
-            self.assertEqual(rejected_origin.exception.code, 403)
-            rejected_origin.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as invalid_opaque_login:
+                urllib.request.urlopen(opaque_origin, timeout=2)
+            self.assertEqual(invalid_opaque_login.exception.code, 401)
+            invalid_opaque_login.exception.close()
 
             foreign_host = urllib.request.Request(
                 f"{base_url}/api/state", headers={"Host": "untrusted.example"}

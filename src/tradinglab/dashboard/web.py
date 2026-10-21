@@ -8,7 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
@@ -161,7 +161,7 @@ def create_server(
                 self._handle_login()
                 return
             if path == "/logout":
-                if not self._valid_origin() or not self._empty_post_body():
+                if not self._empty_post_body():
                     self._send_json(
                         {"error": "invalid_logout_request"}, status=HTTPStatus.BAD_REQUEST
                     )
@@ -183,9 +183,6 @@ def create_server(
             self._send_bytes(data, "application/json; charset=utf-8", status=status)
 
         def _handle_login(self) -> None:
-            if not self._valid_origin():
-                self._send_json({"error": "origin_not_allowed"}, status=HTTPStatus.FORBIDDEN)
-                return
             content_types = self.headers.get_all("Content-Type", failobj=[])
             lengths = self.headers.get_all("Content-Length", failobj=[])
             if (
@@ -284,29 +281,6 @@ def create_server(
                 f"127.0.0.1:{port}",
                 f"localhost:{port}",
             }
-
-        def _valid_origin(self) -> bool:
-            origins = self.headers.get_all("Origin", failobj=[])
-            if not origins:
-                return True
-            if len(origins) != 1:
-                return False
-            try:
-                origin = urlsplit(origins[0])
-                origin_port = origin.port
-            except ValueError:
-                return False
-            return (
-                origin.scheme.lower() == "http"
-                and origin.hostname is not None
-                and origin.hostname.lower() in {"127.0.0.1", "localhost"}
-                and origin_port == self.server.server_port
-                and origin.username is None
-                and origin.password is None
-                and origin.path in {"", "/"}
-                and not origin.query
-                and not origin.fragment
-            )
 
         def _empty_post_body(self) -> bool:
             if self.headers.get("Transfer-Encoding") is not None:

@@ -4,7 +4,9 @@ import sys
 import threading
 import unittest
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -194,6 +196,65 @@ class DashboardTelemetryTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_loopback_client_rejects_redirects_without_contacting_destination(self) -> None:
+        destination_requests: list[tuple[str, str | None]] = []
+
+        class DestinationHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                destination_requests.append((self.path, self.headers.get("Authorization")))
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        destination = ThreadingHTTPServer(("127.0.0.1", 0), DestinationHandler)
+        destination_thread = threading.Thread(target=destination.serve_forever, daemon=True)
+        destination_thread.start()
+        redirect_target = f"http://127.0.0.1:{destination.server_port}/captured"
+
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(302)
+                self.send_header("Location", redirect_target)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+        redirect_thread.start()
+        try:
+            client = LoopbackTelemetryClient(
+                token=TOKEN,
+                source_id="demo-terminal-01",
+                port=redirect.server_port,
+            )
+            with self.assertRaisesRegex(DashboardReadError, "redirección"):
+                client.latest()
+            with self.assertRaisesRegex(DashboardReadError, "redirección"):
+                client.health()
+            self.assertEqual(destination_requests, [])
+        finally:
+            redirect.shutdown()
+            redirect.server_close()
+            redirect_thread.join(timeout=2)
+            destination.shutdown()
+            destination.server_close()
+            destination_thread.join(timeout=2)
+
+    def test_loopback_client_disables_implicit_proxy_discovery(self) -> None:
+        with patch(
+            "urllib.request.getproxies",
+            side_effect=AssertionError("proxy discovery must stay disabled"),
+        ):
+            LoopbackTelemetryClient(
+                token=TOKEN,
+                source_id="demo-terminal-01",
+                port=8766,
+            )
 
     def test_repeated_receiver_poll_does_not_inflate_chart_history(self) -> None:
         observed_at = datetime(2026, 10, 16, 12, 0, 5, tzinfo=UTC)

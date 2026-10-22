@@ -200,16 +200,20 @@ Las decisiones y ejemplos pendientes se recopilan en la
 ## Seguimiento de robustez
 
 Se prepararon el [contrato v2 propuesto](../architecture/telemetry-v2-contract.md),
-ADR-0011 y ejemplos sintéticos. El validador v2 aislado y sus regresiones están
-implementados en una rama de código para revisión; la admisión v2, persistencia,
-composición, migración y despliegue aún no están implementados.
+ADR-0011 y ejemplos sintéticos. El validador y la admisión v2 aislados cubren
+credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia
+estricta y recuperación histórica fuera de orden. No están conectados al receptor
+v1 y la admisión aún es volátil. Persistencia v2, composición, migración,
+collectors y despliegue siguen pendientes.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):
 dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
-terminal actual. Primer paso: contrato e identidades con fixtures; después,
-admisión/composición, collectors y validación supervisada. La frecuencia de un
-segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
+terminal actual. Contrato, identidades y admisión aislada ya tienen fixtures y
+regresiones; el próximo incremento es persistencia transaccional y composición
+por cuenta, antes de crear collectors y hacer la validación supervisada. La
+frecuencia de un segundo y SSE quedan condicionados a mediciones; no requieren
+terminal adicional.
 
 La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
 cierre de cinco bugs y los hallazgos medidos de performance y seguridad.

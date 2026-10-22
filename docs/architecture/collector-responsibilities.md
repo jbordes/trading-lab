@@ -57,8 +57,9 @@ Las colas y el estado de ejecución pertenecen a cada instancia.
 
 La definición inicial queda en el [contrato v2 propuesto](telemetry-v2-contract.md)
 y [ADR-0011](../adr/0011-separate-telemetry-streams.md), con ejemplos sintéticos y
-escenarios de aceptación. El próximo paso ejecutable es validar esos mensajes
-en un módulo aislado antes de conectarlos al receptor.
+escenarios de aceptación. El validador y la admisión en memoria ya permiten
+probar esos mensajes sin conectarlos al receptor vigente. No aportan todavía
+idempotencia durable ni una vista compuesta.
 
 Proponer una versión de contrato que distinga estado vivo de lotes de actividad.
 Conservar v1 durante la transición. Definir esquema y compatibilidad mediante ADR
@@ -113,12 +114,13 @@ no acelera una captura vieja: decidirlo después de medir el flujo completo.
 
 ## Pasos pequeños y criterios de aceptación
 
-1. Aprobar contrato e identidades en un ADR propuesto; fixtures para ambos flujos,
-   incluido un caso de orden cancelada sin deal. Acordar objetivo de frescura y
-   precisión de métricas por separado.
-2. Implementar admisión y composición en backend con fixtures: desorden de llegada,
-   duplicados, correcciones, reinicio, fuente/rol incorrectos y flujo ausente.
-   El estado vivo debe continuar actualizándose si actividad falla.
+1. Contrato e identidades en un ADR propuesto; fixtures para ambos flujos,
+   incluido un caso de orden cancelada sin deal. Validador aislado implementado;
+   falta acordar objetivo de frescura y precisión de métricas por separado.
+2. Admisión aislada implementada con credenciales por productor, desorden histórico,
+   duplicados, conflictos y fuente/rol/identidad incorrectos. Siguiente: llevar
+   esas garantías a SQLite y componer la cuenta con pruebas de correcciones,
+   reinicio y flujo ausente. El estado vivo debe continuar si actividad falla.
 3. Extraer módulos comunes y crear los dos collectors. Validar guardas demo,
    límites, recuperación y compatibilidad antes de instalarlos.
 4. Prueba supervisada en la terminal actual, con instalación autorizada y rollback

@@ -1,6 +1,7 @@
 # Contrato de telemetría v2 — propuesta
 
-Estado: especificación revisable del ADR-0011; no implementada. Los ejemplos son
+Estado: especificación revisable del ADR-0011, con validador aislado en
+`src/tradinglab/telemetry/contract_v2.py`. El receptor sigue en v1. Los ejemplos son
 sintéticos. No enviar estos mensajes al receptor v1 ni usarlos como configuración.
 
 ## Sobre común y autorización
@@ -137,6 +138,9 @@ elegir productores primarios explícitos, sin fallback silencioso entre ambos.
 ## Ejemplos y escenarios para implementación
 
 Los [fixtures propuestos](../../tests/fixtures/telemetry_v2/README.md) permiten
-revisar mensajes concretos y los resultados esperados. Son ejemplos, no un parser
-ejecutable ni prueba de compatibilidad actual. Próximo paso: validador v2 aislado
-y tests que cubran esta especificación antes de admitir mensajes en el receptor.
+revisar mensajes concretos y los resultados esperados. `parse_envelope_v2` valida
+estructura y semántica de un mensaje sin I/O; reutiliza reglas escalares y de filas
+v1 sin modificar su parser. Las pruebas cubren fixtures, límites, errores y rechazo
+cruzado de versiones. La autorización por fuente/rol, conflictos entre mensajes,
+persistencia, recuperación y composición de vista siguen pendientes: aceptar la
+estructura no autentica un mensaje ni garantiza cobertura histórica durable.

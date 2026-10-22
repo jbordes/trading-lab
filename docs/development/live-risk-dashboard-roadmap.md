@@ -200,8 +200,9 @@ Las decisiones y ejemplos pendientes se recopilan en la
 ## Seguimiento de robustez
 
 Se prepararon el [contrato v2 propuesto](../architecture/telemetry-v2-contract.md),
-ADR-0011 y ejemplos sintéticos. Sigue pendiente su validación ejecutable aislada;
-la admisión v2, migración y despliegue aún no están implementados.
+ADR-0011 y ejemplos sintéticos. El validador v2 aislado y sus regresiones están
+implementados en una rama de código para revisión; la admisión v2, persistencia,
+composición, migración y despliegue aún no están implementados.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):

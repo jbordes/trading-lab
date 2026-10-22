@@ -152,6 +152,27 @@ Pendiente:
    receptor local; la alternancia entre varias fuentes sigue pendiente.
 6. Completar la validación acotada con operaciones antes de usar cuentas reales.
 
+## Prioridad inmediata — Historial y comparación por EA
+
+Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
+[ADR-0012](../adr/0012-durable-operation-history.md).
+
+1. Exponer desde la SQLite actual una consulta de deals históricos paginada y de
+   solo lectura, con filtros por cuenta, periodo y Magic Number.
+2. Incorporar una vista de historial que diferencie deals, órdenes, posiciones y
+   trades reconstruidos; la primera versión solo afirmará las entidades disponibles.
+3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.
+4. Añadir una comparación por Magic Number después de acordar agrupación de trades,
+   costes, movimientos no comerciales, periodo y métricas con el socio.
+5. Crear tablas derivadas durables e índices mediante una migración explícita
+   cuando la consulta real o una prueba sintética representativa demuestre esa
+   necesidad. No conservar el historial creciente en memoria.
+6. Considerar una caché acotada únicamente después de medir consultas repetidas;
+   SQLite seguirá siendo la fuente de verdad.
+
+Criterio del primer corte: poder abrir el historial persistido, paginarlo y filtrar
+un EA por Magic Number sin cargar todos los mensajes en memoria ni depender de v2.
+
 ## Incremento 1 — Contrato de control operativo
 
 Guía para la conversación: [Métricas de riesgo para acordar con el socio](guia-metricas-para-el-socio.md).
@@ -206,15 +227,17 @@ estricta y recuperación histórica fuera de orden. No están conectados al rece
 v1. La [persistencia y composición v2](telemetry-v2-persistence.md) agregan una
 base opt-in separada, recuperación durable y una vista de referencia. Migración,
 proyecciones incrementales, receptor v2, collectors y despliegue siguen pendientes.
+Estos trabajos mejoran la captura futura, pero no bloquean la prioridad de historial
+sobre los datos v1 ya persistidos.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):
 dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
 terminal actual. Contrato, identidades, admisión, persistencia y composición de
 referencia ya tienen fixtures y regresiones. El próximo incremento define
-provisión/migración y proyecciones incrementales antes de conectar un receptor v2,
-crear collectors y hacer la validación supervisada. La frecuencia de un segundo
-y SSE quedan condicionados a mediciones; no requieren terminal adicional.
+provisión/migración y proyecciones durables antes de conectar un receptor v2.
+No se adoptará una proyección histórica acumulativa en memoria. La frecuencia de
+un segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
 
 La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
 cierre de cinco bugs y los hallazgos medidos de performance y seguridad.

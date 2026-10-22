@@ -62,15 +62,17 @@ agrupación de ejecuciones continúan dependiendo del contrato acordado con el s
 ## Restricción de rendimiento
 
 La lectura actual verifica y compone todos los mensajes de la cuenta. Es adecuada
-para demostrar semántica con fixtures y volúmenes piloto, pero es O(n) y no debe
-ejecutarse en cada refresco del dashboard cuando la historia crezca. Antes de
-conectar HTTP se diseñarán proyecciones incrementales o cursores durables, con
-pruebas que demuestren equivalencia respecto de esta composición de referencia.
+como referencia semántica, pero es O(n) y no debe ejecutarse en cada refresco del
+dashboard. Las vistas históricas crecientes se resolverán con consultas paginadas
+y, cuando haga falta, proyecciones durables actualizadas de forma idempotente. No
+se mantendrá todo el historial proyectado en RAM. Una caché futura deberá ser
+acotada, descartable y reconstruible desde SQLite.
 
 ## Próximos pasos seguros
 
 1. Diseñar provisión y migración explícitas para una base piloto, sin tocar v1.
-2. Añadir proyecciones incrementales y medir lectura/escritura con datos realistas.
+2. Diseñar proyecciones durables solo para consultas v2 concretas y validarlas con
+   datos sintéticos de volumen y operaciones reales anonimizadas.
 3. Exponer un receptor v2 opt-in con credenciales separadas, manteniendo v1 activo.
 4. Implementar los dos collectors y validarlos primero en demo con rollback.
 5. Adaptar la API del dashboard después de aprobar su contrato de vista.

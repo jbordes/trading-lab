@@ -93,7 +93,8 @@ El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza
 Las decisiones y el diseño se detallan en
 [ADR-0002](../adr/0002-local-live-risk-dashboard.md),
 [ADR-0004](../adr/0004-mt5-collector-primary-source.md),
-[ADR-0010](../adr/0010-separate-dashboard-authentication.md) y
+[ADR-0010](../adr/0010-separate-dashboard-authentication.md),
+[ADR-0012](../adr/0012-durable-operation-history.md) y
 [Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza un collector
 MQL5 por terminal como fuente operativa; la API Python queda limitada a
 diagnóstico o reconciliación aislada con identidad explícita. El acceso humano
@@ -108,6 +109,13 @@ por rol ya existen como componentes aislados. Una base SQLite v2 separada demues
 persistencia transaccional, recuperación y composición por cuenta sin tocar v1.
 Aún se requieren migración/provisión, proyecciones incrementales y receptor opt-in
 antes de habilitar productores v2.
+
+El historial de operaciones no espera esa transición. El journal SQLite v1 ya
+persistido será el punto de partida de una vista paginada por periodo y Magic
+Number. Las nuevas proyecciones de consulta serán durables y se agregarán mediante
+migraciones explícitas cuando una necesidad concreta lo justifique. El historial
+creciente no se conservará completo en RAM; una caché futura será acotada,
+descartable y reconstruible desde SQLite.
 
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque

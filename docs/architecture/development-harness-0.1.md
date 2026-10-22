@@ -58,6 +58,15 @@ El mismo comando completo corre en Windows, macOS y Linux. CI tiene permisos de 
 
 Cada feature se desarrolla en una rama corta y llega a `main` mediante pull request. El merge humano es una política del proyecto; una ruleset de GitHub será el mecanismo recomendado para impedir pushes directos y exigir que CI esté verde.
 
+### Enrutamiento por coste
+
+El [ADR-0013](../adr/0013-cost-aware-agent-routing.md) define la dirección de
+Harness 0.2: scripts para pasos deterministas, un agente económico para operaciones
+Git mecánicas y otro para registrar documentación ya decidida. Arquitectura,
+depuración compleja, conflictos y revisión material permanecen en el agente de
+razonamiento principal. Los roles todavía no están configurados; su implementación
+será un cambio separado y deberá demostrar ahorro con handoffs breves.
+
 ## 5. Contenido implementado
 
 - `AGENTS.md`: política operativa neutral respecto del agente utilizado.

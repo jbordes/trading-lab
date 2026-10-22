@@ -59,26 +59,18 @@ La composición no afirma que ambos flujos formen una fotografía atómica. Una 
 cancelada sigue siendo actividad, no un trade ni P/L. Las fórmulas de métricas y
 agrupación de ejecuciones continúan dependiendo del contrato acordado con el socio.
 
-## Proyección incremental y límites de rendimiento
+## Restricción de rendimiento
 
-`V2IncrementalAccountProjection` reconstruye una cuenta una vez desde evidencia
-verificada y luego solo admite filas durables cuyo `message_id` avance su cursor.
-Mantiene por separado flujos, conflictos, entidades, cobertura y estados; cada
-incremento se contrasta en pruebas con `compose_account`, que continúa siendo la
-referencia semántica. Sus snapshots copian el estado expuesto y dependen de la
-cantidad de entidades proyectadas, no de la cantidad total de mensajes históricos.
-
-La proyección es deliberadamente volátil: al reiniciar se reconstruye mediante
-replay de SQLite. Las capturas retenidas permiten resolver correcciones tardías y
-conflictos entre sesiones. La cobertura se recalcula al incorporar actividad, no
-al leer para el dashboard. Antes de conectar HTTP todavía se medirán replay,
-escritura, memoria y lectura con un volumen piloto realista; esas mediciones
-definirán si hace falta un cursor persistido o compactación adicional.
+La lectura actual verifica y compone todos los mensajes de la cuenta. Es adecuada
+para demostrar semántica con fixtures y volúmenes piloto, pero es O(n) y no debe
+ejecutarse en cada refresco del dashboard cuando la historia crezca. Antes de
+conectar HTTP se diseñarán proyecciones incrementales o cursores durables, con
+pruebas que demuestren equivalencia respecto de esta composición de referencia.
 
 ## Próximos pasos seguros
 
 1. Diseñar provisión y migración explícitas para una base piloto, sin tocar v1.
-2. Medir replay, lectura, escritura y memoria de la proyección con datos realistas.
+2. Añadir proyecciones incrementales y medir lectura/escritura con datos realistas.
 3. Exponer un receptor v2 opt-in con credenciales separadas, manteniendo v1 activo.
 4. Implementar los dos collectors y validarlos primero en demo con rollback.
 5. Adaptar la API del dashboard después de aprobar su contrato de vista.

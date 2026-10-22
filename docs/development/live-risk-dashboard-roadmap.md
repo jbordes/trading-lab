@@ -204,20 +204,17 @@ ADR-0011 y ejemplos sintéticos. El validador y la admisión v2 aislados cubren
 credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia
 estricta y recuperación histórica fuera de orden. No están conectados al receptor
 v1. La [persistencia y composición v2](telemetry-v2-persistence.md) agregan una
-base opt-in separada, recuperación durable, una vista de referencia y una
-proyección incremental reconstruible. Provisión/migración, mediciones, receptor
-v2, collectors y despliegue siguen pendientes.
+base opt-in separada, recuperación durable y una vista de referencia. Migración,
+proyecciones incrementales, receptor v2, collectors y despliegue siguen pendientes.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):
 dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
 terminal actual. Contrato, identidades, admisión, persistencia y composición de
-referencia ya tienen fixtures y regresiones. La proyección incremental evita
-recomponer todo el historial en cada futura lectura y conserva la referencia como
-oráculo de pruebas. El próximo incremento define provisión/migración y mide replay,
-lectura, escritura y memoria antes de conectar un receptor v2, crear collectors y
-hacer la validación supervisada. La frecuencia de un segundo y SSE quedan
-condicionados a mediciones; no requieren terminal adicional.
+referencia ya tienen fixtures y regresiones. El próximo incremento define
+provisión/migración y proyecciones incrementales antes de conectar un receptor v2,
+crear collectors y hacer la validación supervisada. La frecuencia de un segundo
+y SSE quedan condicionados a mediciones; no requieren terminal adicional.
 
 La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
 cierre de cinco bugs y los hallazgos medidos de performance y seguridad.

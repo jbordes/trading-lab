@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import unittest
-from copy import deepcopy
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,10 +13,6 @@ from tradinglab.telemetry.admission_v2 import (
     V2ProducerDirectory,
 )
 from tradinglab.telemetry.composition_v2 import compose_account
-from tradinglab.telemetry.projection_v2 import (
-    V2IncrementalAccountProjection,
-    V2ProjectionCursorError,
-)
 from tradinglab.telemetry.sqlite_store_v2 import (
     RegisteredV2Source,
     RestoredV2Message,
@@ -293,127 +287,6 @@ class V2CompositionTest(unittest.TestCase):
         self.assertEqual(result.orders_coverage[0].from_server_msc, "1792656000000")
         self.assertEqual(result.orders_coverage[0].to_server_msc, "1792656120000")
         self.assertEqual(len(result.deals_coverage), 1)
-
-
-class V2IncrementalProjectionTest(unittest.TestCase):
-    def test_replay_and_each_increment_match_reference_composition(self) -> None:
-        stable_live = resequence(
-            fixture("live-empty"), 1, "2026-10-22T08:10:00Z", session_id="live-stable"
-        )
-        conflicting_live = resequence(
-            fixture("live-empty"), 1, "2026-10-22T08:20:00Z", session_id="live-left"
-        )
-        other_live = resequence(
-            fixture("live-empty"), 1, "2026-10-22T08:20:00Z", session_id="live-right"
-        )
-        conflicting_live["payload"]["account"]["equity"] = 9900
-        other_live["payload"]["account"]["equity"] = 9800
-        resolved_live = resequence(
-            fixture("live-empty"), 1, "2026-10-22T08:30:00Z", session_id="live-resolved"
-        )
-        old_order = resequence(
-            fixture("activity-canceled-order"),
-            1,
-            "2026-10-22T08:05:00Z",
-            session_id="activity-old",
-        )
-        corrected_order = resequence(
-            fixture("activity-canceled-order"),
-            1,
-            "2026-10-22T08:25:00Z",
-            session_id="activity-corrected",
-        )
-        corrected_order["payload"]["orders"]["items"][0]["price_open"] = 4300
-        heartbeat = resequence(
-            fixture("heartbeat"), 2, "2026-10-22T08:35:00Z", session_id="live-resolved"
-        )
-        messages = (
-            restored(stable_live, 1),
-            restored(old_order, 2),
-            restored(conflicting_live, 3),
-            restored(other_live, 4),
-            restored(corrected_order, 5),
-            restored(resolved_live, 6),
-            restored(heartbeat, 7),
-        )
-        projection = V2IncrementalAccountProjection(evidence())
-
-        prefix: list[RestoredV2Message] = []
-        for message in messages:
-            prefix.append(message)
-            projection.apply(message)
-            self.assertEqual(projection.snapshot(), compose_account(evidence(*prefix)))
-            self.assertEqual(projection.last_message_id, message.message_id)
-
-        replay = V2IncrementalAccountProjection(evidence(*reversed(messages)))
-        self.assertEqual(replay.snapshot(), compose_account(evidence(*messages)))
-
-    def test_activity_conflicts_and_late_corrections_match_reference(self) -> None:
-        stable = resequence(
-            fixture("activity-canceled-order"),
-            1,
-            "2026-10-22T08:10:00Z",
-            session_id="stable-session",
-        )
-        left = resequence(
-            fixture("activity-canceled-order"),
-            1,
-            "2026-10-22T08:20:00Z",
-            session_id="left-session",
-        )
-        right = resequence(
-            fixture("activity-truncated"),
-            1,
-            "2026-10-22T08:20:00Z",
-            session_id="right-session",
-        )
-        right["payload"]["orders"]["items"] = deepcopy(left["payload"]["orders"]["items"])
-        right["payload"]["orders"]["total"] = 1
-        right["payload"]["orders"]["items"][0]["price_open"] = 4400
-        late = resequence(
-            fixture("activity-canceled-order"),
-            2,
-            "2026-10-22T08:15:00Z",
-            session_id="late-session",
-        )
-        late["payload"]["orders"]["items"][0]["price_open"] = 4250
-        messages = (
-            restored(stable, 1),
-            restored(left, 2),
-            restored(right, 3),
-            restored(late, 4),
-        )
-
-        projection = V2IncrementalAccountProjection(evidence(*messages))
-
-        self.assertEqual(projection.snapshot(), compose_account(evidence(*messages)))
-
-    def test_rejects_wrong_account_and_non_advancing_cursor_without_mutation(self) -> None:
-        message = restored(fixture("live-empty"), 1)
-        projection = V2IncrementalAccountProjection(evidence(message))
-        before = projection.snapshot()
-
-        with self.assertRaises(V2ProjectionCursorError):
-            projection.apply(message)
-        wrong_account = replace(message, account_id="another-account", message_id=2)
-        with self.assertRaises(ValueError):
-            projection.apply(wrong_account)
-
-        self.assertEqual(projection.snapshot(), before)
-        self.assertEqual(projection.last_message_id, 1)
-
-    def test_snapshots_do_not_expose_mutable_projection_state(self) -> None:
-        live = restored(fixture("live-empty"), 1)
-        order = restored(fixture("activity-canceled-order"), 2)
-        projection = V2IncrementalAccountProjection(evidence(live, order))
-
-        first = projection.snapshot()
-        first.live.payload["account"]["balance"] = 1
-        first.orders[0].values["price_open"] = 1
-
-        second = projection.snapshot()
-        self.assertEqual(second.live.payload["account"]["balance"], 10000)
-        self.assertEqual(second.orders[0].values["price_open"], 4200)
 
 
 if __name__ == "__main__":

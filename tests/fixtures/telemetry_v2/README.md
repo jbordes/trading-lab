@@ -46,5 +46,7 @@ No inferir un trade cerrado del deal sintético aislado: la definición de trade
 su agrupación por posición se acuerdan con el socio. El validador aislado cubre
 los casos estructurales. La admisión aislada cubre autorización, duplicados,
 conflictos, secuencias estrictas, recuperación fuera de orden y concurrencia; su
-retención es acotada y volátil. Persistencia, reinicio durable, correcciones de
-entidades y composición siguen pendientes.
+retención es acotada y volátil. El almacén SQLite v2 y la composición de referencia
+cubren reinicio durable, commits ambiguos, correcciones, cobertura, capturas futuras
+y conflictos entre sesiones. Migración, proyecciones incrementales, receptor y
+collectors v2 siguen pendientes.

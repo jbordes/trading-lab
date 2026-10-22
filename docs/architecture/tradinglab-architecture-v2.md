@@ -104,9 +104,10 @@ La [propuesta de separación de collectors](collector-responsibilities.md) anali
 estado vivo y actividad histórica como responsabilidades independientes sobre
 la terminal actual. No requiere una terminal observadora adicional. La propuesta
 no modifica todavía el receptor ni los ADR vigentes. El contrato v2 y su admisión
-por rol ya existen como componentes aislados y no durables; aún se requiere
-persistencia transaccional, composición por cuenta y recuperación por flujo antes
-de habilitar productores v2.
+por rol ya existen como componentes aislados. Una base SQLite v2 separada demuestra
+persistencia transaccional, recuperación y composición por cuenta sin tocar v1.
+Aún se requieren migración/provisión, proyecciones incrementales y receptor opt-in
+antes de habilitar productores v2.
 
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque

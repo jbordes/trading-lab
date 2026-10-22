@@ -141,6 +141,12 @@ olvidar duplicados antiguos y no sobrevive reinicios. Por eso todavía no se usa
 en HTTP ni constituye idempotencia durable. SQLite deberá aplicar las mismas
 reglas dentro de la transacción antes de confirmar al productor.
 
+La [persistencia v2 aislada](../development/telemetry-v2-persistence.md) ya aplica
+esas reglas dentro de una transacción SQLite y restaura evidencia verificada tras
+reinicios. Permanece opt-in y separada de las bases v1: todavía no existe migración,
+provisión operativa ni endpoint v2. La composición de referencia conserva ambos
+flujos y sus conflictos sin presentarlos como una captura atómica.
+
 ## Composición para dashboard y compatibilidad
 
 Conservar `live` y `activity` independientes, con captura, recepción, cobertura y
@@ -160,5 +166,6 @@ revisar mensajes concretos y los resultados esperados. `parse_envelope_v2` valid
 estructura y semántica de un mensaje sin I/O; reutiliza reglas escalares y de filas
 v1 sin modificar su parser. Las pruebas cubren fixtures, límites, errores, rechazo
 cruzado de versiones, autorización por fuente/rol, duplicados, conflictos y orden.
-Persistencia, recuperación durable y composición de vista siguen pendientes:
-aceptar un mensaje en memoria no garantiza cobertura histórica durable.
+Las pruebas cubren además persistencia, recuperación durable y composición de
+referencia. Migración, proyecciones incrementales, HTTP, collectors y contrato de
+vista del dashboard siguen pendientes.

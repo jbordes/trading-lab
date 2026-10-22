@@ -1,0 +1,20 @@
+{
+  "schema_version": "mt5-telemetry-v2",
+  "collector_version": "proposal-0.1",
+  "source_id": "synthetic-live",
+  "session_id": "synthetic-session-1",
+  "sequence": 2,
+  "event_id": "synthetic-session-1:2",
+  "captured_at": "2026-10-22T08:00:01Z",
+  "kind": "heartbeat",
+  "payload": {
+    "identity": {
+      "login_masked": "****1234",
+      "server": "DEMO-SERVER",
+      "currency": "USD"
+    },
+    "status": "ok",
+    "queued_messages": 0,
+    "dropped_messages": 0
+  }
+}

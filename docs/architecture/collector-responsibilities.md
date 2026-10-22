@@ -55,6 +55,11 @@ Las colas y el estado de ejecución pertenecen a cada instancia.
 
 ## Contratos e identidad antes de implementar
 
+La definición inicial queda en el [contrato v2 propuesto](telemetry-v2-contract.md)
+y [ADR-0011](../adr/0011-separate-telemetry-streams.md), con ejemplos sintéticos y
+escenarios de aceptación. El próximo paso ejecutable es validar esos mensajes
+en un módulo aislado antes de conectarlos al receptor.
+
 Proponer una versión de contrato que distinga estado vivo de lotes de actividad.
 Conservar v1 durante la transición. Definir esquema y compatibilidad mediante ADR
 antes de desarrollar; este análisis no fija todavía nombres de campos públicos.

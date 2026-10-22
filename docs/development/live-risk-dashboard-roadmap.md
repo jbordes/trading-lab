@@ -199,6 +199,13 @@ Las decisiones y ejemplos pendientes se recopilan en la
 
 ## Seguimiento de robustez
 
+Antes de implementar nuevos collectors, revisar la
+[separación de responsabilidades](../architecture/collector-responsibilities.md):
+dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
+terminal actual. Primer paso: contrato e identidades con fixtures; después,
+admisión/composición, collectors y validación supervisada. La frecuencia de un
+segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
+
 La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
 cierre de cinco bugs y los hallazgos medidos de performance y seguridad.
 Consultar allí las prioridades, criterios de aceptación y la cadencia de revisión
@@ -206,7 +213,7 @@ cada seis PRs mergeados. El endurecimiento separa la autenticación humana del
 token del EA, protege `/dashboard` y `/api/state` con sesiones locales y rechaza
 autoridades HTTP ajenas. La remediación siguiente impide redirecciones y proxies
 implícitos del cliente local y aplica admisión acotada y plazo por conexión al
-servidor web; espera merge humano. Continúan pendientes las mejoras de performance.
+servidor web; quedó integrada mediante PR #26. Continúan pendientes las mejoras de performance.
 Ningún control actual autoriza ampliar la exposición del piloto.
 
 ## Fuera del piloto

@@ -1,8 +1,9 @@
 # Ejemplos sintéticos del contrato v2 propuesto
 
 Especificación: [contrato v2](../../../docs/architecture/telemetry-v2-contract.md).
-Estos archivos son vectores de diseño; el parser v1 debe rechazarlos. No son
-capturas reales ni pruebas de un receptor v2 implementado. Los tiempos del broker
+Estos archivos son vectores de diseño validados por `test_telemetry_v2_contract.py`;
+el parser v1 debe rechazarlos. No son capturas reales ni pruebas de un receptor v2
+implementado. Los tiempos del broker
 son deliberadamente independientes del UTC de captura, sin conversión supuesta.
 
 Provisión ficticia: `synthetic-live` y `synthetic-activity` pertenecen a una misma
@@ -41,4 +42,5 @@ credenciales. Cada escenario comienza con almacenamiento vacío salvo indicació
 
 No inferir un trade cerrado del deal sintético aislado: la definición de trade y
 su agrupación por posición se acuerdan con el socio. Próximo paso: convertir esta
-matriz en pruebas del validador y luego de admisión/persistencia/composición.
+matriz en pruebas de admisión/persistencia/composición. Los casos estructurales
+ya tienen pruebas del validador aislado; los escenarios con estado siguen pendientes.

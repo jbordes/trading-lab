@@ -120,8 +120,9 @@ no acelera una captura vieja: decidirlo después de medir el flujo completo.
    falta acordar objetivo de frescura y precisión de métricas por separado.
 2. Admisión, persistencia SQLite v2 y composición de referencia implementadas con
    pruebas de desorden, duplicados, conflictos, correcciones, reinicio y flujo
-   ausente. Siguiente: definir provisión/migración y proyecciones incrementales
-   antes del receptor v2. El estado vivo continúa independiente de actividad.
+   ausente. Antes del receptor v2 falta definir provisión/migración y proyecciones
+   durables. No se conservará un historial creciente en memoria. El estado vivo
+   continúa independiente de actividad y v2 no bloquea el historial v1 visible.
 3. Extraer módulos comunes y crear los dos collectors. Validar guardas demo,
    límites, recuperación y compatibilidad antes de instalarlos.
 4. Prueba supervisada en la terminal actual, con instalación autorizada y rollback

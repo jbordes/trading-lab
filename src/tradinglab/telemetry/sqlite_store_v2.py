@@ -19,7 +19,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
-from tradinglab.telemetry.contract import IDENTIFIER
+from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 
@@ -98,6 +98,32 @@ class StoredV2Message:
     disposition: AdmissionDisposition
     sequence_gap: int
     out_of_order: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RestoredV2Message:
+    account_id: str
+    role: ProducerRole
+    envelope: TelemetryEnvelope
+    received_at: datetime
+    message_id: int
+    sequence_gap: int
+    out_of_order: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredV2Source:
+    source_id: str
+    role: ProducerRole
+
+
+@dataclass(frozen=True, slots=True)
+class V2AccountEvidence:
+    account_id: str
+    label: str
+    identity: ProducerIdentity
+    sources: tuple[RegisteredV2Source, ...]
+    messages: tuple[RestoredV2Message, ...]
 
 
 def _identifier(value: object, label: str) -> str:
@@ -300,6 +326,135 @@ class V2TelemetryRegistry:
             )
         return result
 
+    def account_messages(self, account_id: str) -> tuple[RestoredV2Message, ...]:
+        """Restore and verify a consistent snapshot of one account's messages."""
+
+        return self.account_evidence(account_id).messages
+
+    def account_evidence(self, account_id: str) -> V2AccountEvidence:
+        """Read registered sources and verified messages in one transaction."""
+
+        account = _identifier(account_id, "account_id")
+        try:
+            with self._read_transaction() as connection:
+                metadata = connection.execute(
+                    """SELECT label, login_masked, server, currency FROM accounts
+                    WHERE account_id = ?""",
+                    (account,),
+                ).fetchone()
+                if metadata is None:
+                    raise V2AuthorizationError("Cuenta v2 no registrada")
+                source_rows = connection.execute(
+                    """SELECT source_id, role FROM sources WHERE account_id = ?
+                    ORDER BY role, source_id""",
+                    (account,),
+                ).fetchall()
+                rows = connection.execute(
+                    """SELECT m.message_id, m.source_id, s.role, m.session_id,
+                              m.sequence, m.event_id, m.kind, m.captured_at_utc,
+                              m.received_at_utc, m.schema_version,
+                              m.collector_version, m.payload_json,
+                              m.content_sha256, m.out_of_order, m.gap_count
+                    FROM telemetry_v2_messages m
+                    JOIN sources s ON s.source_id = m.source_id
+                    WHERE s.account_id = ? ORDER BY m.message_id""",
+                    (account,),
+                ).fetchall()
+                messages = tuple(self._restore_message(row, account, metadata[1:]) for row in rows)
+                return V2AccountEvidence(
+                    account_id=account,
+                    label=metadata[0],
+                    identity=ProducerIdentity(*metadata[1:]),
+                    sources=tuple(
+                        RegisteredV2Source(source_id, ProducerRole(role))
+                        for source_id, role in source_rows
+                    ),
+                    messages=messages,
+                )
+        except V2AuthorizationError, V2StorageError:
+            raise
+        except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
+            raise V2StorageError("No se pudieron restaurar los mensajes v2") from exc
+
+    @staticmethod
+    def _restore_message(
+        row: tuple[object, ...],
+        account_id: str,
+        account_identity: tuple[object, ...],
+    ) -> RestoredV2Message:
+        (
+            message_id,
+            source_id,
+            role,
+            session_id,
+            sequence,
+            event_id,
+            kind,
+            captured,
+            received,
+            schema,
+            collector,
+            canonical,
+            digest,
+            out_of_order,
+            gap_count,
+        ) = row
+        if not isinstance(canonical, str) or not isinstance(digest, str):
+            raise V2StorageError("Contenido v2 guardado inválido")
+        payload = canonical.encode("utf-8")
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise V2StorageError("El mensaje v2 guardado no coincide con su hash")
+        envelope = parse_envelope_v2(payload)
+        restored_identity = envelope.payload["identity"]
+        if (
+            canonical != envelope.canonical_bytes().decode("utf-8")
+            or (
+                envelope.source_id,
+                envelope.session_id,
+                str(envelope.sequence),
+                envelope.event_id,
+                envelope.kind,
+                _timestamp(datetime.fromisoformat(envelope.captured_at)),
+                envelope.schema_version,
+                envelope.collector_version,
+            )
+            != (
+                source_id,
+                session_id,
+                sequence,
+                event_id,
+                kind,
+                captured,
+                schema,
+                collector,
+            )
+            or (
+                restored_identity["login_masked"],
+                restored_identity["server"],
+                restored_identity["currency"],
+            )
+            != account_identity
+            or role not in (ProducerRole.LIVE.value, ProducerRole.ACTIVITY.value)
+            or (role == ProducerRole.LIVE.value and kind == "activity_batch")
+            or (role == ProducerRole.ACTIVITY.value and kind == "live_snapshot")
+            or out_of_order not in (0, 1)
+            or not isinstance(gap_count, int)
+            or gap_count < 0
+        ):
+            raise V2StorageError("Columnas y mensaje v2 guardado no coinciden")
+        received_at = datetime.fromisoformat(received)
+        if received_at.tzinfo is None or _timestamp(received_at) != received:
+            raise V2StorageError("Hora de recepción v2 guardada inválida")
+        return RestoredV2Message(
+            account_id=account_id,
+            role=ProducerRole(role),
+            envelope=envelope,
+            received_at=received_at,
+            message_id=int(message_id),
+            sequence_gap=gap_count,
+            out_of_order=bool(out_of_order),
+        )
+
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         try:
@@ -308,6 +463,16 @@ class V2TelemetryRegistry:
                 yield self._connection
         except sqlite3.Error as exc:
             raise V2StorageError("No se pudo completar la transacción v2") from exc
+
+    @contextmanager
+    def _read_transaction(self) -> Iterator[sqlite3.Connection]:
+        try:
+            self._connection.execute("BEGIN")
+            yield self._connection
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
 
 
 @contextmanager

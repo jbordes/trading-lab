@@ -21,6 +21,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ProducerDirectory,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.composition_v2 import compose_account
 from tradinglab.telemetry.sqlite_store import create_database
 from tradinglab.telemetry.sqlite_store_v2 import (
     DATABASE_SCHEMA_VERSION,
@@ -238,6 +239,44 @@ class V2SqliteTest(unittest.TestCase):
         with self.assertRaises(V2StorageError):
             with open_v2_registry(self.path):
                 pass
+
+    def test_account_messages_restore_verified_consistent_evidence(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(authorized("live-empty"), received_at=self.now)
+            registry.store_authorized(authorized("activity-canceled-order"), received_at=self.now)
+            with self.assertRaises(V2AuthorizationError):
+                registry.account_messages("unknown-account")
+            restored = registry.account_messages("account-demo")
+
+        self.assertEqual(len(restored), 2)
+        self.assertEqual(
+            [message.role for message in restored],
+            [ProducerRole.LIVE, ProducerRole.ACTIVITY],
+        )
+        self.assertEqual(restored[0].account_id, "account-demo")
+        self.assertEqual(restored[0].received_at, self.now)
+
+    def test_account_messages_detect_tampered_durable_content(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(authorized("live-empty"), received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("UPDATE telemetry_v2_messages SET content_sha256 = ?", ("0" * 64,))
+            connection.commit()
+
+        with open_v2_registry(self.path) as registry:
+            with self.assertRaises(V2StorageError):
+                registry.account_messages("account-demo")
+
+    def test_registered_account_composes_after_durable_round_trip(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(authorized("live-empty"), received_at=self.now)
+            registry.store_authorized(authorized("activity-canceled-order"), received_at=self.now)
+        with open_v2_registry(self.path) as registry:
+            result = compose_account(registry.account_evidence("account-demo"))
+
+        self.assertEqual(result.live.payload["account"]["balance"], 10000)
+        self.assertEqual(result.orders[0].ticket, "900000000000000001")
+        self.assertEqual(result.activity_flow.source_id, "synthetic-activity")
 
 
 if __name__ == "__main__":

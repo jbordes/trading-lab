@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import StrEnum
+from threading import Lock
 
 from tradinglab.telemetry.contract import IDENTIFIER, MASKED_ACCOUNT, TelemetryEnvelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
@@ -29,6 +32,19 @@ class V2AuthenticationError(V2AdmissionError):
 
 class V2AuthorizationError(V2AdmissionError):
     """The authenticated producer cannot emit this message."""
+
+
+class V2ConflictError(V2AdmissionError):
+    """A message identity was reused with different validated content."""
+
+
+class V2StaleSequenceError(V2AdmissionError):
+    """A strict stream sent an unknown sequence below its high-water mark."""
+
+
+class AdmissionDisposition(StrEnum):
+    ACCEPTED = "accepted"
+    DUPLICATE = "duplicate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +95,17 @@ class AuthorizedEnvelope:
     account_id: str
     role: ProducerRole
     envelope: TelemetryEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionResult:
+    disposition: AdmissionDisposition
+    account_id: str
+    role: ProducerRole
+    envelope: TelemetryEnvelope
+    content_sha256: str
+    sequence_gap: int
+    out_of_order: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +191,112 @@ class V2ProducerDirectory:
         return match
 
 
+class InMemoryV2Admission:
+    """Atomically authorize and classify v2 retries before durable storage exists.
+
+    Retention is deliberately bounded. This component proves admission semantics,
+    but does not provide restart recovery or durable idempotency.
+    """
+
+    def __init__(
+        self,
+        directory: V2ProducerDirectory,
+        *,
+        max_retained_messages: int = 5_000,
+    ) -> None:
+        if not isinstance(directory, V2ProducerDirectory):
+            raise ValueError("Directorio de productores inválido")
+        if (
+            isinstance(max_retained_messages, bool)
+            or not isinstance(max_retained_messages, int)
+            or not 1 <= max_retained_messages <= 100_000
+        ):
+            raise ValueError("Retención de admisión inválida")
+        self._directory = directory
+        self._max_retained_messages = max_retained_messages
+        self._messages: OrderedDict[tuple[str, str, int], bytes] = OrderedDict()
+        self._session_references: dict[tuple[str, str], int] = {}
+        self._high_watermarks: dict[tuple[str, str], int] = {}
+        self._lock = Lock()
+
+    def admit(self, body: bytes, authorization: str) -> AdmissionResult:
+        """Authorize and classify one message in a single critical section."""
+
+        authorized = self._directory.authorize(body, authorization)
+        envelope = authorized.envelope
+        content_digest = _content_digest(envelope)
+        message_key = (envelope.source_id, envelope.session_id, envelope.sequence)
+        session_key = message_key[:2]
+
+        with self._lock:
+            previous_digest = self._messages.get(message_key)
+            if previous_digest is not None:
+                if hmac.compare_digest(previous_digest, content_digest):
+                    return self._result(
+                        AdmissionDisposition.DUPLICATE,
+                        authorized,
+                        content_digest,
+                        sequence_gap=0,
+                        out_of_order=False,
+                    )
+                raise V2ConflictError("La identidad del mensaje ya existe con contenido diferente")
+
+            high_watermark = self._high_watermarks.get(session_key, 0)
+            out_of_order = envelope.sequence <= high_watermark
+            if out_of_order and envelope.kind != "activity_batch":
+                raise V2StaleSequenceError(
+                    "Secuencia desconocida anterior al máximo del flujo estricto"
+                )
+            sequence_gap = max(0, envelope.sequence - high_watermark - 1)
+            self._retain(message_key, session_key, content_digest)
+            if envelope.sequence > high_watermark:
+                self._high_watermarks[session_key] = envelope.sequence
+            return self._result(
+                AdmissionDisposition.ACCEPTED,
+                authorized,
+                content_digest,
+                sequence_gap=sequence_gap,
+                out_of_order=out_of_order,
+            )
+
+    def _retain(
+        self,
+        message_key: tuple[str, str, int],
+        session_key: tuple[str, str],
+        content_digest: bytes,
+    ) -> None:
+        self._messages[message_key] = content_digest
+        self._session_references[session_key] = self._session_references.get(session_key, 0) + 1
+        while len(self._messages) > self._max_retained_messages:
+            removed_key, _ = self._messages.popitem(last=False)
+            removed_session = removed_key[:2]
+            references = self._session_references[removed_session] - 1
+            if references:
+                self._session_references[removed_session] = references
+            else:
+                del self._session_references[removed_session]
+                del self._high_watermarks[removed_session]
+
+    @staticmethod
+    def _result(
+        disposition: AdmissionDisposition,
+        authorized: AuthorizedEnvelope,
+        content_digest: bytes,
+        *,
+        sequence_gap: int,
+        out_of_order: bool,
+    ) -> AdmissionResult:
+        return AdmissionResult(
+            disposition=disposition,
+            account_id=authorized.account_id,
+            role=authorized.role,
+            envelope=authorized.envelope,
+            content_sha256=content_digest.hex(),
+            sequence_gap=sequence_gap,
+            out_of_order=out_of_order,
+        )
+
+
 def _validate_token(token: object) -> None:
     if (
         not isinstance(token, str)
@@ -176,3 +309,13 @@ def _validate_token(token: object) -> None:
 
 def _authorization_digest(token: str) -> bytes:
     return hashlib.sha256(f"Bearer {token}".encode("ascii")).digest()
+
+
+def _content_digest(envelope: TelemetryEnvelope) -> bytes:
+    canonical = json.dumps(
+        envelope.as_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).digest()

@@ -27,6 +27,7 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     DATABASE_SCHEMA_VERSION,
     V2RegistrationConflictError,
     V2StorageError,
+    V2TelemetryRegistry,
     create_v2_database,
     open_v2_registry,
 )
@@ -35,6 +36,17 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "telemetry_v2"
 IDENTITY = ProducerIdentity("****1234", "DEMO-SERVER", "USD")
 LIVE_CREDENTIAL = "synthetic-live-credential-safe-length"
 ACTIVITY_CREDENTIAL = "synthetic-activity-credential-safe-length"
+
+
+class FailingCommitConnection(sqlite3.Connection):
+    after_commit = False
+
+    def __exit__(self, *args: object) -> None:
+        if self.after_commit:
+            super().__exit__(*args)
+        else:
+            self.rollback()
+        raise sqlite3.OperationalError("injected commit failure")
 
 
 def fixture(name: str) -> dict[str, object]:
@@ -231,6 +243,36 @@ class V2SqliteTest(unittest.TestCase):
             [AdmissionDisposition.ACCEPTED, AdmissionDisposition.DUPLICATE],
         )
         self.assertEqual(len(self.rows()), 1)
+
+    def test_retry_resolves_failures_before_and_after_commit(self) -> None:
+        for after_commit in (False, True):
+            with self.subTest(after_commit=after_commit):
+                path = self.path.with_name(f"commit-{after_commit}.sqlite3")
+                create_v2_database(path)
+                with open_v2_registry(path) as registry:
+                    registry.register_account("account-demo", "Demo", IDENTITY, created_at=self.now)
+                    registry.register_source(
+                        "synthetic-live",
+                        "account-demo",
+                        ProducerRole.LIVE,
+                        created_at=self.now,
+                    )
+                with closing(sqlite3.connect(path, factory=FailingCommitConnection)) as connection:
+                    connection.after_commit = after_commit
+                    connection.execute("PRAGMA foreign_keys = ON")
+                    registry = V2TelemetryRegistry(connection)
+                    with self.assertRaises(V2StorageError):
+                        registry.store_authorized(authorized("live-empty"), received_at=self.now)
+                with open_v2_registry(path) as registry:
+                    retry = registry.store_authorized(
+                        authorized("live-empty"), received_at=self.now
+                    )
+                self.assertEqual(
+                    retry.disposition,
+                    AdmissionDisposition.DUPLICATE
+                    if after_commit
+                    else AdmissionDisposition.ACCEPTED,
+                )
 
     def test_tampered_schema_is_rejected_before_use(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:

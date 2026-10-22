@@ -1,0 +1,30 @@
+{
+  "schema_version": "mt5-telemetry-v2",
+  "collector_version": "proposal-0.1",
+  "source_id": "synthetic-live",
+  "session_id": "synthetic-session-1",
+  "sequence": 1,
+  "event_id": "synthetic-session-1:1",
+  "captured_at": "2026-10-22T08:00:01Z",
+  "kind": "live_snapshot",
+  "payload": {
+    "reason": "timer",
+    "identity": {
+      "login_masked": "****1234",
+      "server": "DEMO-SERVER",
+      "currency": "USD"
+    },
+    "account": {
+      "balance": 10000,
+      "equity": 10000,
+      "profit": 0,
+      "margin": 0,
+      "margin_free": 10000,
+      "margin_level": 0
+    },
+    "positions_total": 0,
+    "orders_total": 0,
+    "positions": [],
+    "orders": []
+  }
+}

@@ -100,6 +100,12 @@ diagnóstico o reconciliación aislada con identidad explícita. El acceso human
 al dashboard usa una credencial distinta del token de telemetría; ninguna llega
 al navegador salvo el token humano durante el login local.
 
+La [propuesta de separación de collectors](collector-responsibilities.md) analiza
+estado vivo y actividad histórica como responsabilidades independientes sobre
+la terminal actual. No requiere una terminal observadora adicional. La propuesta
+no modifica todavía los contratos ni los ADR vigentes; su implementación requiere
+definir admisión por rol, composición por cuenta y recuperación por flujo.
+
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque
 implementa la creación segura del esquema SQLite, su apertura validada y el

@@ -1,0 +1,50 @@
+{
+  "schema_version": "mt5-telemetry-v2",
+  "collector_version": "proposal-0.1",
+  "source_id": "synthetic-activity",
+  "session_id": "synthetic-session-1",
+  "sequence": 1,
+  "event_id": "synthetic-session-1:1",
+  "captured_at": "2026-10-22T08:00:01Z",
+  "kind": "activity_batch",
+  "payload": {
+    "reason": "reconcile",
+    "identity": {
+      "login_masked": "****1234",
+      "server": "DEMO-SERVER",
+      "currency": "USD"
+    },
+    "window": {
+      "from_server_msc": "1792656000000",
+      "to_server_msc": "1792656060000"
+    },
+    "deals": {
+      "status": "complete",
+      "total": 0,
+      "items": []
+    },
+    "orders": {
+      "status": "complete",
+      "total": 1,
+      "items": [
+        {
+          "ticket": "900000000000000001",
+          "magic_number": "11122",
+          "symbol": "XAUUSD",
+          "order_type": 3,
+          "state": 2,
+          "volume_initial": 0.01,
+          "volume_current": 0.01,
+          "price_open": 4200,
+          "stop_loss": 4220,
+          "take_profit": 4160,
+          "setup_time_msc": "1792655940000",
+          "done_time_msc": "1792656030000",
+          "position_id": "0",
+          "position_by_id": "0",
+          "comment": "synthetic cancellation"
+        }
+      ]
+    }
+  }
+}

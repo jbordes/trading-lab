@@ -167,5 +167,6 @@ estructura y semántica de un mensaje sin I/O; reutiliza reglas escalares y de f
 v1 sin modificar su parser. Las pruebas cubren fixtures, límites, errores, rechazo
 cruzado de versiones, autorización por fuente/rol, duplicados, conflictos y orden.
 Las pruebas cubren además persistencia, recuperación durable y composición de
-referencia. Migración, proyecciones incrementales, HTTP, collectors y contrato de
-vista del dashboard siguen pendientes.
+referencia. La proyección incremental reconstruible se contrasta con esa referencia
+y mantiene un cursor de filas durables en memoria. Provisión/migración, mediciones,
+HTTP, collectors y contrato de vista del dashboard siguen pendientes.

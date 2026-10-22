@@ -118,10 +118,11 @@ no acelera una captura vieja: decidirlo después de medir el flujo completo.
 1. Contrato e identidades en un ADR propuesto; fixtures para ambos flujos,
    incluido un caso de orden cancelada sin deal. Validador aislado implementado;
    falta acordar objetivo de frescura y precisión de métricas por separado.
-2. Admisión, persistencia SQLite v2 y composición de referencia implementadas con
-   pruebas de desorden, duplicados, conflictos, correcciones, reinicio y flujo
-   ausente. Siguiente: definir provisión/migración y proyecciones incrementales
-   antes del receptor v2. El estado vivo continúa independiente de actividad.
+2. Admisión, persistencia SQLite v2, composición de referencia y proyección
+   incremental reconstruible implementadas con pruebas de desorden, duplicados,
+   conflictos, correcciones, reinicio y flujo ausente. Siguiente: definir
+   provisión/migración y medir la proyección antes del receptor v2. El estado vivo
+   continúa independiente de actividad.
 3. Extraer módulos comunes y crear los dos collectors. Validar guardas demo,
    límites, recuperación y compatibilidad antes de instalarlos.
 4. Prueba supervisada en la terminal actual, con instalación autorizada y rollback

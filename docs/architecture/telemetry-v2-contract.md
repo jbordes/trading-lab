@@ -1,8 +1,10 @@
 # Contrato de telemetría v2 — propuesta
 
-Estado: especificación revisable del ADR-0011, con validador aislado en
-`src/tradinglab/telemetry/contract_v2.py`. El receptor sigue en v1. Los ejemplos son
-sintéticos. No enviar estos mensajes al receptor v1 ni usarlos como configuración.
+Estado: especificación revisable del ADR-0011, con validador y admisión aislados en
+`src/tradinglab/telemetry/contract_v2.py` y
+`src/tradinglab/telemetry/admission_v2.py`. El receptor sigue en v1. Los ejemplos
+son sintéticos. No enviar estos mensajes al receptor v1 ni usarlos como
+configuración.
 
 ## Sobre común y autorización
 
@@ -123,6 +125,22 @@ trading esté detenido. Cadencia y presentación quedan para la implementación.
   paso; nunca enviar comandos de trading. Sin cursor durable no se afirma
   recuperación ilimitada tras cortes mayores que la ventana configurada.
 
+La implementación aislada actual autentica antes de parsear y resuelve la cuenta
+desde un registro explícito de credencial, fuente, identidad MT5 y rol. Conserva
+solo el hash de autorización en su directorio interno. Rechaza cruces de fuente,
+rol o identidad y limita a un productor primario por cuenta/rol. Sobre contenido
+validado y canonizado, un reintento exacto es duplicado y la reutilización de
+fuente/sesión/secuencia con otro contenido es conflicto.
+
+La secuencia es estricta para `live_snapshot` y `heartbeat`: una secuencia menor
+desconocida se rechaza. `activity_batch` admite una secuencia menor desconocida
+como recuperación fuera de orden sin bajar el máximo observado. Los saltos se
+informan como diagnóstico, no como cobertura confirmada. Esta primera admisión
+es atómica entre hilos pero acotada en memoria; al desalojar una sesión puede
+olvidar duplicados antiguos y no sobrevive reinicios. Por eso todavía no se usa
+en HTTP ni constituye idempotencia durable. SQLite deberá aplicar las mismas
+reglas dentro de la transacción antes de confirmar al productor.
+
 ## Composición para dashboard y compatibilidad
 
 Conservar `live` y `activity` independientes, con captura, recepción, cobertura y
@@ -140,7 +158,7 @@ elegir productores primarios explícitos, sin fallback silencioso entre ambos.
 Los [fixtures propuestos](../../tests/fixtures/telemetry_v2/README.md) permiten
 revisar mensajes concretos y los resultados esperados. `parse_envelope_v2` valida
 estructura y semántica de un mensaje sin I/O; reutiliza reglas escalares y de filas
-v1 sin modificar su parser. Las pruebas cubren fixtures, límites, errores y rechazo
-cruzado de versiones. La autorización por fuente/rol, conflictos entre mensajes,
-persistencia, recuperación y composición de vista siguen pendientes: aceptar la
-estructura no autentica un mensaje ni garantiza cobertura histórica durable.
+v1 sin modificar su parser. Las pruebas cubren fixtures, límites, errores, rechazo
+cruzado de versiones, autorización por fuente/rol, duplicados, conflictos y orden.
+Persistencia, recuperación durable y composición de vista siguen pendientes:
+aceptar un mensaje en memoria no garantiza cobertura histórica durable.

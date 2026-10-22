@@ -18,13 +18,15 @@ credenciales. Cada escenario comienza con almacenamiento vacío salvo indicació
 | activity-truncated.json | Un deal de dos reportados: conservarlo como evidencia parcial, sin cobertura completa ni métricas definitivas |
 | heartbeat.json | Actualizar salud del productor, sin rejuvenecer equity ni confirmar actividad |
 
-## Escenarios de regresión que deberá cubrir la implementación
+## Escenarios de regresión de la implementación
 
 | Entrada o transformación | Resultado requerido |
 | --- | --- |
 | live-empty + activity-canceled-order, en cualquier orden | Misma vista compuesta; actividad no cambia equity |
 | Repetir el mismo archivo de actividad | Una sola observación persistida, respuesta de duplicado |
 | Cambiar precio conservando fuente/sesión/secuencia | Conflicto; no sobrescribir |
+| Recibir una secuencia menor desconocida de actividad | Admitir como recuperación fuera de orden, sin bajar el máximo observado |
+| Recibir una secuencia menor desconocida de estado vivo o heartbeat | Rechazar como secuencia obsoleta del flujo estricto |
 | Repetir ticket con nueva secuencia y captura posterior | Una entidad histórica, varias observaciones; corrección trazable |
 | Recibir esa corrección antes que el lote original | Conservar corrección, sin retroceso por orden de llegada |
 | activity-canceled-order seguido de activity-deals-error | Datos previos conservados, fallo visible y cobertura no extendida por error |
@@ -41,6 +43,8 @@ credenciales. Cada escenario comienza con almacenamiento vacío salvo indicació
 | Ticket numérico JSON, NaN, claves duplicadas, campo inesperado | Rechazo de contrato |
 
 No inferir un trade cerrado del deal sintético aislado: la definición de trade y
-su agrupación por posición se acuerdan con el socio. Próximo paso: convertir esta
-matriz en pruebas de admisión/persistencia/composición. Los casos estructurales
-ya tienen pruebas del validador aislado; los escenarios con estado siguen pendientes.
+su agrupación por posición se acuerdan con el socio. El validador aislado cubre
+los casos estructurales. La admisión aislada cubre autorización, duplicados,
+conflictos, secuencias estrictas, recuperación fuera de orden y concurrencia; su
+retención es acotada y volátil. Persistencia, reinicio durable, correcciones de
+entidades y composición siguen pendientes.

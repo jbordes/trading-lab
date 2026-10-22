@@ -103,8 +103,10 @@ al navegador salvo el token humano durante el login local.
 La [propuesta de separación de collectors](collector-responsibilities.md) analiza
 estado vivo y actividad histórica como responsabilidades independientes sobre
 la terminal actual. No requiere una terminal observadora adicional. La propuesta
-no modifica todavía los contratos ni los ADR vigentes; su implementación requiere
-definir admisión por rol, composición por cuenta y recuperación por flujo.
+no modifica todavía el receptor ni los ADR vigentes. El contrato v2 y su admisión
+por rol ya existen como componentes aislados y no durables; aún se requiere
+persistencia transaccional, composición por cuenta y recuperación por flujo antes
+de habilitar productores v2.
 
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque

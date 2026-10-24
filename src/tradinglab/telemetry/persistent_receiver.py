@@ -79,7 +79,7 @@ class PersistentTelemetryReceiver:
 
     def deal_history(
         self,
-        account_id: str,
+        source_id: str,
         *,
         from_msc: int,
         to_msc: int,
@@ -88,12 +88,12 @@ class PersistentTelemetryReceiver:
         cursor: DealHistoryCursor | None = None,
     ) -> DealHistoryPage:
         """Read only the account authorized by this single-source receiver."""
-        if account_id != self._account_id:
-            raise MessageAdmissionError("Cuenta no autorizada por este receptor")
+        if source_id != self._source_id:
+            raise MessageAdmissionError("Fuente no autorizada por este receptor")
         with self._lock:
             self._require_open()
             return self._registry.deal_history(
-                account_id,
+                self._account_id,
                 from_msc=from_msc,
                 to_msc=to_msc,
                 magic_number=magic_number,

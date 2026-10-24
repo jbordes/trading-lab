@@ -170,6 +170,7 @@ class HistoricalDeal:
 class DealHistoryPage:
     """Bounded result; next_cursor is absent only on the final page."""
 
+    account_id: str
     deals: tuple[HistoricalDeal, ...]
     next_cursor: DealHistoryCursor | None
 
@@ -534,7 +535,7 @@ class TelemetryRegistry:
         if len(rows) > limit:
             last = deals[-1]
             next_cursor = DealHistoryCursor(last.time_msc, last.ticket)
-        return DealHistoryPage(deals, next_cursor)
+        return DealHistoryPage(account_id, deals, next_cursor)
 
     @staticmethod
     def _restore_deal_row(row: tuple[object, ...]) -> HistoricalDeal:

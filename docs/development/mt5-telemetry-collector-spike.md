@@ -295,10 +295,10 @@ Cuando el receptor se inicia con la SQLite v1 provisionada, expone una lectura
 autenticada adicional:
 
 ```text
-GET /v1/deals?account_id=<cuenta>&from_msc=<incluido>&to_msc=<excluido>&magic_number=<magic>&limit=50&cursor=<cursor>
+GET /v1/deals?source_id=<fuente>&from_msc=<incluido>&to_msc=<excluido>&magic_number=<magic>&limit=50&cursor=<cursor>
 ```
 
-`account_id`, `from_msc` y `to_msc` son obligatorios. `magic_number`, `limit`
+`source_id`, `from_msc` y `to_msc` son obligatorios. `magic_number`, `limit`
 (1..100) y `cursor` son opcionales. La respuesta ordena los deals del más nuevo
 al más antiguo y entrega `next_cursor` cuando existe otra página. El período usa
 por ahora los milisegundos informados por MT5: no se los presenta todavía como
@@ -319,6 +319,13 @@ trades reconstruidos, y aún no calcula cobertura, métricas ni rankings por EA.
 El endpoint no existe en el receptor puramente en memoria. Continúa ligado a
 loopback y requiere el Bearer token del receptor; el navegador no recibe esa
 credencial.
+
+El dashboard en modo telemetría actúa como proxy mediante `/api/deals`: exige una
+sesión válida del dashboard, agrega el `source_id` configurado y consulta al
+receptor desde el servidor. El navegador nunca conoce el token del collector. La
+interfaz permite períodos de 1, 7 o 30 días, filtro opcional por Magic Number y
+páginas de 50 deals, con un máximo visual de 500 filas por consulta para mantener
+acotada la memoria del navegador.
 
 ### Recursos del receptor (corrección 6)
 

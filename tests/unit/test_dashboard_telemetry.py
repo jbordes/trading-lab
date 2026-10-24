@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import unittest
@@ -197,6 +198,78 @@ class DashboardTelemetryTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+    def test_loopback_client_reads_and_validates_paginated_deals(self) -> None:
+        requests: list[tuple[str, str | None]] = []
+
+        class DealsHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                requests.append((self.path, self.headers.get("Authorization")))
+                payload = {
+                    "account_id": "account-demo",
+                    "source_id": "demo-terminal-01",
+                    "from_msc": 999000,
+                    "to_msc": 1000000,
+                    "magic_number": "11122",
+                    "deals": [
+                        {
+                            "account_id": "account-demo",
+                            "source_id": "demo-terminal-01",
+                            "message_id": 2,
+                            "captured_at": "2026-10-20T12:00:00.000000Z",
+                            "ticket": "2",
+                            "order_id": "50",
+                            "position_id": "42",
+                            "magic_number": "11122",
+                            "time_msc": 999002,
+                            "deal_type": 1,
+                            "entry": 1,
+                            "symbol": "XAUUSD",
+                            "volume": 0.1,
+                            "price": 10.0,
+                            "profit": 1.0,
+                            "commission": -0.1,
+                            "swap": -0.2,
+                            "fee": -0.01,
+                        }
+                    ],
+                    "next_cursor": "999002.2",
+                }
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), DealsHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = LoopbackTelemetryClient(
+                token=TOKEN,
+                source_id="demo-terminal-01",
+                port=server.server_port,
+            )
+            page = client.deal_history(
+                from_msc=999000,
+                to_msc=1000000,
+                magic_number="11122",
+                limit=1,
+            )
+            self.assertEqual(page.account_id, "account-demo")
+            self.assertEqual(page.deals[0].ticket, "2")
+            self.assertEqual(page.deals[0].profit, 1.0)
+            self.assertEqual(page.next_cursor, "999002.2")
+            self.assertIn("magic_number=11122", requests[0][0])
+            self.assertEqual(requests[0][1], f"Bearer {TOKEN}")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_loopback_client_rejects_redirects_without_contacting_destination(self) -> None:
         destination_requests: list[tuple[str, str | None]] = []
 
@@ -236,6 +309,8 @@ class DashboardTelemetryTest(unittest.TestCase):
                 client.latest()
             with self.assertRaisesRegex(DashboardReadError, "redirección"):
                 client.health()
+            with self.assertRaises(DashboardReadError):
+                client.deal_history(from_msc=1, to_msc=2)
             self.assertEqual(destination_requests, [])
         finally:
             redirect.shutdown()

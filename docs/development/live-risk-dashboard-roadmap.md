@@ -157,11 +157,12 @@ Pendiente:
 Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 [ADR-0012](../adr/0012-durable-operation-history.md).
 
-1. **Backend implementado:** exponer desde la SQLite actual una consulta de deals
+1. **Implementado:** exponer desde la SQLite actual una consulta de deals
    históricos paginada y de solo lectura, con filtros por cuenta, periodo y
-   Magic Number. Falta consumirla desde la vista del dashboard.
-2. Incorporar una vista de historial que diferencie deals, órdenes, posiciones y
-   trades reconstruidos; la primera versión solo afirmará las entidades disponibles.
+   Magic Number. La cuenta se resuelve mediante la fuente autorizada.
+2. **Primer corte implementado:** vista de historial de deals con períodos de 1,
+   7 y 30 días, Magic Number opcional y paginación manual. Órdenes históricas,
+   posiciones y trades reconstruidos siguen pendientes y no se mezclan con deals.
 3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.
 4. Añadir una comparación por Magic Number después de acordar agrupación de trades,
    costes, movimientos no comerciales, periodo y métricas con el socio.
@@ -171,8 +172,10 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 6. Considerar una caché acotada únicamente después de medir consultas repetidas;
    SQLite seguirá siendo la fuente de verdad.
 
-Criterio del primer corte: poder abrir el historial persistido, paginarlo y filtrar
-un EA por Magic Number sin cargar todos los mensajes en memoria ni depender de v2.
+Criterio del primer corte alcanzado en código: se puede abrir el historial
+persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los
+mensajes en memoria ni depender de v2. Falta la validación visual manual contra la
+base piloto real.
 
 ## Incremento 1 — Contrato de control operativo
 

@@ -7,11 +7,13 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import parse_qs
 
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
+from tradinglab.dashboard.snapshot import DashboardReadError
+from tradinglab.dashboard.telemetry import TelemetryDealPage
 from tradinglab.telemetry.http_server import BoundedHTTPServer
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -44,6 +46,18 @@ STATIC_ROUTES = {
 _STATIC_CACHE: dict[str, tuple[int, int, bytes, str]] = {}
 
 
+class DealHistoryProvider(Protocol):
+    def deal_history(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> TelemetryDealPage: ...
+
+
 def _read_static(filename: str) -> tuple[bytes, str]:
     """Read a static file from disk, caching bytes and a size+mtime ETag."""
     path = STATIC_ROOT / filename
@@ -62,6 +76,7 @@ def create_server(
     *,
     port: int,
     dashboard_token: str,
+    history_provider: DealHistoryProvider | None = None,
     max_connections: int = 16,
     request_timeout: float = 5.0,
 ) -> BoundedHTTPServer:
@@ -122,6 +137,31 @@ def create_server(
                     self.send_error(HTTPStatus.BAD_REQUEST, "Parámetro since inválido")
                     return
                 self._send_json(state)
+                return
+            if path == "/api/deals":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if history_provider is None:
+                    self._send_json({"error": "history_unavailable"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                try:
+                    history_query = self._history_query(raw_query)
+                    page = history_provider.deal_history(**history_query)
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_history_query"}, status=HTTPStatus.BAD_REQUEST
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "history_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json(page.as_dict())
                 return
             if path == "/health":
                 state = service.state()
@@ -302,6 +342,43 @@ def create_server(
                 return False
             lengths = self.headers.get_all("Content-Length", failobj=[])
             return not lengths or (len(lengths) == 1 and lengths[0] == "0")
+
+        @staticmethod
+        def _history_query(raw_query: str) -> dict[str, Any]:
+            values = parse_qs(
+                raw_query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=5,
+            )
+            required = {"from_msc", "to_msc"}
+            allowed = required | {"magic_number", "limit", "cursor"}
+            if not required <= set(values) or not set(values) <= allowed:
+                raise ValueError("Parámetros históricos inválidos")
+            if any(len(items) != 1 for items in values.values()):
+                raise ValueError("Parámetros históricos repetidos")
+
+            def integer(name: str, default: str | None = None) -> int:
+                value = values.get(name, [default])[0]
+                if value is None or not value.isascii() or not value.isdecimal():
+                    raise ValueError("Entero histórico inválido")
+                parsed = int(value)
+                if str(parsed) != value:
+                    raise ValueError("Entero histórico inválido")
+                return parsed
+
+            from_msc = integer("from_msc")
+            to_msc = integer("to_msc")
+            limit = integer("limit", "50")
+            if not 0 <= from_msc < to_msc < 2**63 or not 1 <= limit <= 100:
+                raise ValueError("Límites históricos inválidos")
+            return {
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+                "magic_number": values.get("magic_number", [None])[0],
+                "limit": limit,
+                "cursor": values.get("cursor", [None])[0],
+            }
 
         def _send_not_modified(self, etag: str) -> None:
             self.send_response(HTTPStatus.NOT_MODIFIED)

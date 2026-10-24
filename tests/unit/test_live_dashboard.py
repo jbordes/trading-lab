@@ -27,6 +27,7 @@ from tradinglab.dashboard.snapshot import (  # noqa: E402
     ReceiverHealth,
     SourceHealth,
 )
+from tradinglab.dashboard.telemetry import TelemetryDeal, TelemetryDealPage  # noqa: E402
 from tradinglab.dashboard.web import create_server  # noqa: E402
 
 Account = namedtuple(
@@ -83,6 +84,43 @@ class FakeHealthProvider:
             checked_at="2026-10-14T19:30:05Z",
             error=None,
             receiver=self.receiver,
+        )
+
+
+class FakeDealHistoryProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def deal_history(self, **query: object) -> TelemetryDealPage:
+        self.calls.append(query)
+        deal = TelemetryDeal(
+            account_id="account-demo",
+            source_id="demo-terminal-01",
+            message_id=1,
+            captured_at="2026-10-20T12:00:00.000000Z",
+            ticket="2",
+            order_id="50",
+            position_id="42",
+            magic_number="11122",
+            time_msc=999002,
+            deal_type=1,
+            entry=1,
+            symbol="XAUUSD",
+            volume=0.1,
+            price=10.0,
+            profit=1.0,
+            commission=-0.1,
+            swap=-0.2,
+            fee=-0.01,
+        )
+        return TelemetryDealPage(
+            account_id="account-demo",
+            source_id="demo-terminal-01",
+            from_msc=int(query["from_msc"]),
+            to_msc=int(query["to_msc"]),
+            magic_number=query["magic_number"],
+            deals=(deal,),
+            next_cursor=None,
         )
 
 
@@ -631,6 +669,42 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             server.server_close()
             thread.join(timeout=5)
 
+    def test_dashboard_proxies_history_only_for_authenticated_sessions(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(), interval_seconds=5, clock=lambda: self.observed_at
+        )
+        provider = FakeDealHistoryProvider()
+        server = create_server(
+            service,
+            port=0,
+            dashboard_token=ACCESS,
+            history_provider=provider,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        route = f"{base_url}/api/deals?from_msc=999000&to_msc=1000000&magic_number=11122"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                urllib.request.urlopen(route, timeout=2)
+            self.assertEqual(unauthorized.exception.code, 401)
+            unauthorized.exception.close()
+
+            opener = authenticated_opener(base_url)
+            with opener.open(route, timeout=2) as response:
+                payload = json.loads(response.read())
+            self.assertEqual(payload["deals"][0]["ticket"], "2")
+            self.assertEqual(payload["magic_number"], "11122")
+            self.assertEqual(provider.calls[0]["limit"], 50)
+            with self.assertRaises(urllib.error.HTTPError) as invalid:
+                opener.open(f"{base_url}/api/deals?from_msc=1&to_msc=1", timeout=2)
+            self.assertEqual(invalid.exception.code, 400)
+            invalid.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_hidden_attribute_wins_over_responsive_layout(self) -> None:
         styles = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "styles.css").read_text(
             encoding="utf-8"
@@ -684,13 +758,16 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('<select id="magic-filter">', dashboard)
         self.assertIn("Todos los bots", dashboard)
         self.assertIn('id="operations-note" role="status"', dashboard)
+        self.assertIn('id="history-period"', dashboard)
+        self.assertIn('id="history-magic"', dashboard)
+        self.assertIn('id="history-more"', dashboard)
         self.assertNotIn('id="freshness" aria-live', dashboard)
         self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
         self.assertLess(
             dashboard.index('id="activity-content"'),
             dashboard.index('class="technical-health"'),
         )
-        for view in ("overview", "operations", "activity"):
+        for view in ("overview", "operations", "history", "activity"):
             self.assertIn(f'aria-controls="{view}-view"', dashboard)
             self.assertIn(f'id="{view}-view"', dashboard)
 
@@ -698,6 +775,8 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             encoding="utf-8"
         )
         self.assertIn("Los filtros solo abarcan el detalle recibido", app)
+        self.assertIn("/api/deals?", app)
+        self.assertIn("HISTORY_CLIENT_LIMIT = 500", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:
         service = LiveDashboardService(
@@ -731,6 +810,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
                 page = response.read().decode()
                 self.assertIn('id="operations-view"', page)
                 self.assertIn('id="magic-filter"', page)
+                self.assertIn('id="history-view"', page)
                 self.assertIn('id="activity-view"', page)
 
             request = urllib.request.Request(f"{base_url}/api/state", method="POST")

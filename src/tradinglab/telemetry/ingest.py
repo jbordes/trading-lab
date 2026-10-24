@@ -58,7 +58,7 @@ class TelemetryBackend(Protocol):
 class DealHistoryBackend(Protocol):
     def deal_history(
         self,
-        account_id: str,
+        source_id: str,
         *,
         from_msc: int,
         to_msc: int,
@@ -326,7 +326,8 @@ def create_telemetry_server(
                 self._send_json(
                     HTTPStatus.OK,
                     {
-                        "account_id": query["account_id"],
+                        "account_id": page.account_id,
+                        "source_id": query["source_id"],
                         "from_msc": query["from_msc"],
                         "to_msc": query["to_msc"],
                         "magic_number": query["magic_number"],
@@ -442,15 +443,15 @@ def create_telemetry_server(
                 strict_parsing=True,
                 max_num_fields=6,
             )
-            required = {"account_id", "from_msc", "to_msc"}
+            required = {"source_id", "from_msc", "to_msc"}
             allowed = required | {"magic_number", "limit", "cursor"}
             if not required <= set(values) or not set(values) <= allowed:
                 raise ValueError("Parámetros de historial inválidos")
             if any(len(items) != 1 for items in values.values()):
                 raise ValueError("Parámetros de historial repetidos")
-            account_id = values["account_id"][0]
-            if not IDENTIFIER.fullmatch(account_id):
-                raise ValueError("Cuenta inválida")
+            source_id = values["source_id"][0]
+            if not IDENTIFIER.fullmatch(source_id):
+                raise ValueError("Fuente inválida")
             from_msc = self._query_integer(values["from_msc"][0])
             to_msc = self._query_integer(values["to_msc"][0])
             limit = self._query_integer(values.get("limit", ["50"])[0])
@@ -459,7 +460,7 @@ def create_telemetry_server(
             cursor = DealHistoryCursor.decode(cursor_text) if cursor_text is not None else None
             # The registry owns the complete boundary validation.
             return {
-                "account_id": account_id,
+                "source_id": source_id,
                 "from_msc": from_msc,
                 "to_msc": to_msc,
                 "magic_number": magic_number,

@@ -20,6 +20,7 @@
           <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
             <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-controls="overview-view" aria-selected="true" data-view="overview"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#overview"></use></svg><span class="nav-label">Resumen</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-operations" aria-controls="operations-view" aria-selected="false" tabindex="-1" data-view="operations"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#operations"></use></svg><span class="nav-label">Operaciones</span><span class="nav-count" id="operations-badge">—</span></button>
+            <button class="view-tab" type="button" role="tab" id="tab-history" aria-controls="history-view" aria-selected="false" tabindex="-1" data-view="history"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#history"></use></svg><span class="nav-label">Historial</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-activity" aria-controls="activity-view" aria-selected="false" tabindex="-1" data-view="activity"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Actividad</span><span class="nav-count" id="activity-badge" hidden>—</span></button>
           </nav>
           <form class="logout-form" action="/logout" method="post"><button class="logout-button" type="submit">Cerrar sesión</button></form>
@@ -161,6 +162,62 @@
         </article>
       </section>
 
+      <section id="history-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
+        <article class="panel operations-panel history-panel">
+          <div class="operations-heading">
+            <div>
+              <h2>Historial de ejecuciones</h2>
+              <p class="operations-copy">Deals informados por MT5 y conservados en SQLite. Cada fila es una ejecución, no necesariamente un trade completo.</p>
+            </div>
+          </div>
+
+          <form id="history-filters" class="history-controls">
+            <label class="filter-field" for="history-period">
+              <span>Período</span>
+              <select id="history-period">
+                <option value="1">Últimas 24 horas</option>
+                <option value="7" selected>Últimos 7 días</option>
+                <option value="30">Últimos 30 días</option>
+              </select>
+            </label>
+            <label class="filter-field" for="history-magic">
+              <span>Bot (Magic)</span>
+              <input id="history-magic" type="text" inputmode="numeric" autocomplete="off" placeholder="Todos los bots" maxlength="20">
+            </label>
+            <button class="primary-action" type="submit">Aplicar filtros</button>
+            <button id="history-reset" class="clear-filter" type="button">Restablecer</button>
+          </form>
+
+          <p class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
+          <div class="operation-stats" role="status" aria-live="polite">
+            <span><strong id="history-count">0</strong> ejecuciones cargadas</span>
+            <span id="history-scope">Últimos 7 días · todos los bots</span>
+          </div>
+
+          <div class="operations-table-wrap">
+            <table class="operations-table history-table" role="table">
+              <caption class="sr-only">Deals históricos informados por MT5</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Hora MT5</th>
+                  <th scope="col">Ejecución</th>
+                  <th scope="col">Instrumento</th>
+                  <th scope="col">Magic</th>
+                  <th scope="col" class="numeric">Volumen</th>
+                  <th scope="col" class="numeric">Resultado</th>
+                  <th scope="col" class="numeric">Costos</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+            <p id="history-empty" class="operations-empty">Abrí esta sección para consultar el historial.</p>
+          </div>
+          <div class="history-actions">
+            <button id="history-more" class="secondary-action" type="button" hidden>Cargar más</button>
+          </div>
+        </article>
+      </section>
+
       <section id="activity-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-activity" tabindex="0" hidden>
         <article class="panel operations-panel activity-panel">
           <div class="operations-heading">
@@ -217,7 +274,7 @@
       </section>
 
       </main>
-      <footer><span>Solo lectura · Sin ejecución de trading</span><span>Ventana en memoria · Se reinicia con el servicio</span></footer>
+      <footer><span>Solo lectura · Sin ejecución de trading</span><span>Estado reciente acotado · Historial durable cuando la fuente lo provee</span></footer>
     </div>
   </body>
 </html>

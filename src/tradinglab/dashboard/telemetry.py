@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Protocol
 
 from tradinglab.dashboard.snapshot import (
@@ -19,6 +20,7 @@ from tradinglab.dashboard.snapshot import (
     SourceHealth,
     utc_iso,
 )
+from tradinglab.metrics import WorkbookMetricSelection, calculate_closed_deal_metrics
 from tradinglab.telemetry.contract import (
     DECIMAL_INTEGER,
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
@@ -93,6 +95,61 @@ class TelemetryDealPage:
             "deals": [deal.as_dict() for deal in self.deals],
             "next_cursor": self.next_cursor,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryPerformance:
+    """Bounded workbook-v1 result ready for the authenticated dashboard."""
+
+    account_id: str
+    source_id: str
+    from_msc: int
+    to_msc: int
+    magic_number: str | None
+    selection: WorkbookMetricSelection
+
+    def as_dict(self) -> dict[str, object]:
+        metrics = self.selection.metrics
+        return {
+            "account_id": self.account_id,
+            "source_id": self.source_id,
+            "from_msc": self.from_msc,
+            "to_msc": self.to_msc,
+            "magic_number": self.magic_number,
+            "formula_version": metrics.formula_version,
+            "reference_capital": float(metrics.reference_capital),
+            "risk_amount": float(metrics.risk_amount),
+            "source_deal_count": self.selection.source_deal_count,
+            "ignored_opening_deals": self.selection.ignored_opening_deals,
+            "ignored_non_trade_deals": self.selection.ignored_non_trade_deals,
+            "trade_count": metrics.trade_count,
+            "net_profit": float(metrics.net_profit),
+            "profit_factor": _optional_decimal(metrics.profit_factor),
+            "winning_percentage": _optional_decimal(metrics.winning_percentage),
+            "average_trade": _optional_decimal(metrics.average_trade),
+            "maximum_drawdown": float(metrics.maximum_drawdown),
+            "maximum_drawdown_percentage": float(metrics.maximum_drawdown_percentage),
+            "current_drawdown": float(metrics.current_drawdown),
+            "current_drawdown_percentage": float(metrics.current_drawdown_percentage),
+            "return_drawdown_ratio": _optional_decimal(metrics.return_drawdown_ratio),
+            "expectancy_r": _optional_decimal(metrics.expectancy_r),
+            "standard_deviation": _optional_decimal(metrics.standard_deviation),
+            "series": [
+                {
+                    "ticket": result.ticket,
+                    "time_msc": result.time_msc,
+                    "net_profit": float(result.net_profit),
+                    "cumulative_profit": float(metrics.cumulative_profit[index]),
+                    "drawdown": float(metrics.drawdown_curve[index]),
+                    "rolling_average_20": float(metrics.rolling_average_20[index]),
+                }
+                for index, result in enumerate(self.selection.closed_results)
+            ],
+        }
+
+
+def _optional_decimal(value: Decimal | None) -> float | None:
+    return None if value is None else float(value)
 
 
 class TelemetrySnapshotClient(Protocol):
@@ -565,6 +622,46 @@ class TelemetrySnapshotSource:
             magic_number=magic_number,
             limit=limit,
             cursor=cursor,
+        )
+
+    def performance_metrics(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+    ) -> TelemetryPerformance:
+        """Calculate exact workbook metrics from at most 500 verified deals."""
+        deals: list[TelemetryDeal] = []
+        cursor: str | None = None
+        account_id: str | None = None
+        while True:
+            remaining = 500 - len(deals)
+            if remaining <= 0:
+                raise DashboardReadError("El período supera el límite seguro de 500 deals")
+            page = self.deal_history(
+                from_msc=from_msc,
+                to_msc=to_msc,
+                magic_number=magic_number,
+                limit=min(100, remaining),
+                cursor=cursor,
+            )
+            if account_id is not None and page.account_id != account_id:
+                raise DashboardReadError("La cuenta cambió durante el cálculo")
+            account_id = page.account_id
+            deals.extend(page.deals)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        if account_id is None:
+            raise DashboardReadError("El receptor no informó la cuenta")
+        return TelemetryPerformance(
+            account_id=account_id,
+            source_id=self._source_id,
+            from_msc=from_msc,
+            to_msc=to_msc,
+            magic_number=magic_number,
+            selection=calculate_closed_deal_metrics(deals),
         )
 
 

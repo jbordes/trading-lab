@@ -27,8 +27,13 @@ from tradinglab.dashboard.snapshot import (  # noqa: E402
     ReceiverHealth,
     SourceHealth,
 )
-from tradinglab.dashboard.telemetry import TelemetryDeal, TelemetryDealPage  # noqa: E402
+from tradinglab.dashboard.telemetry import (  # noqa: E402
+    TelemetryDeal,
+    TelemetryDealPage,
+    TelemetryPerformance,
+)
 from tradinglab.dashboard.web import create_server  # noqa: E402
+from tradinglab.metrics import calculate_closed_deal_metrics  # noqa: E402
 
 Account = namedtuple(
     "Account",
@@ -90,6 +95,7 @@ class FakeHealthProvider:
 class FakeDealHistoryProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.performance_calls: list[dict[str, object]] = []
 
     def deal_history(self, **query: object) -> TelemetryDealPage:
         self.calls.append(query)
@@ -121,6 +127,18 @@ class FakeDealHistoryProvider:
             magic_number=query["magic_number"],
             deals=(deal,),
             next_cursor=None,
+        )
+
+    def performance_metrics(self, **query: object) -> TelemetryPerformance:
+        self.performance_calls.append(query)
+        page = self.deal_history(limit=50, cursor=None, **query)
+        return TelemetryPerformance(
+            account_id=page.account_id,
+            source_id=page.source_id,
+            from_msc=page.from_msc,
+            to_msc=page.to_msc,
+            magic_number=page.magic_number,
+            selection=calculate_closed_deal_metrics(page.deals),
         )
 
 
@@ -696,6 +714,15 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             self.assertEqual(payload["deals"][0]["ticket"], "2")
             self.assertEqual(payload["magic_number"], "11122")
             self.assertEqual(provider.calls[0]["limit"], 50)
+            metrics_route = (
+                f"{base_url}/api/metrics?from_msc=999000&to_msc=1000000&magic_number=11122"
+            )
+            with opener.open(metrics_route, timeout=2) as response:
+                metrics = json.loads(response.read())
+            self.assertEqual(metrics["formula_version"], "partner-workbook-v1")
+            self.assertEqual(metrics["trade_count"], 1)
+            self.assertAlmostEqual(metrics["net_profit"], 0.69)
+            self.assertEqual(provider.performance_calls[0]["magic_number"], "11122")
             with self.assertRaises(urllib.error.HTTPError) as invalid:
                 opener.open(f"{base_url}/api/deals?from_msc=1&to_msc=1", timeout=2)
             self.assertEqual(invalid.exception.code, 400)

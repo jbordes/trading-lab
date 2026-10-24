@@ -45,6 +45,13 @@ const historyEmpty = document.getElementById("history-empty");
 const historyCount = document.getElementById("history-count");
 const historyScope = document.getElementById("history-scope");
 const historyMore = document.getElementById("history-more");
+const metricsStatus = document.getElementById("metrics-status");
+const metricElements = {
+  net: document.getElementById("metric-net"), count: document.getElementById("metric-count"),
+  pf: document.getElementById("metric-pf"), win: document.getElementById("metric-win"),
+  average: document.getElementById("metric-average"), maxDd: document.getElementById("metric-max-dd"),
+  returnDd: document.getElementById("metric-return-dd"), expectancy: document.getElementById("metric-expectancy"),
+};
 let latestOperations = [];
 let latestOperationsTotal = 0;
 let latestOperationsTruncated = false;
@@ -70,6 +77,9 @@ let historyQuery = null;
 let historyInitialized = false;
 let historyLoading = false;
 let historyRequest = 0;
+let metricsRequest = 0;
+let historyMetrics = null;
+const metricCharts = new Map();
 const operationNodes = new Map();
 const expandedOperationTickets = new Set();
 
@@ -581,6 +591,7 @@ async function loadDealHistory({ append = false } = {}) {
   if (!historyQuery || (append && !historyNextCursor)) return;
 
   const requestNumber = ++historyRequest;
+  if (!append) void loadHistoryMetrics(historyQuery, ++metricsRequest);
   const parameters = new URLSearchParams({
     from_msc: String(historyQuery.fromMsc),
     to_msc: String(historyQuery.toMsc),
@@ -625,6 +636,110 @@ async function loadDealHistory({ append = false } = {}) {
     window.clearTimeout(timeout);
     if (requestNumber === historyRequest) setHistoryLoading(false);
   }
+}
+
+async function loadHistoryMetrics(query, requestNumber) {
+  historyMetrics = null;
+  renderHistoryMetrics();
+  metricsStatus.textContent = "Calculando sobre el historial verificado…";
+  const parameters = new URLSearchParams({
+    from_msc: String(query.fromMsc),
+    to_msc: String(query.toMsc),
+  });
+  if (query.magic !== null) parameters.set("magic_number", query.magic);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(`/api/metrics?${parameters}`, {
+      cache: "no-store", signal: controller.signal,
+    });
+    if (response.status === 401) {
+      window.location.assign("/login");
+      return;
+    }
+    if (!response.ok) throw new Error("No se pudieron calcular las métricas para este período.");
+    const payload = await response.json();
+    if (requestNumber !== metricsRequest) return;
+    if (payload?.formula_version !== "partner-workbook-v1" || !Array.isArray(payload.series)) {
+      throw new Error("El servicio devolvió métricas en un formato desconocido.");
+    }
+    historyMetrics = payload;
+    renderHistoryMetrics();
+  } catch (error) {
+    if (requestNumber !== metricsRequest) return;
+    metricsStatus.textContent = error.name === "AbortError"
+      ? "El cálculo tardó demasiado. Probá un período menor."
+      : error.message;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function renderHistoryMetrics() {
+  const value = historyMetrics;
+  metricElements.net.textContent = value ? money(value.net_profit, latestCurrency, true) : "—";
+  metricElements.net.classList.toggle("positive-text", Boolean(value && value.net_profit > 0));
+  metricElements.net.classList.toggle("negative-text", Boolean(value && value.net_profit < 0));
+  metricElements.count.textContent = value ? number(value.trade_count) : "—";
+  metricElements.pf.textContent = value ? decimal(value.profit_factor) : "—";
+  metricElements.win.textContent = value && Number.isFinite(value.winning_percentage)
+    ? `${decimal(value.winning_percentage * 100)} %` : "—";
+  metricElements.average.textContent = value ? money(value.average_trade, latestCurrency, true) : "—";
+  metricElements.maxDd.textContent = value ? money(value.maximum_drawdown, latestCurrency) : "—";
+  metricElements.returnDd.textContent = value ? decimal(value.return_drawdown_ratio) : "—";
+  metricElements.expectancy.textContent = value && Number.isFinite(value.expectancy_r)
+    ? `${decimal(value.expectancy_r)} R` : "—";
+  if (!value) {
+    metricCharts.forEach((chartInstance) => chartInstance.clear());
+    return;
+  }
+  metricsStatus.textContent = value.trade_count
+    ? `${value.trade_count} cierres · ${value.formula_version}`
+    : "Sin cierres para los filtros elegidos.";
+  renderMetricCharts(Array.isArray(value.series) ? value.series : []);
+}
+
+function renderMetricCharts(series) {
+  if (!window.echarts) {
+    metricsStatus.textContent = "La librería de gráficos no pudo cargarse.";
+    return;
+  }
+  const style = getComputedStyle(document.documentElement);
+  const ink = style.getPropertyValue("--ink-2").trim();
+  const border = style.getPropertyValue("--border").trim();
+  const accent = style.getPropertyValue("--accent").trim();
+  const profit = style.getPropertyValue("--profit").trim();
+  const loss = style.getPropertyValue("--loss").trim();
+  const labels = series.map((point) => dateTimeFormatter.format(new Date(point.time_msc)));
+  const common = {
+    animationDuration: 250,
+    aria: { enabled: true },
+    grid: { left: 12, right: 10, top: 16, bottom: 22, containLabel: true },
+    tooltip: { trigger: "axis", valueFormatter: (value) => money(value, latestCurrency, true) },
+    xAxis: { type: "category", data: labels, axisLabel: { color: ink, hideOverlap: true }, axisLine: { lineStyle: { color: border } } },
+    yAxis: { type: "value", axisLabel: { color: ink }, splitLine: { lineStyle: { color: border } } },
+  };
+  const definitions = [
+    ["chart-cumulative", "cumulative_profit", "line", accent],
+    ["chart-drawdown", "drawdown", "line", loss],
+    ["chart-profit", "net_profit", "bar", null],
+    ["chart-rolling", "rolling_average_20", "line", accent],
+  ];
+  definitions.forEach(([id, field, type, color]) => {
+    const node = document.getElementById(id);
+    const instance = metricCharts.get(id) || window.echarts.init(node);
+    metricCharts.set(id, instance);
+    const data = id === "chart-profit"
+      ? series.map((point) => ({
+        value: point[field],
+        itemStyle: { color: point[field] >= 0 ? profit : loss },
+      }))
+      : series.map((point) => point[field]);
+    instance.setOption({
+      ...common,
+      series: [{ type, data, itemStyle: { color }, lineStyle: { color, width: 2 }, symbol: "none" }],
+    }, true);
+  });
 }
 
 function renderHistory() {
@@ -1084,7 +1199,10 @@ function activateView(view) {
   activeView = view;
   if (activeView === "operations") renderOperations();
   else if (activeView === "history" && !historyInitialized) loadDealHistory();
-  else if (activeView === "history") renderHistory();
+  else if (activeView === "history") {
+    renderHistory();
+    window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
+  }
   else if (activeView === "activity") renderActivity();
   else renderChart(lastHistory, latestIntervalSeconds);
 }
@@ -1110,6 +1228,24 @@ document.querySelectorAll(".view-tab").forEach((button) => {
 window.addEventListener("hashchange", () => {
   const view = location.hash.slice(1);
   if (["overview", "operations", "history", "activity"].includes(view)) activateView(view);
+});
+
+let chartResizeFrame = null;
+window.addEventListener("resize", () => {
+  if (chartResizeFrame !== null) window.cancelAnimationFrame(chartResizeFrame);
+  chartResizeFrame = window.requestAnimationFrame(() => {
+    metricCharts.forEach((chart) => chart.resize());
+    chartResizeFrame = null;
+  });
+});
+
+new MutationObserver(() => {
+  if (historyMetrics) renderMetricCharts(historyMetrics.series);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (historyMetrics && !document.documentElement.dataset.theme) {
+    renderMetricCharts(historyMetrics.series);
+  }
 });
 const FILTER_STORE = "tradinglab-dashboard-filters";
 

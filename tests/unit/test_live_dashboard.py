@@ -448,6 +448,7 @@ class LiveDashboardTest(unittest.TestCase):
                 payload = gzip.decompress(response.read())
                 self.assertTrue(payload.startswith(b'"use strict"'))
             for asset, content_type in (
+                ("vendor/echarts-6.1.0.min.js", "text/javascript; charset=utf-8"),
                 ("logo_black.png", "image/png"),
                 ("logo_white.png", "image/png"),
                 ("favicon-black.ico", "image/x-icon"),
@@ -788,6 +789,9 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('id="history-period"', dashboard)
         self.assertIn('id="history-magic"', dashboard)
         self.assertIn('id="history-more"', dashboard)
+        self.assertIn('id="history-metrics"', dashboard)
+        self.assertIn('id="chart-cumulative"', dashboard)
+        self.assertIn('src="/assets/vendor/echarts-6.1.0.min.js"', dashboard)
         self.assertNotIn('id="freshness" aria-live', dashboard)
         self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
         self.assertLess(
@@ -803,6 +807,7 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         )
         self.assertIn("Los filtros solo abarcan el detalle recibido", app)
         self.assertIn("/api/deals?", app)
+        self.assertIn("/api/metrics?", app)
         self.assertIn("HISTORY_CLIENT_LIMIT = 500", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:

@@ -36,6 +36,15 @@ const visiblePositions = document.getElementById("visible-positions");
 const visibleOrders = document.getElementById("visible-orders");
 const clearFilter = document.getElementById("clear-filter");
 const healthOverview = document.getElementById("health-overview");
+const historyFilters = document.getElementById("history-filters");
+const historyPeriod = document.getElementById("history-period");
+const historyMagic = document.getElementById("history-magic");
+const historyReset = document.getElementById("history-reset");
+const historyBody = document.getElementById("history-body");
+const historyEmpty = document.getElementById("history-empty");
+const historyCount = document.getElementById("history-count");
+const historyScope = document.getElementById("history-scope");
+const historyMore = document.getElementById("history-more");
 let latestOperations = [];
 let latestOperationsTotal = 0;
 let latestOperationsTruncated = false;
@@ -55,6 +64,12 @@ let latestStatus = "starting";
 let currentFilterScope = "uninitialized";
 let refreshInFlight = null;
 let latestHealthState = null;
+let historyDeals = [];
+let historyNextCursor = null;
+let historyQuery = null;
+let historyInitialized = false;
+let historyLoading = false;
+let historyRequest = 0;
 const operationNodes = new Map();
 const expandedOperationTickets = new Set();
 
@@ -141,6 +156,18 @@ const activityStates = {
   request_add: "Solicitud de alta",
   request_modify: "Solicitud de cambio",
   request_cancel: "Solicitud de cancelación",
+};
+
+const dealTypes = {
+  0: "Compra", 1: "Venta", 2: "Balance", 3: "Crédito", 4: "Cargo",
+  5: "Corrección", 6: "Bonus", 7: "Comisión", 8: "Comisión diaria",
+  9: "Comisión mensual", 10: "Comisión agente", 11: "Interés",
+  12: "Compra cancelada", 13: "Venta cancelada", 14: "Dividendo",
+  15: "Dividendo franqueado", 16: "Impuesto", 17: "Otro",
+};
+
+const dealEntries = {
+  0: "Entrada", 1: "Salida", 2: "Entrada y salida", 3: "Cierre por otra posición",
 };
 
 const LOCALE = "es-AR";
@@ -260,11 +287,15 @@ function renderState(state) {
   const health = state.source_health || {};
   const filterScope = health.source_id || value.source || "local";
   if (filterScope !== currentFilterScope) loadStoredFilters(filterScope);
-  if (value.observed_at === lastObservedAt) return;
-  lastObservedAt = value.observed_at;
-  lastPollSince = value.observed_at;
+  const currencyChanged = latestCurrency !== currency;
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
+  if (value.observed_at === lastObservedAt) {
+    if (currencyChanged && activeView === "history") renderHistory();
+    return;
+  }
+  lastObservedAt = value.observed_at;
+  lastPollSince = value.observed_at;
   modeNotice.hidden = value.source !== "demo";
   elements["account-identity"].textContent = value.account_reference && value.server
     ? `Cuenta ${value.account_reference} · ${value.server} · ${currency}`
@@ -435,10 +466,10 @@ function buildActivityContent(events) {
     const block = document.createElement("div");
     block.className = "activity-info";
     const text = document.createElement("p");
-    text.textContent = "Todavía no mostramos operaciones cerradas en la telemetría. Estamos validando la zona horaria del servidor de MetaTrader 5 y los resultados antes de publicarlos.";
+    text.textContent = "Las ejecuciones conservadas en SQLite se consultan en Historial. Esta sección queda reservada para el estado de captura y los eventos recientes.";
     const link = document.createElement("a");
-    link.href = "#operations";
-    link.textContent = "Ver operaciones abiertas";
+    link.href = "#history";
+    link.textContent = "Ver historial de ejecuciones";
     block.append(text, link);
     return [block];
   }
@@ -495,6 +526,149 @@ function buildActivityContent(events) {
   table.append(caption, thead, tbody);
   nodes.push(table);
   return nodes;
+}
+
+const HISTORY_PAGE_SIZE = 50;
+const HISTORY_CLIENT_LIMIT = 500;
+
+function historyMagicValue() {
+  const value = historyMagic.value.trim();
+  historyMagic.setCustomValidity("");
+  if (!value) return null;
+  if (!/^-?(0|[1-9][0-9]{0,18})$/.test(value)) {
+    historyMagic.setCustomValidity("Ingresá un Magic Number entero sin espacios.");
+    return null;
+  }
+  const parsed = BigInt(value);
+  if (parsed < -(2n ** 63n) || parsed > 2n ** 63n - 1n) {
+    historyMagic.setCustomValidity("El Magic Number está fuera del rango admitido por MT5.");
+    return null;
+  }
+  return value;
+}
+
+function setHistoryLoading(loading) {
+  historyLoading = loading;
+  historyFilters.querySelector('button[type="submit"]').disabled = loading;
+  historyMore.disabled = loading;
+  if (loading && historyDeals.length === 0) {
+    historyEmpty.hidden = false;
+    historyEmpty.textContent = "Consultando el historial guardado…";
+  }
+}
+
+async function loadDealHistory({ append = false } = {}) {
+  if (historyLoading) return;
+  const magic = historyMagicValue();
+  if (historyMagic.validationMessage) {
+    historyMagic.reportValidity();
+    return;
+  }
+  if (!append) {
+    const days = Number(historyPeriod.value);
+    const toMsc = Date.now();
+    historyQuery = {
+      fromMsc: toMsc - days * 24 * 60 * 60 * 1000,
+      toMsc,
+      magic,
+      days,
+    };
+    historyDeals = [];
+    historyNextCursor = null;
+    historyInitialized = true;
+    renderHistory();
+  }
+  if (!historyQuery || (append && !historyNextCursor)) return;
+
+  const requestNumber = ++historyRequest;
+  const parameters = new URLSearchParams({
+    from_msc: String(historyQuery.fromMsc),
+    to_msc: String(historyQuery.toMsc),
+    limit: String(HISTORY_PAGE_SIZE),
+  });
+  if (historyQuery.magic !== null) parameters.set("magic_number", historyQuery.magic);
+  if (append) parameters.set("cursor", historyNextCursor);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  setHistoryLoading(true);
+  try {
+    const response = await fetch(`/api/deals?${parameters}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (response.status === 401) {
+      window.location.assign("/login");
+      return;
+    }
+    if (response.status === 404) {
+      throw new Error("El historial durable requiere el receptor con almacenamiento SQLite.");
+    }
+    if (!response.ok) throw new Error("No se pudo consultar el historial guardado.");
+    const payload = await response.json();
+    if (requestNumber !== historyRequest) return;
+    const incoming = Array.isArray(payload.deals) ? payload.deals : [];
+    const known = new Set(historyDeals.map((deal) => `${deal.account_id}:${deal.ticket}`));
+    const additions = incoming.filter((deal) => !known.has(`${deal.account_id}:${deal.ticket}`));
+    historyDeals = [...historyDeals, ...additions].slice(0, HISTORY_CLIENT_LIMIT);
+    historyNextCursor = historyDeals.length >= HISTORY_CLIENT_LIMIT ? null : payload.next_cursor;
+    setHistoryLoading(false);
+    renderHistory();
+  } catch (error) {
+    if (requestNumber !== historyRequest) return;
+    historyNextCursor = null;
+    historyEmpty.hidden = historyDeals.length > 0;
+    historyEmpty.textContent = error.name === "AbortError"
+      ? "La consulta tardó demasiado. Podés volver a intentarlo."
+      : error.message;
+    historyMore.hidden = true;
+  } finally {
+    window.clearTimeout(timeout);
+    if (requestNumber === historyRequest) setHistoryLoading(false);
+  }
+}
+
+function renderHistory() {
+  historyBody.replaceChildren(...historyDeals.map(historyRow));
+  historyCount.textContent = number(historyDeals.length);
+  const period = historyQuery ? `${historyQuery.days === 1 ? "Últimas 24 horas" : `Últimos ${historyQuery.days} días`}` : "—";
+  const bot = historyQuery?.magic ? `Magic ${historyQuery.magic}` : "todos los bots";
+  historyScope.textContent = `${period} · ${bot}`;
+  historyEmpty.hidden = historyDeals.length > 0;
+  if (!historyLoading) {
+    historyEmpty.textContent = historyInitialized
+      ? "No hay ejecuciones guardadas para los filtros elegidos."
+      : "Abrí esta sección para consultar el historial.";
+  }
+  historyMore.hidden = !historyNextCursor;
+  historyMore.textContent = "Cargar 50 más";
+}
+
+function historyRow(deal) {
+  const row = document.createElement("tr");
+  const occurredAt = Number.isSafeInteger(deal.time_msc) ? new Date(deal.time_msc) : null;
+  row.appendChild(textCell(
+    occurredAt && !Number.isNaN(occurredAt.getTime()) ? dateTimeFormatter.format(occurredAt) : "—",
+    "",
+    "Hora MT5",
+  ));
+  const type = dealTypes[deal.deal_type] || `Tipo ${deal.deal_type}`;
+  const entry = dealEntries[deal.entry] || `Entrada ${deal.entry}`;
+  row.appendChild(detailCell(type, `Deal #${deal.ticket} · ${entry}`, "", "Ejecución"));
+  row.appendChild(detailCell(deal.symbol || "Cuenta", `Posición #${deal.position_id}`, "", "Instrumento"));
+  row.appendChild(textCell(String(deal.magic_number), "", "Magic"));
+  row.appendChild(textCell(decimal(deal.volume), "numeric", "Volumen"));
+  const result = textCell(money(deal.profit, latestCurrency, true), "numeric", "Resultado");
+  if (deal.profit > 0) result.classList.add("positive-text");
+  else if (deal.profit < 0) result.classList.add("negative-text");
+  row.appendChild(result);
+  const costs = deal.commission + deal.swap + deal.fee;
+  row.appendChild(detailCell(
+    money(costs, latestCurrency, true),
+    `Com. ${money(deal.commission, latestCurrency, true)} · Swap ${money(deal.swap, latestCurrency, true)} · Fee ${money(deal.fee, latestCurrency, true)}`,
+    "numeric",
+    "Costos",
+  ));
+  return row;
 }
 
 function elapsed(seconds) {
@@ -894,7 +1068,9 @@ document.addEventListener("visibilitychange", () => {
 drawGrid();
 window.setInterval(updateFreshness, 1000);
 function activateView(view) {
-  const titles = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" };
+  const titles = {
+    overview: "Resumen", operations: "Operaciones", history: "Historial", activity: "Actividad",
+  };
   setText(document.getElementById("page-title"), titles[view]);
   document.querySelectorAll(".view-tab").forEach((tab) => {
     const active = tab.dataset.view === view;
@@ -907,6 +1083,8 @@ function activateView(view) {
   });
   activeView = view;
   if (activeView === "operations") renderOperations();
+  else if (activeView === "history" && !historyInitialized) loadDealHistory();
+  else if (activeView === "history") renderHistory();
   else if (activeView === "activity") renderActivity();
   else renderChart(lastHistory, latestIntervalSeconds);
 }
@@ -931,7 +1109,7 @@ document.querySelectorAll(".view-tab").forEach((button) => {
 
 window.addEventListener("hashchange", () => {
   const view = location.hash.slice(1);
-  if (["overview", "operations", "activity"].includes(view)) activateView(view);
+  if (["overview", "operations", "history", "activity"].includes(view)) activateView(view);
 });
 const FILTER_STORE = "tradinglab-dashboard-filters";
 
@@ -973,6 +1151,17 @@ clearFilter.addEventListener("click", () => {
   renderOperations();
   saveStoredFilters();
 });
+historyFilters.addEventListener("submit", (event) => {
+  event.preventDefault();
+  loadDealHistory();
+});
+historyReset.addEventListener("click", () => {
+  historyPeriod.value = "7";
+  historyMagic.value = "";
+  historyMagic.setCustomValidity("");
+  loadDealHistory();
+});
+historyMore.addEventListener("click", () => loadDealHistory({ append: true }));
 function scheduleRefresh() {
   window.setTimeout(() => {
     refresh().finally(scheduleRefresh);
@@ -980,7 +1169,7 @@ function scheduleRefresh() {
 }
 
 const initialView = location.hash.slice(1);
-if (["overview", "operations", "activity"].includes(initialView)) {
+if (["overview", "operations", "history", "activity"].includes(initialView)) {
   history.replaceState(null, "", `#${initialView}`);
   activateView(initialView);
 }

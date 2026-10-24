@@ -252,6 +252,20 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
 .filter-field input::placeholder { color: var(--ink-3); }
 .operations-controls { display: grid; grid-template-columns: minmax(180px, 280px) minmax(180px, 260px) auto; align-items: end; gap: 16px; border-top: 1px solid var(--border); padding-top: 20px; }
 .operations-note { margin: 8px 0 0; color: var(--ink-3); font-size: 0.8125rem; max-width: 60ch; }
+.history-controls { display: grid; grid-template-columns: minmax(180px, 240px) minmax(180px, 260px) auto auto; align-items: end; gap: 16px; border-top: 1px solid var(--border); padding-top: 20px; }
+.primary-action, .secondary-action {
+  min-height: 44px; padding: 9px 16px; border: 1px solid transparent; border-radius: var(--radius-md);
+  font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer;
+}
+.primary-action { background: var(--accent); color: var(--on-accent); }
+.primary-action:hover { background: var(--accent-hover); color: var(--on-accent); }
+.secondary-action { border-color: var(--control-border); background: var(--surface); color: var(--ink-2); }
+.secondary-action:hover { border-color: var(--accent); color: var(--ink); }
+.primary-action:disabled, .secondary-action:disabled { opacity: 0.55; cursor: wait; }
+.history-note { display: block; margin-top: 14px; }
+.history-actions { display: flex; justify-content: center; padding-top: 18px; }
+.history-table td:first-child { white-space: nowrap; }
+.history-table .cell-detail small { font-family: var(--font-mono); }
 
 .operation-stats { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 18px 0 12px; color: var(--ink-3); font-size: 0.75rem; }
 .operation-stats strong { color: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -350,6 +364,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .metric-card { padding: 0 16px; }
   .content-grid { grid-template-columns: 1fr; }
   .operations-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; }
+  .history-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
   .health-grid { grid-template-columns: 1fr; }
 }
 
@@ -373,7 +388,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   }
   .site-nav-links > a[aria-current="page"], .view-tab.active { background: transparent; }
   .site-nav-links .nav-icon { width: 21px; height: 21px; }
-  .view-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-column: 1 / -1; gap: 0; margin: 0; border: 0; }
+  .view-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-column: 1 / -1; gap: 0; margin: 0; border: 0; }
   .view-tab .nav-count { display: none; }
   .site-nav .theme-toggle {
     position: fixed; inset: 16px 24px auto auto; z-index: 21;
@@ -406,6 +421,13 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .activity-table td[data-label="Magic"] { grid-column: 1 / -1; grid-row: 4; color: var(--ink-3); font-size: 0.75rem; }
   .activity-table td[data-label="Magic"]::before { content: "Magic "; }
   .activity-table td[data-label="Resultado"] { grid-column: 2; grid-row: 1; font-size: 1rem; }
+  .history-table td[data-label="Instrumento"] { grid-column: 1; grid-row: 1; font-size: 1rem; }
+  .history-table td[data-label="Resultado"] { grid-column: 2; grid-row: 1; font-size: 1rem; font-weight: 600; }
+  .history-table td[data-label="Ejecución"] { grid-column: 1; grid-row: 2; }
+  .history-table td[data-label="Costos"] { grid-column: 2; grid-row: 2; }
+  .history-table td[data-label="Hora MT5"] { grid-column: 1 / -1; grid-row: 3; color: var(--ink-3); font-size: 0.75rem; }
+  .history-table td[data-label="Magic"] { grid-column: 1; grid-row: 4; color: var(--ink-3); font-size: 0.75rem; }
+  .history-table td[data-label="Volumen"] { grid-column: 2; grid-row: 4; }
 }
 
 @media (max-width: 520px) {
@@ -439,7 +461,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .connection div { flex-direction: row; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
   .connection strong, .connection small { font-size: 0.75rem; }
   .mode-notice { font-size: 0.75rem; margin-bottom: 12px; }
-  .view-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+  .view-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 0; padding: 8px 0 20px; }
   .metric-card { padding: 0 0 0 16px; }
   .metric-card:nth-child(2) { padding-left: 0; border-left: 0; }
@@ -453,6 +475,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .operations-panel { padding: 0; border: 0; background: transparent; }
   .operations-heading { margin-bottom: 16px; }
   .operations-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding-top: 16px; }
+  .history-controls { grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 16px; }
+  .history-controls .clear-filter { grid-column: 1; }
   .filter-field select { padding: 8px 4px; font-size: 0.75rem; }
   .clear-filter { grid-column: 1 / -1; justify-self: start; padding-left: 0; }
   .clear-filter:disabled { display: none; }

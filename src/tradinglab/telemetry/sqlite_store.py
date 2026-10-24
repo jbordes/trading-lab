@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
+    MAX_INT64,
+    MAX_UINT64,
     TelemetryEnvelope,
     parse_envelope,
 )
@@ -105,6 +109,72 @@ class RestoredSnapshot:
     message_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class DealHistoryCursor:
+    """Stable keyset cursor for a descending historical-deal page."""
+
+    time_msc: int
+    ticket: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.time_msc, bool)
+            or not isinstance(self.time_msc, int)
+            or not 0 <= self.time_msc <= MAX_INT64
+        ):
+            raise ValueError("Cursor de historial inválido")
+        _unsigned_decimal(self.ticket, maximum=MAX_UINT64, label="cursor")
+        if self.ticket == "0":
+            raise ValueError("Cursor de historial inválido")
+
+    def encode(self) -> str:
+        return f"{self.time_msc}.{self.ticket}"
+
+    @classmethod
+    def decode(cls, value: str) -> DealHistoryCursor:
+        if not isinstance(value, str) or value.count(".") != 1:
+            raise ValueError("Cursor de historial inválido")
+        time_text, ticket = value.split(".")
+        _unsigned_decimal(time_text, maximum=MAX_INT64, label="cursor")
+        return cls(int(time_text), ticket)
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalDeal:
+    """One validated MT5 deal and the journal observation that supplied it."""
+
+    account_id: str
+    source_id: str
+    message_id: int
+    captured_at: str
+    ticket: str
+    order_id: str
+    position_id: str
+    magic_number: str
+    time_msc: int
+    deal_type: int
+    entry: int
+    symbol: str
+    volume: float
+    price: float
+    profit: float
+    commission: float
+    swap: float
+    fee: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class DealHistoryPage:
+    """Bounded result; next_cursor is absent only on the final page."""
+
+    account_id: str
+    deals: tuple[HistoricalDeal, ...]
+    next_cursor: DealHistoryCursor | None
+
+
 def _identifier(value: str) -> None:
     if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
         raise ValueError("Identificador inválido")
@@ -118,6 +188,29 @@ def _text(value: str, limit: int) -> None:
         or any(not character.isprintable() for character in value)
     ):
         raise ValueError("Metadato vacío, demasiado largo o con caracteres no admitidos")
+
+
+def _unsigned_decimal(value: str, *, maximum: int, label: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or (len(value) > 1 and value.startswith("0"))
+        or not value.isascii()
+        or not value.isdecimal()
+        or int(value) > maximum
+    ):
+        raise ValueError(f"{label} inválido")
+
+
+def _magic_number(value: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError("Magic Number inválido")
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError("Magic Number inválido") from exc
+    if str(parsed) != value or not -(2**63) <= parsed <= MAX_INT64:
+        raise ValueError("Magic Number inválido")
 
 
 def _timestamp(value: datetime) -> str:
@@ -318,6 +411,192 @@ class TelemetryRegistry:
             raise
         except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
             raise TelemetryStorageError("No se pudo recuperar el snapshot guardado") from exc
+
+    def account_for_source(self, source_id: str) -> str:
+        """Return the immutable account bound to a registered source."""
+        _identifier(source_id)
+        try:
+            row = self._connection.execute(
+                "SELECT account_id FROM sources WHERE source_id = ?", (source_id,)
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise TelemetryStorageError("No se pudo leer la cuenta de la fuente") from exc
+        if row is None:
+            raise MessageAdmissionError("Fuente no registrada")
+        return str(row[0])
+
+    def deal_history(
+        self,
+        account_id: str,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: DealHistoryCursor | None = None,
+    ) -> DealHistoryPage:
+        """Read a bounded, newest-first page from overlapping v1 history windows.
+
+        A deal identity is ``account_id + ticket``. When collectors resend or
+        correct a deal, the newest captured observation wins. ``to_msc`` is an
+        exclusive boundary. The query never mutates the journal or loads all
+        matching messages into Python memory.
+        """
+        _identifier(account_id)
+        if (
+            isinstance(from_msc, bool)
+            or not isinstance(from_msc, int)
+            or isinstance(to_msc, bool)
+            or not isinstance(to_msc, int)
+            or not 0 <= from_msc < to_msc <= MAX_INT64
+        ):
+            raise ValueError("Período de historial inválido")
+        if magic_number is not None:
+            _magic_number(magic_number)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("El límite de historial debe ser 1..100")
+        if cursor is not None and not isinstance(cursor, DealHistoryCursor):
+            raise ValueError("Cursor de historial inválido")
+
+        parameters: list[object] = [account_id, from_msc, to_msc]
+        filters = [
+            "observation_rank = 1",
+            "deal_time_msc >= ?",
+            "deal_time_msc < ?",
+        ]
+        if magic_number is not None:
+            filters.append("magic_number = ?")
+            parameters.append(magic_number)
+        if cursor is not None:
+            filters.append(
+                """(deal_time_msc < ? OR (deal_time_msc = ? AND
+                (length(ticket) < ? OR (length(ticket) = ? AND ticket < ?))))"""
+            )
+            parameters.extend(
+                (
+                    cursor.time_msc,
+                    cursor.time_msc,
+                    len(cursor.ticket),
+                    len(cursor.ticket),
+                    cursor.ticket,
+                )
+            )
+        parameters.append(limit + 1)
+        sql = f"""
+            WITH observations AS (
+                SELECT a.account_id, s.source_id, m.message_id, m.session_id,
+                       m.sequence, m.captured_at_utc, m.received_at_utc,
+                       m.schema_version, m.collector_version, m.payload_json,
+                       m.content_sha256, deal.value AS deal_json,
+                       json_extract(deal.value, '$.ticket') AS ticket,
+                       json_extract(deal.value, '$.magic_number') AS magic_number,
+                       CAST(json_extract(deal.value, '$.time_msc') AS INTEGER)
+                           AS deal_time_msc,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY a.account_id,
+                                        json_extract(deal.value, '$.ticket')
+                           ORDER BY m.captured_at_utc DESC, m.message_id DESC,
+                                    s.source_id DESC
+                       ) AS observation_rank
+                FROM telemetry_messages AS m
+                JOIN sources AS s ON s.source_id = m.source_id
+                JOIN accounts AS a ON a.account_id = s.account_id
+                JOIN json_each(m.payload_json, '$.payload.history.deals') AS deal
+                WHERE a.account_id = ?
+                  AND json_extract(m.payload_json, '$.kind') = 'account_snapshot'
+            )
+            SELECT account_id, source_id, message_id, session_id, sequence,
+                   captured_at_utc, received_at_utc, schema_version,
+                   collector_version, payload_json, content_sha256, deal_json,
+                   ticket, deal_time_msc
+            FROM observations
+            WHERE {" AND ".join(filters)}
+            ORDER BY deal_time_msc DESC, length(ticket) DESC, ticket DESC
+            LIMIT ?
+        """
+        try:
+            rows = self._connection.execute(sql, parameters).fetchall()
+            if (
+                not rows
+                and self._connection.execute(
+                    "SELECT 1 FROM accounts WHERE account_id = ?", (account_id,)
+                ).fetchone()
+                is None
+            ):
+                raise MessageAdmissionError("Cuenta no registrada")
+            deals = tuple(self._restore_deal_row(row) for row in rows[:limit])
+        except MessageAdmissionError:
+            raise
+        except TelemetryStorageError:
+            raise
+        except (sqlite3.Error, UnicodeError, ValueError, TypeError, KeyError) as exc:
+            raise TelemetryStorageError("No se pudo consultar el historial guardado") from exc
+        next_cursor = None
+        if len(rows) > limit:
+            last = deals[-1]
+            next_cursor = DealHistoryCursor(last.time_msc, last.ticket)
+        return DealHistoryPage(account_id, deals, next_cursor)
+
+    @staticmethod
+    def _restore_deal_row(row: tuple[object, ...]) -> HistoricalDeal:
+        (
+            account_id,
+            source_id,
+            message_id,
+            session_id,
+            sequence,
+            captured,
+            received,
+            schema,
+            collector,
+            canonical,
+            digest,
+            deal_json,
+            ticket,
+            deal_time_msc,
+        ) = row
+        payload = canonical.encode("utf-8")
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise TelemetryStorageError("El mensaje histórico no coincide con su hash")
+        envelope = parse_envelope(payload)
+        if (
+            canonical != envelope.canonical_bytes().decode("utf-8")
+            or (envelope.source_id, envelope.session_id, str(envelope.sequence))
+            != (source_id, session_id, sequence)
+            or _timestamp(datetime.fromisoformat(envelope.captured_at)) != captured
+            or (envelope.schema_version, envelope.collector_version) != (schema, collector)
+            or envelope.kind != "account_snapshot"
+        ):
+            raise TelemetryStorageError("Columnas y mensaje histórico no coinciden")
+        received_at = datetime.fromisoformat(received)
+        if received_at.tzinfo is None or _timestamp(received_at) != received:
+            raise TelemetryStorageError("Hora histórica guardada inválida")
+        deal: dict[str, Any] = json.loads(deal_json)
+        history = envelope.payload.get("history")
+        if history is None or deal not in history["deals"]:
+            raise TelemetryStorageError("Deal y mensaje histórico no coinciden")
+        if deal["ticket"] != ticket or int(deal["time_msc"]) != deal_time_msc:
+            raise TelemetryStorageError("Clave de deal histórico inválida")
+        return HistoricalDeal(
+            account_id=str(account_id),
+            source_id=str(source_id),
+            message_id=int(message_id),
+            captured_at=str(captured),
+            ticket=deal["ticket"],
+            order_id=deal["order_id"],
+            position_id=deal["position_id"],
+            magic_number=deal["magic_number"],
+            time_msc=int(deal["time_msc"]),
+            deal_type=deal["deal_type"],
+            entry=deal["entry"],
+            symbol=deal["symbol"],
+            volume=float(deal["volume"]),
+            price=float(deal["price"]),
+            profit=float(deal["profit"]),
+            commission=float(deal["commission"]),
+            swap=float(deal["swap"]),
+            fee=float(deal["fee"]),
+        )
 
     @staticmethod
     def _restore_snapshot_row(row: tuple[object, ...], *, source_id: str) -> RestoredSnapshot:

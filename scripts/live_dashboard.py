@@ -128,7 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         interval_seconds=args.interval,
         health_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
     )
-    server = create_server(service, port=args.port, dashboard_token=access)
+    server = create_server(
+        service,
+        port=args.port,
+        dashboard_token=access,
+        history_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
+    )
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")
     print("Presione Ctrl+C para detener.")

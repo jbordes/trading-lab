@@ -93,7 +93,7 @@ async function main() {
       });
       for (const width of [1440, 768, 390, 320]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
-        for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#activity"]) {
+        for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#history", "/dashboard#activity"]) {
           await navigate(route);
           await evaluate(`(() => {
             const current = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -121,13 +121,13 @@ async function main() {
           assert.ok(layout.footer >= layout.tableBottom, `${name}: footer overlaps operations`);
           assert.equal(layout.navPosition, route === "/" ? null : width < 1000 ? "fixed" : "static", `${name}: navigation position`);
           assert.equal(layout.publicHeader, route === "/", `${name}: public and workspace shells are separate`);
-          assert.equal(layout.viewCount, route === "/" ? 0 : 3, `${name}: dashboard has only its three views`);
+          assert.equal(layout.viewCount, route === "/" ? 0 : 4, `${name}: dashboard has its four work views`);
           assert.equal(layout.homeLinks, 0, `${name}: no cross-section links from presentation page`);
           assert.ok(layout.logo.includes(`tradinglab-apple-touch-icon-${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
           assert.equal(layout.iconTheme, layout.browserTheme, `${name}: favicon follows browser preference`);
           assert.ok(layout.squareIcon, `${name}: favicon keeps logo aspect on a square canvas`);
           if (route.includes("#")) {
-            const expected = { overview: "Resumen", operations: "Operaciones", activity: "Actividad" }[route.split("#")[1]];
+            const expected = { overview: "Resumen", operations: "Operaciones", history: "Historial", activity: "Actividad" }[route.split("#")[1]];
             assert.equal(layout.title, expected, `${name}: page title`);
           }
           await screenshot(name);

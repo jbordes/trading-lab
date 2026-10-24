@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from test_mt5_telemetry import TOKEN, encoded, snapshot_message
+from test_telemetry_history import history_message
 
 from tradinglab.telemetry.ingest import create_telemetry_server
 from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
@@ -125,6 +126,34 @@ class PersistentHttpTest(unittest.TestCase):
 
         with self.assertRaises(MessageAdmissionError):
             PersistentTelemetryReceiver(self.database, source_id="not-registered")
+
+    def test_authenticated_deal_history_is_filtered_and_paginated(self) -> None:
+        message = history_message()
+        prototype = message["payload"]["history"]["deals"][0]
+        deals = [dict(prototype, ticket=str(ticket), time_msc="999001") for ticket in range(1, 4)]
+        message["payload"]["history"].update(deals=deals, total=3)
+        self.assertEqual(self.request("/v1/telemetry", message=message)[0], 202)
+
+        route = f"/v1/deals?source_id={SOURCE}&from_msc=999000&to_msc=1000000&limit=2"
+        status, first = self.request(route)
+        self.assertEqual(status, 200)
+        self.assertEqual([deal["ticket"] for deal in first["deals"]], ["3", "2"])
+        self.assertIsNotNone(first["next_cursor"])
+        status, second = self.request(route + f"&cursor={first['next_cursor']}")
+        self.assertEqual(status, 200)
+        self.assertEqual([deal["ticket"] for deal in second["deals"]], ["1"])
+        self.assertIsNone(second["next_cursor"])
+
+        filtered = self.request(route + "&magic_number=0")
+        self.assertEqual(filtered[1]["deals"], [])
+        self.assertEqual(self.request(route, token="x")[0], 401)
+
+    def test_deal_history_rejects_invalid_or_unauthorized_queries(self) -> None:
+        base = f"/v1/deals?source_id={SOURCE}&from_msc=1&to_msc=2"
+        self.assertEqual(self.request(base + "&limit=0")[0], 400)
+        self.assertEqual(self.request(base + "&magic_number=01")[0], 400)
+        self.assertEqual(self.request(base + "&cursor=invalid")[0], 400)
+        self.assertEqual(self.request("/v1/deals?source_id=other&from_msc=1&to_msc=2")[0], 404)
 
 
 if __name__ == "__main__":

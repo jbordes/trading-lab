@@ -1,12 +1,49 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 from decimal import Decimal
 
-from tradinglab.metrics.workbook_v1 import FORMULA_VERSION, calculate_workbook_metrics
+from tradinglab.metrics.workbook_v1 import (
+    FORMULA_VERSION,
+    calculate_closed_deal_metrics,
+    calculate_workbook_metrics,
+)
+
+
+@dataclass(frozen=True)
+class Deal:
+    ticket: str
+    time_msc: int
+    deal_type: int
+    entry: int
+    profit: float
+    commission: float = 0
+    swap: float = 0
+    fee: float = 0
 
 
 class WorkbookMetricsTest(unittest.TestCase):
+    def test_selects_only_commercial_exits_and_includes_every_cost(self) -> None:
+        selection = calculate_closed_deal_metrics(
+            (
+                Deal("4", 400, 2, 1, 500),
+                Deal("3", 300, 1, 1, -20, commission=-1, swap=-2, fee=-3),
+                Deal("1", 100, 0, 0, 0, commission=-0.5),
+                Deal("2", 200, 0, 1, 10, commission=-1),
+            )
+        )
+
+        self.assertEqual([result.ticket for result in selection.closed_results], ["2", "3"])
+        self.assertEqual(
+            [result.net_profit for result in selection.closed_results],
+            [Decimal("9"), Decimal("-26")],
+        )
+        self.assertEqual(selection.metrics.net_profit, Decimal("-17"))
+        self.assertEqual(selection.source_deal_count, 4)
+        self.assertEqual(selection.ignored_opening_deals, 1)
+        self.assertEqual(selection.ignored_non_trade_deals, 1)
+
     def test_matches_partner_workbook_observed_on_2026_10_24(self) -> None:
         values = tuple(
             Decimal(value)

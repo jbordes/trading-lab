@@ -2,14 +2,50 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Protocol
 
 FORMULA_VERSION = "partner-workbook-v1"
 DEFAULT_REFERENCE_CAPITAL = Decimal("100000")
 DEFAULT_RISK_AMOUNT = Decimal("200")
 ROLLING_WINDOW = 20
+COMMERCIAL_DEAL_TYPES = frozenset((0, 1))
+CLOSING_ENTRY_TYPES = frozenset((1, 2, 3))
+
+
+class DealForMetrics(Protocol):
+    """Minimum validated MT5 deal shape needed by the workbook adapter."""
+
+    ticket: str
+    time_msc: int
+    deal_type: int
+    entry: int
+    profit: float
+    commission: float
+    swap: float
+    fee: float
+
+
+@dataclass(frozen=True, slots=True)
+class ClosedResult:
+    """One commercial exit row, matching the workbook's current row granularity."""
+
+    ticket: str
+    time_msc: int
+    net_profit: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class WorkbookMetricSelection:
+    """Metrics plus explicit evidence of what the provisional selector ignored."""
+
+    metrics: WorkbookMetrics
+    closed_results: tuple[ClosedResult, ...]
+    source_deal_count: int
+    ignored_opening_deals: int
+    ignored_non_trade_deals: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +71,55 @@ class WorkbookMetrics:
     drawdown_curve: tuple[Decimal, ...]
     profit_per_trade: tuple[Decimal, ...]
     rolling_average_20: tuple[Decimal, ...]
+
+
+def calculate_closed_deal_metrics(
+    deals: Iterable[DealForMetrics],
+    *,
+    reference_capital: Decimal = DEFAULT_REFERENCE_CAPITAL,
+    risk_amount: Decimal = DEFAULT_RISK_AMOUNT,
+) -> WorkbookMetricSelection:
+    """Select commercial exits and apply the workbook-v1 formulas.
+
+    MT5 pending orders are not deals and therefore cannot enter this selector.
+    Opening deals are retained in durable history but excluded from performance
+    calculations. Partial exits remain separate results, matching the current
+    workbook row granularity rather than claiming reconstructed round trips.
+    """
+    observed = tuple(deals)
+    closed: list[ClosedResult] = []
+    ignored_opening = 0
+    ignored_non_trade = 0
+    for deal in observed:
+        if deal.deal_type not in COMMERCIAL_DEAL_TYPES:
+            ignored_non_trade += 1
+            continue
+        if deal.entry not in CLOSING_ENTRY_TYPES:
+            ignored_opening += 1
+            continue
+        net_profit = sum(
+            (
+                Decimal(str(deal.profit)),
+                Decimal(str(deal.commission)),
+                Decimal(str(deal.swap)),
+                Decimal(str(deal.fee)),
+            ),
+            Decimal(0),
+        )
+        closed.append(ClosedResult(deal.ticket, deal.time_msc, _finite(net_profit)))
+    closed.sort(key=lambda result: (result.time_msc, int(result.ticket)))
+    metrics = calculate_workbook_metrics(
+        tuple(result.net_profit for result in closed),
+        reference_capital=reference_capital,
+        risk_amount=risk_amount,
+    )
+    return WorkbookMetricSelection(
+        metrics=metrics,
+        closed_results=tuple(closed),
+        source_deal_count=len(observed),
+        ignored_opening_deals=ignored_opening,
+        ignored_non_trade_deals=ignored_non_trade,
+    )
 
 
 def calculate_workbook_metrics(

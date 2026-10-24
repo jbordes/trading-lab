@@ -166,6 +166,9 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.
 4. Añadir una comparación por Magic Number después de acordar agrupación de trades,
    costes, movimientos no comerciales, periodo y métricas con el socio.
+   También queda pendiente acordar si la interfaz debe presentar la hora del
+   broker/MT5, la hora local del usuario o ambas; hasta entonces no se usará esa
+   escala temporal para calcular cortes diarios.
 5. Crear tablas derivadas durables e índices mediante una migración explícita
    cuando la consulta real o una prueba sintética representativa demuestre esa
    necesidad. No conservar el historial creciente en memoria.

@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlsplit
 
 from tradinglab.telemetry.contract import (
@@ -23,6 +23,8 @@ from tradinglab.telemetry.contract import (
 )
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.sqlite_store import (
+    DealHistoryCursor,
+    DealHistoryPage,
     MessageAdmissionError,
     MessageConflictError,
     MessageStaleError,
@@ -50,6 +52,20 @@ class TelemetryBackend(Protocol):
     def state(self, *, include_latest: bool = True) -> dict[str, Any]: ...
 
     def latest_account_snapshot(self, source_id: str) -> dict[str, Any] | None: ...
+
+
+@runtime_checkable
+class DealHistoryBackend(Protocol):
+    def deal_history(
+        self,
+        account_id: str,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: DealHistoryCursor | None = None,
+    ) -> DealHistoryPage: ...
 
 
 class TelemetryBuffer:
@@ -282,6 +298,45 @@ def create_telemetry_server(
                     return
                 self._send_json(HTTPStatus.OK, latest)
                 return
+            if path == "/v1/deals":
+                if not self._is_authorized():
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                if not isinstance(buffer, DealHistoryBackend):
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "history_unavailable"})
+                    return
+                try:
+                    query = self._deal_history_query(request_target.query)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_history_query"})
+                    return
+                try:
+                    page = buffer.deal_history(**query)
+                except MessageAdmissionError:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "history_unavailable"})
+                    return
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_history_query"})
+                    return
+                except TelemetryStorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE, {"error": "storage_unavailable"}
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "account_id": query["account_id"],
+                        "from_msc": query["from_msc"],
+                        "to_msc": query["to_msc"],
+                        "magic_number": query["magic_number"],
+                        "deals": [deal.as_dict() for deal in page.deals],
+                        "next_cursor": (
+                            page.next_cursor.encode() if page.next_cursor is not None else None
+                        ),
+                    },
+                )
+                return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -379,6 +434,47 @@ def create_telemetry_server(
                 return None
             source_id = values["source_id"][0]
             return source_id if IDENTIFIER.fullmatch(source_id) else None
+
+        def _deal_history_query(self, query: str) -> dict[str, Any]:
+            values = parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=6,
+            )
+            required = {"account_id", "from_msc", "to_msc"}
+            allowed = required | {"magic_number", "limit", "cursor"}
+            if not required <= set(values) or not set(values) <= allowed:
+                raise ValueError("Parámetros de historial inválidos")
+            if any(len(items) != 1 for items in values.values()):
+                raise ValueError("Parámetros de historial repetidos")
+            account_id = values["account_id"][0]
+            if not IDENTIFIER.fullmatch(account_id):
+                raise ValueError("Cuenta inválida")
+            from_msc = self._query_integer(values["from_msc"][0])
+            to_msc = self._query_integer(values["to_msc"][0])
+            limit = self._query_integer(values.get("limit", ["50"])[0])
+            magic_number = values.get("magic_number", [None])[0]
+            cursor_text = values.get("cursor", [None])[0]
+            cursor = DealHistoryCursor.decode(cursor_text) if cursor_text is not None else None
+            # The registry owns the complete boundary validation.
+            return {
+                "account_id": account_id,
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+                "magic_number": magic_number,
+                "limit": limit,
+                "cursor": cursor,
+            }
+
+        @staticmethod
+        def _query_integer(value: str) -> int:
+            if not value or not value.isascii() or not value.isdecimal():
+                raise ValueError("Entero de consulta inválido")
+            parsed = int(value)
+            if str(parsed) != value:
+                raise ValueError("Entero de consulta inválido")
+            return parsed
 
         def _method_not_allowed(self) -> None:
             self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed"})

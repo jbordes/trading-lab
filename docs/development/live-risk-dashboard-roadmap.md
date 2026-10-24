@@ -157,8 +157,9 @@ Pendiente:
 Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 [ADR-0012](../adr/0012-durable-operation-history.md).
 
-1. Exponer desde la SQLite actual una consulta de deals históricos paginada y de
-   solo lectura, con filtros por cuenta, periodo y Magic Number.
+1. **Backend implementado:** exponer desde la SQLite actual una consulta de deals
+   históricos paginada y de solo lectura, con filtros por cuenta, periodo y
+   Magic Number. Falta consumirla desde la vista del dashboard.
 2. Incorporar una vista de historial que diferencie deals, órdenes, posiciones y
    trades reconstruidos; la primera versión solo afirmará las entidades disponibles.
 3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.

@@ -12,6 +12,8 @@ from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope
 from tradinglab.telemetry.ingest import IngestOutcome
 from tradinglab.telemetry.persisted_view import PersistedSnapshotView
 from tradinglab.telemetry.sqlite_store import (
+    DealHistoryCursor,
+    DealHistoryPage,
     MessageAdmissionError,
     TelemetryStorageError,
     open_registry,
@@ -41,6 +43,7 @@ class PersistentTelemetryReceiver:
         self._context = open_registry(database, cross_thread=True)
         self._registry = self._context.__enter__()
         try:
+            self._account_id = self._registry.account_for_source(source_id)
             self._view = PersistedSnapshotView(self._registry, source_id=source_id)
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -73,6 +76,30 @@ class PersistentTelemetryReceiver:
             self._require_open()
             snapshot = self._view.snapshot()
             return snapshot.envelope.as_dict() if snapshot is not None else None
+
+    def deal_history(
+        self,
+        account_id: str,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: DealHistoryCursor | None = None,
+    ) -> DealHistoryPage:
+        """Read only the account authorized by this single-source receiver."""
+        if account_id != self._account_id:
+            raise MessageAdmissionError("Cuenta no autorizada por este receptor")
+        with self._lock:
+            self._require_open()
+            return self._registry.deal_history(
+                account_id,
+                from_msc=from_msc,
+                to_msc=to_msc,
+                magic_number=magic_number,
+                limit=limit,
+                cursor=cursor,
+            )
 
     def state(self, *, include_latest: bool = True) -> dict[str, Any]:
         with self._lock:

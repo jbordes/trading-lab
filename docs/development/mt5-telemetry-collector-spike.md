@@ -289,6 +289,37 @@ con igual milisegundo, reinicios, correcciones, filtros, límites y errores; la
 prueba nativa con historial simulado fue ejecutada correctamente en MT5-Juampi
 el 2026-10-17.
 
+### Consulta durable de deals
+
+Cuando el receptor se inicia con la SQLite v1 provisionada, expone una lectura
+autenticada adicional:
+
+```text
+GET /v1/deals?account_id=<cuenta>&from_msc=<incluido>&to_msc=<excluido>&magic_number=<magic>&limit=50&cursor=<cursor>
+```
+
+`account_id`, `from_msc` y `to_msc` son obligatorios. `magic_number`, `limit`
+(1..100) y `cursor` son opcionales. La respuesta ordena los deals del más nuevo
+al más antiguo y entrega `next_cursor` cuando existe otra página. El período usa
+por ahora los milisegundos informados por MT5: no se los presenta todavía como
+UTC porque la zona horaria del servidor sigue pendiente de validación.
+
+La identidad durable es `cuenta + ticket`. Las ventanas solapadas no duplican
+filas y la observación con captura más reciente representa una corrección. Antes
+de devolver cada deal se vuelven a verificar el hash, el contrato y las columnas
+del mensaje que lo contiene. El receptor de fuente única solo permite consultar
+la cuenta asociada a esa fuente; otra cuenta responde como no disponible.
+
+La consulta usa paginación por clave y nunca carga el journal completo en Python,
+pero SQLite todavía debe recorrer el JSON persistido para deduplicar. Es el corte
+inicial deliberado del ADR-0012. Se medirá con volumen representativo antes de
+crear tablas derivadas, índices o una migración. Esta API expone deals MT5, no
+trades reconstruidos, y aún no calcula cobertura, métricas ni rankings por EA.
+
+El endpoint no existe en el receptor puramente en memoria. Continúa ligado a
+loopback y requiere el Bearer token del receptor; el navegador no recibe esa
+credencial.
+
 ### Recursos del receptor (corrección 6)
 
 Por defecto se atienden hasta **8 conexiones simultáneas**, con un plazo de red

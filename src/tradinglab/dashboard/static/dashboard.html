@@ -98,8 +98,8 @@
         </aside>
       </section>
       <details class="risk-note">
-        <summary>Métricas de riesgo · Pendientes de definición</summary>
-        <p>DDD y Max DD todavía no se calculan: falta acordar sus fórmulas y referencias. Los valores de cuenta no sustituyen una evaluación de riesgo. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
+        <summary>Límites de riesgo operativo · Pendientes de definición</summary>
+        <p>El límite diario y el límite general de pérdida de la cuenta todavía requieren fórmulas y referencias acordadas. Son controles operativos distintos del Max Drawdown histórico por EA que aparece en Historial. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
       </details>
       </section>
 
@@ -192,8 +192,12 @@
               <article><span>Ganadoras</span><strong id="metric-win">—</strong></article>
               <article><span>Promedio</span><strong id="metric-average">—</strong></article>
               <article><span>Max Drawdown</span><strong id="metric-max-dd">—</strong></article>
+              <article><span>Max Drawdown %</span><strong id="metric-max-dd-pct">—</strong></article>
+              <article><span>Drawdown actual</span><strong id="metric-current-dd">—</strong></article>
+              <article><span>Drawdown actual %</span><strong id="metric-current-dd-pct">—</strong></article>
               <article><span>Return / DD</span><strong id="metric-return-dd">—</strong></article>
               <article><span>Expectancy neta (R)</span><strong id="metric-expectancy">—</strong></article>
+              <article><span>Desviación estándar</span><strong id="metric-standard-deviation">—</strong></article>
             </div>
             <div class="metrics-charts">
               <article class="metric-chart-card"><h4>Ganancia acumulada</h4><div id="chart-cumulative" class="metric-chart" role="img" aria-label="Gráfico de ganancia acumulada"></div></article>
@@ -201,7 +205,7 @@
               <article class="metric-chart-card"><h4>Resultado por cierre</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de resultado por cierre"></div></article>
               <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 cierres"></div></article>
             </div>
-            <p class="operations-note">Fórmula provisional basada en el Excel del socio. Cada salida o cierre parcial es un resultado; no se afirma que sea un trade reconstruido.</p>
+            <p class="operations-note">Fórmula provisional basada en el Excel del socio. Cada salida o cierre parcial es un resultado; no se afirma que sea un trade reconstruido. Trades/mes espera una fecha de activación válida para cada EA.</p>
           </section>
 
           <p class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>

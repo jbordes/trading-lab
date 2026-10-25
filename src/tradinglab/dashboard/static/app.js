@@ -42,7 +42,11 @@ const metricElements = {
   net: document.getElementById("metric-net"), count: document.getElementById("metric-count"),
   pf: document.getElementById("metric-pf"), win: document.getElementById("metric-win"),
   average: document.getElementById("metric-average"), maxDd: document.getElementById("metric-max-dd"),
+  maxDdPct: document.getElementById("metric-max-dd-pct"),
+  currentDd: document.getElementById("metric-current-dd"),
+  currentDdPct: document.getElementById("metric-current-dd-pct"),
   returnDd: document.getElementById("metric-return-dd"), expectancy: document.getElementById("metric-expectancy"),
+  standardDeviation: document.getElementById("metric-standard-deviation"),
 };
 let latestOperations = [];
 let latestOperationsTotal = 0;
@@ -680,9 +684,16 @@ function renderHistoryMetrics() {
     ? `${decimal(value.winning_percentage * 100)} %` : "—";
   metricElements.average.textContent = value ? money(value.average_trade, latestCurrency, true) : "—";
   metricElements.maxDd.textContent = value ? money(value.maximum_drawdown, latestCurrency) : "—";
+  metricElements.maxDdPct.textContent = value && Number.isFinite(value.maximum_drawdown_percentage)
+    ? `${decimal(value.maximum_drawdown_percentage * 100)} %` : "—";
+  metricElements.currentDd.textContent = value ? money(value.current_drawdown, latestCurrency) : "—";
+  metricElements.currentDdPct.textContent = value && Number.isFinite(value.current_drawdown_percentage)
+    ? `${decimal(value.current_drawdown_percentage * 100)} %` : "—";
   metricElements.returnDd.textContent = value ? decimal(value.return_drawdown_ratio) : "—";
   metricElements.expectancy.textContent = value && Number.isFinite(value.expectancy_r)
     ? `${decimal(value.expectancy_r)} R` : "—";
+  metricElements.standardDeviation.textContent = value
+    ? money(value.standard_deviation, latestCurrency) : "—";
   if (!value) {
     metricCharts.forEach((chartInstance) => chartInstance.clear());
     return;

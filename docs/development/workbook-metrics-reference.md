@@ -20,13 +20,16 @@ puede ingresar porque no es un deal. El resultado neto suma profit, comisión,
 swap y fee. Los cierres parciales siguen siendo filas independientes y no se
 presentan como trades reconstruidos.
 
-El dashboard calcula, para el período y Magic Number elegidos, resultado neto,
-cantidad de cierres, Profit Factor, porcentaje ganador, promedio, drawdown máximo,
-Return/DD y expectancy neta. También muestra ganancia acumulada, drawdown,
-resultado por cierre y media móvil de 20 cierres. La consulta está limitada a 500
-deals y falla explícitamente si el período excede ese límite, en vez de cargar un
-histórico creciente en memoria. Apache ECharts 6.1.0 se distribuye localmente con
-su licencia; el dashboard no depende de una CDN.
+El dashboard calcula y muestra, para el período y Magic Number elegidos, resultado
+neto, cantidad de cierres, Profit Factor, porcentaje ganador, promedio, drawdown
+máximo y actual con sus porcentajes, Return/DD, expectancy neta y desviación
+estándar. También muestra ganancia acumulada, drawdown, resultado por cierre y
+media móvil de 20 cierres. `Average Trade (bene x trade)` no se duplica porque su
+fórmula coincide con Average Trade. Trades por mes espera una procedencia válida
+para la fecha de activación de cada EA. La consulta está limitada a 500 deals y
+falla explícitamente si el período excede ese límite, en vez de cargar un histórico
+creciente en memoria. Apache ECharts 6.1.0 se distribuye localmente con su licencia;
+el dashboard no depende de una CDN.
 
 Esta versión sigue siendo provisional: usa capital de referencia 100000 y riesgo
 de referencia 200 porque son las constantes observadas. El socio deberá confirmar

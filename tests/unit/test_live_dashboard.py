@@ -772,6 +772,16 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
         self.assertIn('id="history-more"', dashboard)
         self.assertIn('id="history-metrics"', dashboard)
         self.assertIn('id="chart-cumulative"', dashboard)
+        for metric_id in (
+            "metric-max-dd-pct",
+            "metric-current-dd",
+            "metric-current-dd-pct",
+            "metric-standard-deviation",
+        ):
+            self.assertIn(f'id="{metric_id}"', dashboard)
+        self.assertIn("Límites de riesgo operativo", dashboard)
+        self.assertIn("distintos del Max Drawdown histórico por EA", dashboard)
+        self.assertIn("Trades/mes espera una fecha de activación", dashboard)
         self.assertIn('id="chart" class="account-chart"', dashboard)
         self.assertNotIn('<svg id="chart"', dashboard)
         self.assertIn('src="/assets/vendor/echarts-6.1.0.min.js"', dashboard)

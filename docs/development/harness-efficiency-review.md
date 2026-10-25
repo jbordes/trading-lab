@@ -1,11 +1,36 @@
 # Revisión de eficiencia del harness
 
-**Estado:** propuesta de evaluación diferida; no implementada.
+**Estado:** inspección orientativa implementada; otras automatizaciones pendientes de evaluación.
 
 Esta nota recoge hipótesis para reducir el costo total del trabajo con agentes.
 No cambia el enrutamiento ni las validaciones vigentes. La configuración actual
 de roles está descrita en [Agentes de costo acotado](cost-aware-agents.md), bajo
 ADR-0013.
+
+## Primer paso disponible: inspección sin ejecución
+
+`uv run python scripts/change.py inspect` muestra rama, base, rutas, cantidad de
+archivos y recomendación. En ramas compara con el ancestro común de `origin/main`
+local e incluye cambios locales y archivos nuevos no ignorados. En `main` o HEAD
+separado compara con HEAD. No actualiza referencias remotas. `--base HEAD` permite
+revisar solo el trabajo local; `--base <commit>` compara con ese commit concreto.
+
+El tamaño se expresa como cantidad de archivos: no calcula líneas ni lee contenidos
+para generar estadísticas. Incluye eliminaciones y ambos nombres de un renombrado.
+Las rutas desconocidas requieren revisar el alcance; no se presumen seguras.
+
+El comando es opcional: preguntas y análisis sin modificaciones no requieren
+ejecutarlo. No corre pruebas, inicia agentes, consulta la red ni modifica Git.
+No convierte una recomendación en bloqueo. Si falla una consulta Git, termina con
+un error sin reintentos. No se implementó caché ni detección de pruebas previas;
+el responsable evita repetir validaciones vigentes. Las recomendaciones de alcance
+local no reemplazan la revisión del diff completo antes del PR.
+
+La clasificación documental es conservadora: Markdown bajo `docs/`, `README.md`
+y `AGENTS.md`. Las imágenes, configuraciones, dependencias y rutas no reconocidas
+requieren revisión explícita. Para código sugiere `fast` y pruebas dirigidas;
+para documentación `docs`. Los comandos se ejecutan mediante `uv run python
+scripts/check.py <modo>`. Las reglas actuales de CI permanecen iguales.
 
 ## Observaciones y preparación existente
 

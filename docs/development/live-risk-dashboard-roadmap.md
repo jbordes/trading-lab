@@ -154,6 +154,12 @@ Pendiente:
 
 ## Prioridad inmediata — Historial y comparación por EA
 
+La comparación con MT5 del 2026-10-25 detectó historial incompleto en la base
+piloto. Antes de considerar representativos los resultados por bot, ejecutar el
+[plan de recuperación histórica](history-recovery-plan.md): separar estado vivo
+y actividad, recuperar deals y órdenes históricas y exponer cobertura por período.
+El primer paso fija responsabilidades; la integración operativa sigue pendiente.
+
 Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 [ADR-0012](../adr/0012-durable-operation-history.md).
 

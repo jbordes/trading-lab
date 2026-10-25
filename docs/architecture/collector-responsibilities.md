@@ -84,6 +84,12 @@ competidores ni nuevos microservicios para el piloto.
 
 ## Composición y recuperación
 
+El [plan de recuperación histórica](../development/history-recovery-plan.md)
+concreta el primer paso con evidencia del piloto. El alcance de actividad incluye
+órdenes históricas sin ejecución como evidencia de comportamiento, sin contarlas
+como trades. Los siguientes pasos integran los componentes v2 existentes antes
+del despliegue y mantienen separados frescura de cuenta y cobertura histórica.
+
 El backend compone la vista de cuenta a partir del último estado vivo válido y
 de la actividad reconciliada. Un lote histórico nunca reemplaza equity o balance.
 Cada flujo conserva frescura, cobertura y errores propios; no presentar la

@@ -38,8 +38,9 @@
 ## Validación
 
 - Preparar el entorno con `uv sync --locked`.
-- Durante el trabajo ejecutar `uv run python scripts/check.py fast`.
-- Antes de cerrar un cambio ejecutar `uv run python scripts/check.py full`.
+- Para un cambio exclusivamente documental ejecutar `uv run python scripts/check.py docs`; el comando rechaza rutas fuera de `docs/`, `AGENTS.md` y `README.md`, y no ejecuta Ruff ni tests de producto.
+- Durante cambios de código ejecutar `uv run python scripts/check.py fast` y únicamente los tests dirigidos al comportamiento modificado.
+- Ejecutar `uv run python scripts/check.py full` una vez sobre el diff final antes de abrir o actualizar el pull request. Repetirlo solo si un cambio posterior puede invalidar el resultado.
 - Un cambio está terminado cuando las validaciones pasan, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff. La jornada se documenta por separado en la bitácora de hoy.
 
 ## Calidad del código

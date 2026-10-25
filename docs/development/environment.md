@@ -26,6 +26,16 @@ Este comando prepara un entorno aislado usando `pyproject.toml`, `.python-versio
 
 ## Comandos
 
+Validación de un cambio exclusivamente documental:
+
+```text
+uv run python scripts/check.py docs
+```
+
+Este modo rechaza cambios fuera de `docs/`, `AGENTS.md` y `README.md`. Comprueba
+las fronteras del repositorio, seguridad de texto, enlaces, ADR y bitácoras, pero
+no ejecuta Ruff ni los tests del producto.
+
 Validación rápida durante el trabajo:
 
 ```text
@@ -38,7 +48,7 @@ Validación completa antes de solicitar revisión:
 uv run python scripts/check.py full
 ```
 
-La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos, enlaces Markdown, formato y lint de Python con Ruff. La completa agrega los tests del harness.
+La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos, enlaces Markdown, formato y lint de Python con Ruff. Durante la implementación se ejecutan aparte solo los tests relacionados con el cambio. La validación completa agrega todos los tests del harness y del producto y se ejecuta una vez sobre el diff final antes del pull request; solo se repite si el diff cambia de forma que pueda invalidarla.
 
 Las reglas para estructurar, probar y proteger código nuevo se encuentran en [Estándares de desarrollo de código](coding-standards.md).
 
@@ -62,9 +72,9 @@ Las decisiones durables o con alternativas relevantes se registran en `docs/adr/
 
 1. Actualizar `main` sin sobrescribir trabajo local.
 2. Crear una rama corta `feature/*`, `fix/*`, `docs/*` o `chore/*`.
-3. Implementar y ejecutar la validación rápida durante el trabajo.
+3. Implementar y ejecutar `docs`, `fast` y tests dirigidos según el alcance.
 4. Actualizar los ADR que correspondan; la bitácora diaria se mantiene por el flujo separado de `main`.
-5. Ejecutar la validación completa y revisar el diff.
+5. Revisar el diff final y ejecutar una vez la validación completa.
 6. Publicar la rama y abrir un pull request.
 7. Esperar que CI pase en Windows, macOS y Linux.
 8. Realizar el merge manualmente después de la revisión humana.

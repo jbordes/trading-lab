@@ -186,6 +186,59 @@ class HarnessChecksTest(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertIn("tests/harness", run.call_args_list[0].args[0])
         self.assertIn("tests/unit", run.call_args_list[1].args[0])
+        self.assertNotIn("-v", run.call_args_list[0].args[0])
+        self.assertNotIn("-v", run.call_args_list[1].args[0])
+
+    def test_documentation_scope_accepts_docs_and_rejects_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "docs").mkdir()
+            (root / "docs" / "guide.md").write_text("# Base\n", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+            self.run_git(root, "add", ".")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
+            self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.run_git(root, "checkout", "-b", "docs/test")
+            (root / "docs" / "guide.md").write_text("# Cambio\n", encoding="utf-8")
+
+            self.assertEqual(CHECK.check_documentation_change_scope(root), [])
+
+            (root / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+            errors = CHECK.check_documentation_change_scope(root)
+
+            self.assertEqual(errors, ["El modo docs solo admite documentación: src/app.py"])
+
+    def test_docs_mode_skips_ruff_and_unit_tests(self) -> None:
+        with (
+            patch.object(CHECK, "versioned_files", return_value=([], [])),
+            patch.object(CHECK, "check_required", return_value=[]),
+            patch.object(CHECK, "check_repository_boundaries", return_value=[]),
+            patch.object(CHECK, "check_text_safety", return_value=[]),
+            patch.object(CHECK, "check_mql5_read_only", return_value=[]),
+            patch.object(CHECK, "check_markdown_links", return_value=[]),
+            patch.object(CHECK, "check_adrs", return_value=[]),
+            patch.object(CHECK, "validate_sessions", return_value=[]),
+            patch.object(CHECK, "check_documentation_change_scope", return_value=[]),
+            patch.object(CHECK, "check_session_change_policy", return_value=[]),
+            patch.object(CHECK, "run_code_quality") as quality,
+            patch.object(CHECK, "run_unit_tests") as tests,
+        ):
+            errors = CHECK.validate(Path("."), "docs")
+
+        self.assertEqual(errors, [])
+        quality.assert_not_called()
+        tests.assert_not_called()
 
     def test_feature_branch_rejects_daily_log_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

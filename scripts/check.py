@@ -271,6 +271,39 @@ def changed_files(root: Path) -> tuple[set[Path], list[str]]:
     return paths, []
 
 
+def local_changed_files(root: Path) -> tuple[set[Path], list[str]]:
+    paths: set[Path] = set()
+    for args in (
+        ("diff", "--name-only", "-z", "HEAD", "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        result = run_git(root, *args)
+        if result.returncode != 0:
+            return set(), ["No se pudo validar el alcance local del cambio"]
+        paths.update(Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item)
+    return paths, []
+
+
+def check_documentation_change_scope(root: Path) -> list[str]:
+    branch_paths, errors = changed_files(root)
+    if errors:
+        return errors
+    local_paths, errors = local_changed_files(root)
+    if errors:
+        return errors
+    paths = branch_paths | local_paths
+    allowed_files = {Path("AGENTS.md"), Path("README.md")}
+    unauthorized = {
+        path
+        for path in paths
+        if path not in allowed_files and (not path.parts or path.parts[0] != "docs")
+    }
+    if unauthorized:
+        names = ", ".join(sorted(path.as_posix() for path in unauthorized))
+        return [f"El modo docs solo admite documentación: {names}"]
+    return []
+
+
 def check_session_change_policy(root: Path, current_date: date | None = None) -> list[str]:
     paths, errors = changed_files(root)
     if errors or not paths:
@@ -319,7 +352,6 @@ def run_unit_tests(root: Path) -> list[str]:
                 suite,
                 "-p",
                 "test_*.py",
-                "-v",
             ],
             cwd=root,
             check=False,
@@ -351,7 +383,11 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
     errors.extend(validate_sessions(root))
-    errors.extend(run_code_quality(root))
+    if mode == "docs":
+        errors.extend(check_documentation_change_scope(root))
+        errors.extend(check_session_change_policy(root))
+    else:
+        errors.extend(run_code_quality(root))
     if mode == "full":
         errors.extend(check_session_change_policy(root))
         errors.extend(run_unit_tests(root))
@@ -360,7 +396,7 @@ def validate(root: Path, mode: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("fast", "full"), nargs="?", default="fast")
+    parser.add_argument("mode", choices=("docs", "fast", "full"), nargs="?", default="fast")
     return parser.parse_args()
 
 
@@ -374,7 +410,10 @@ def main() -> int:
             print(f"[ERROR] {error}")
         print(f"Resultado: {len(errors)} error(es)")
         return 1
-    print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
+    if args.mode == "docs":
+        print("[OK] Documentación, límites, textos, secretos y enlaces")
+    else:
+        print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
     if args.mode == "full":
         print("[OK] Tests automatizados")
     print("Resultado: validación correcta")

@@ -29,9 +29,12 @@ def category(path: str) -> str:
         parts[0] == "docs" and PurePosixPath(path).suffix == ".md"
     ):
         return "documentación"
-    if path in {"scripts/check.py", "scripts/session.py", "scripts/change.py"} or path.startswith(
-        ("tests/harness/", ".codex/", ".github/")
-    ):
+    if path in {
+        "scripts/check.py",
+        "scripts/session.py",
+        "scripts/change.py",
+        "scripts/ci_scope.py",
+    } or path.startswith(("tests/harness/", ".codex/", ".github/")):
         return "harness"
     if path.startswith(("src/", "tests/unit/", "tests/integration/")):
         return "producto"

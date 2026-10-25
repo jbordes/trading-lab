@@ -1,6 +1,7 @@
 # Revisión de eficiencia del harness
 
-**Estado:** inspección orientativa implementada; otras automatizaciones pendientes de evaluación.
+**Estado:** inspección orientativa y selección documental en CI implementadas;
+otras automatizaciones pendientes de evaluación.
 
 Esta nota recoge hipótesis para reducir el costo total del trabajo con agentes.
 No cambia el enrutamiento ni las validaciones vigentes. La configuración actual
@@ -30,7 +31,28 @@ La clasificación documental es conservadora: Markdown bajo `docs/`, `README.md`
 y `AGENTS.md`. Las imágenes, configuraciones, dependencias y rutas no reconocidas
 requieren revisión explícita. Para código sugiere `fast` y pruebas dirigidas;
 para documentación `docs`. Los comandos se ejecutan mediante `uv run python
-scripts/check.py <modo>`. Las reglas actuales de CI permanecen iguales.
+scripts/check.py <modo>`.
+
+## Validación proporcional en GitHub
+
+Quality clasifica el diff con `scripts/ci_scope.py`, reutilizando las reglas de
+rutas de la inspección. Solo un diff no vacío compuesto por Markdown documental
+ejecuta `check.py docs` en Ubuntu. Código, harness, dependencias, imágenes, rutas
+desconocidas y cambios mixtos conservan `full` en Ubuntu, Windows y macOS.
+Ejecuciones manuales, bases no disponibles y diffs vacíos también usan `full`.
+No hay reintentos ni caché de resultados.
+
+En PR se compara desde el ancestro común de base y cabeza; en push, el commit
+anterior con el nuevo. Se desactiva la detección de renombrados para no ocultar
+la eliminación de código movido a documentación. El modo documental conserva
+límites, secretos, enlaces y política de bitácora; no ejecuta tests de producto.
+
+`Quality gate` es el check estable de ambos caminos: se ejecuta incluso si falla
+una dependencia y exige selección y validación exitosas. Si se configuran checks
+obligatorios, usar `Quality gate`; Windows y macOS no existen en la matriz
+documental. No se modifica la protección del repositorio ni se vuelve obligatoria
+la inspección local. Los jobs auxiliares de selección y cierre también usan
+Ubuntu, sin instalar el entorno del producto.
 
 ## Observaciones y preparación existente
 
@@ -57,12 +79,8 @@ cambió, qué se validó y qué queda pendiente sin duplicar documentos.
 
 ## Candidatas para evaluar después del piloto
 
-- Un resumen pequeño de `change inspect` con rama, rutas, diffstat y
-  validaciones sugeridas; consultar el estado del PR sería opcional.
-- Un selector de validaciones con pocas reglas explícitas y pruebas
-  proporcionales. La documentación no requiere suites de producto ni tres
-  sistemas operativos. Para el harness sí importa la portabilidad, aunque CI
-  todavía ejecute el conjunto completo en tres sistemas.
+- Evaluar el resumen y selector documental ya implementados antes de ampliar
+  las reglas. Diffstat por líneas y consulta de PR siguen pospuestos.
 - Registrar qué se validó y repetir solo lo que un cambio posterior pueda
   invalidar. Se pospone crear receipts o caché: el hash del diff por sí solo
   no representa la base, las dependencias, el entorno ni los archivos no

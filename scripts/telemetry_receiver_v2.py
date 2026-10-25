@@ -24,6 +24,10 @@ def activity_authorization_environment() -> str:
     return "TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN"
 
 
+def read_authorization_environment() -> str:
+    return "TRADINGLAB_TELEMETRY_READ_TOKEN"
+
+
 def port(value: str) -> int:
     parsed = int(value)
     if not 1 <= parsed <= 65535:
@@ -45,8 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     live_authorization = os.environ.get(live_authorization_environment(), "")
     activity_authorization = os.environ.get(activity_authorization_environment(), "")
+    read_authorization = os.environ.get(read_authorization_environment(), "")
     receiver: PersistentV2TelemetryReceiver | None = None
     try:
+        credentials = (live_authorization, activity_authorization, read_authorization)
+        if len(set(credentials)) != len(credentials):
+            raise ValueError("Las credenciales live, activity y lectura deben ser distintas")
         storage_root = (ROOT / "_storage").resolve()
         database = args.sqlite_db.resolve(strict=True)
         if not database.is_relative_to(storage_root):
@@ -62,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             max_connections=args.max_connections,
             request_timeout=args.request_timeout,
+            read_authorization=read_authorization,
         )
     except (ValueError, V2StorageError, OSError) as exc:
         if receiver is not None:
@@ -69,7 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     print(f"Receptor MT5 v2 piloto: http://127.0.0.1:{server.server_port}/v2/telemetry")
-    print("Credenciales live/activity separadas, solo en memoria. Ctrl+C para detener.")
+    print(f"Lectura histórica v2: http://127.0.0.1:{server.server_port}/v2/activity")
+    print("Credenciales live/activity/lectura separadas, solo en memoria. Ctrl+C para detener.")
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

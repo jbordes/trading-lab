@@ -171,6 +171,7 @@ class V2AccountEvidence:
 
 @dataclass(frozen=True, slots=True)
 class V2ActivityItem:
+    message_id: int
     ticket: str
     values: dict[str, object]
     observed_at: str
@@ -555,7 +556,7 @@ class V2TelemetryRegistry:
                 FROM eligible e WHERE e.capture_rank = 1
             )
             SELECT ticket, row_json, captured_at_utc, received_at_utc,
-                   source_id, session_id, sequence, conflict_at, event_msc
+                   source_id, session_id, sequence, conflict_at, event_msc, message_id
             FROM resolved WHERE {where}
             ORDER BY event_msc DESC, length(ticket) DESC, ticket DESC
             LIMIT ?
@@ -566,6 +567,7 @@ class V2TelemetryRegistry:
             raise V2StorageError("No se pudo consultar la actividad v2") from exc
         items = tuple(
             V2ActivityItem(
+                message_id=int(row[9]),
                 ticket=row[0],
                 values=json.loads(row[1]),
                 observed_at=row[2],

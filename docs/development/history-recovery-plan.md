@@ -82,8 +82,10 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
    la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
    con cursor estable; la cobertura completa y los lotes incompletos se informan
-   sin reconstruir la cuenta en memoria. Falta integrar el collector de estado vivo
-   y adaptar la API autenticada del dashboard.
+   sin reconstruir la cuenta en memoria. La API loopback usa una credencial de
+   lectura propia y el dashboard puede consumirla de forma opt-in para historial y
+   métricas, sin exponerla al navegador. Falta integrar el collector de estado vivo
+   v2 y representar visualmente la cobertura.
 5. Validar reinicio, desorden, duplicados, error, truncamiento y caída prolongada.
    Probar que un lote antiguo no cambia balance/equity actuales y que una orden
    cancelada sin deal se conserva sin incrementar trades. Contrastar con MT5.

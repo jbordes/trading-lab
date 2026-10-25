@@ -43,6 +43,17 @@ class LiveDashboardCliTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             CLI.parse_args(["--demo", "--telemetry-source", "terminal-demo-01"])
 
+    def test_v2_history_is_explicit_and_uses_an_activity_source(self) -> None:
+        base = ["--telemetry", "--telemetry-source", "terminal-demo-01"]
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            CLI.parse_args(base + ["--history-v2"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            CLI.parse_args(["--demo", "--history-v2", "--history-v2-source", "activity-01"])
+
+        args = CLI.parse_args(base + ["--history-v2", "--history-v2-source", "activity-01"])
+        self.assertTrue(args.history_v2)
+        self.assertEqual(args.history_v2_source, "activity-01")
+
 
 if __name__ == "__main__":
     unittest.main()

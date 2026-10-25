@@ -86,8 +86,19 @@ uv run python scripts/inspect_telemetry_v2_history.py --sqlite-db <ruta> \
 ```
 
 El comando abre la base en modo solo lectura e informa la página, el cursor
-siguiente y la cobertura. La API autenticada del dashboard sigue siendo un límite
-posterior y tendrá una credencial distinta de las fuentes MT5.
+siguiente y la cobertura.
+
+El receptor también expone `GET /v2/activity` solo en loopback. Exige
+`TRADINGLAB_TELEMETRY_READ_TOKEN`, distinta de las credenciales `live` y
+`activity`, y autentica antes de analizar los parámetros. Admite entidad `deal` u
+`order`, período, Magic Number, límite y cursor. La respuesta combina una página
+resuelta con cobertura completa e indicador de lotes incompletos. El endpoint de
+salud continúa sin revelar cuenta ni requerir credenciales.
+
+El adaptador `LoopbackV2HistoryClient` valida estrictamente esa respuesta antes de
+convertir deals al modelo que ya usan `/api/deals` y `/api/metrics`. Por lo tanto,
+el navegador solo accede mediante la sesión autenticada del dashboard; nunca recibe
+la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros
 
@@ -97,7 +108,8 @@ posterior y tendrá una credencial distinta de las fuentes MT5.
    datos sintéticos. Falta medirlas con volumen y operaciones reales anonimizadas.
 3. El receptor v2 opt-in ya expone `/v2/telemetry` solo en loopback, con
    credenciales separadas en variables de entorno y sin modificar el receptor v1.
-   Falta conectarlo a collectors v2 y exponer lecturas para el dashboard.
+   Falta conectarlo a collectors v2. La lectura autenticada y el adaptador del
+   dashboard ya están implementados de forma opt-in.
 4. Implementar los dos collectors y validarlos primero en demo con rollback.
 5. Adaptar la API del dashboard después de aprobar su contrato de vista.
 
@@ -113,12 +125,27 @@ uv run python scripts/provision_telemetry_v2_db.py [metadatos y fuentes]
 El receptor requiere esa ruta y la cuenta interna mediante `--sqlite-db` y
 `--account-id`. Lee credenciales ASCII distintas, de al menos 24 caracteres,
 desde `TRADINGLAB_TELEMETRY_LIVE_TOKEN` y
-`TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN`, y las conserva solo en memoria:
+`TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN`; la lectura usa además
+`TRADINGLAB_TELEMETRY_READ_TOKEN`. Las tres deben ser distintas y se conservan
+solo en memoria:
 
 ```text
 uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <id>
 ```
 
 La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
-`/health`. Este procedimiento prepara el backend; no instala collectors ni
-genera actividad por sí solo.
+`/health`. La consulta vive en `/v2/activity`. Este procedimiento prepara el
+backend; no instala collectors ni genera actividad por sí solo.
+
+Durante la transición, el dashboard puede mantener estado vivo desde v1 y tomar
+el historial recuperado desde v2:
+
+```text
+uv run python scripts/live_dashboard.py --telemetry \
+  --telemetry-source <live-v1> --telemetry-port 8776 \
+  --history-v2 --history-v2-source <activity-v2> --history-v2-port 8777
+```
+
+Además del token normal del dashboard y el token v1, ese proceso recibe
+`TRADINGLAB_TELEMETRY_READ_TOKEN`. Rechaza reutilizar cualquiera de ellos. Sin
+`--history-v2`, el comportamiento previo no cambia.

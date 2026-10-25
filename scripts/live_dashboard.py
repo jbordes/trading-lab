@@ -52,11 +52,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=30.0,
         help="Segundos máximos sin una nueva muestra antes de degradar la vista.",
     )
+    parser.add_argument(
+        "--history-v2",
+        action="store_true",
+        help="Lee deals recuperados desde el receptor v2 en lugar del historial v1.",
+    )
+    parser.add_argument(
+        "--history-v2-port",
+        type=port,
+        default=8777,
+        help="Puerto local del receptor v2.",
+    )
+    parser.add_argument(
+        "--history-v2-source",
+        help="SourceId de actividad provisionado en el receptor v2.",
+    )
     args = parser.parse_args(argv)
     if args.telemetry and not args.telemetry_source:
         parser.error("--telemetry requiere --telemetry-source")
     if args.demo and args.telemetry_source:
         parser.error("--telemetry-source solo se admite con --telemetry")
+    if args.history_v2 and not args.telemetry:
+        parser.error("--history-v2 requiere --telemetry")
+    if args.history_v2 and not args.history_v2_source:
+        parser.error("--history-v2 requiere --history-v2-source")
+    if args.history_v2_source and not args.history_v2:
+        parser.error("--history-v2-source requiere --history-v2")
+    if args.history_v2 and args.history_v2_port in {args.port, args.telemetry_port}:
+        parser.error("dashboard, receptor v1 y receptor v2 requieren puertos distintos")
     return args
 
 
@@ -71,9 +94,15 @@ def main(argv: list[str] | None = None) -> int:
         LoopbackTelemetryClient,
         TelemetrySnapshotSource,
     )
+    from tradinglab.dashboard.telemetry_v2 import (
+        TELEMETRY_READ_TOKEN_ENV,
+        LoopbackV2HistoryClient,
+        V2HistoryProvider,
+    )
     from tradinglab.dashboard.web import create_server
 
     args = parse_args(argv)
+    history_provider = None
     access = os.environ.get(DASHBOARD_TOKEN_ENV, "")
     if not access:
         try:
@@ -117,6 +146,21 @@ def main(argv: list[str] | None = None) -> int:
                 source_id=args.telemetry_source,
                 max_age=timedelta(seconds=args.telemetry_max_age),
             )
+            history_provider = source
+            if args.history_v2:
+                read_authorization = os.environ.get(TELEMETRY_READ_TOKEN_ENV, "")
+                if read_authorization in {access, ingest}:
+                    raise ValueError(
+                        "La credencial de lectura v2 debe ser distinta de dashboard e ingesta v1"
+                    )
+                assert args.history_v2_source is not None
+                history_provider = V2HistoryProvider(
+                    LoopbackV2HistoryClient(
+                        read_authorization=read_authorization,
+                        activity_source_id=args.history_v2_source,
+                        port=args.history_v2_port,
+                    )
+                )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
@@ -132,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         service,
         port=args.port,
         dashboard_token=access,
-        history_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
+        history_provider=history_provider,
     )
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")

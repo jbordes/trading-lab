@@ -84,9 +84,10 @@ class TelemetryDealPage:
     magic_number: str | None
     deals: tuple[TelemetryDeal, ...]
     next_cursor: str | None
+    coverage: dict[str, object] | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        result = {
             "account_id": self.account_id,
             "source_id": self.source_id,
             "from_msc": self.from_msc,
@@ -95,6 +96,9 @@ class TelemetryDealPage:
             "deals": [deal.as_dict() for deal in self.deals],
             "next_cursor": self.next_cursor,
         }
+        if self.coverage is not None:
+            result["coverage"] = self.coverage
+        return result
 
 
 @dataclass(frozen=True, slots=True)

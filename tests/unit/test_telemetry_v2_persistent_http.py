@@ -26,6 +26,10 @@ def activity_authorization() -> str:
     return "-".join(("synthetic", "activity", "credential", "safe", "length"))
 
 
+def read_authorization() -> str:
+    return "-".join(("synthetic", "read", "credential", "safe", "length"))
+
+
 def fixture(name: str) -> dict[str, object]:
     return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
 
@@ -55,7 +59,11 @@ class V2PersistentHttpTest(unittest.TestCase):
             activity_authorization=activity_authorization(),
             clock=lambda: datetime(2026, 10, 25, 11, tzinfo=UTC),
         )
-        self.server = create_v2_telemetry_server(self.backend, port=0)
+        self.server = create_v2_telemetry_server(
+            self.backend,
+            port=0,
+            read_authorization=read_authorization(),
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -169,6 +177,41 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertEqual(
             self.request("/v2/telemetry?x=1", body=body, authorization=live_authorization())[0],
             404,
+        )
+
+    def test_activity_read_uses_separate_auth_and_returns_coverage(self) -> None:
+        self.assertEqual(
+            self.request(
+                "/v2/telemetry",
+                body=self.encoded("activity-canceled-order"),
+                authorization=activity_authorization(),
+            )[0],
+            202,
+        )
+        route = (
+            "/v2/activity?entity=order&from_msc=1792656000000"
+            "&to_msc=1792656060001&magic_number=11122&limit=1"
+        )
+        self.assertEqual(self.request(route)[0], 401)
+        self.assertEqual(self.request(route, authorization=activity_authorization())[0], 401)
+        status, payload = self.request(route, authorization=read_authorization())
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["account_id"], "account-demo")
+        self.assertEqual(payload["entity_type"], "order")
+        self.assertEqual(payload["items"][0]["ticket"], "900000000000000001")
+        self.assertEqual(payload["items"][0]["values"]["state"], 2)
+        self.assertEqual(
+            payload["coverage"]["complete_ranges"],
+            [{"from_msc": "1792656000000", "to_msc": "1792656060000"}],
+        )
+        self.assertEqual(payload["coverage"]["incomplete_batches"], 0)
+
+    def test_activity_authentication_precedes_query_validation(self) -> None:
+        self.assertEqual(self.request("/v2/activity?broken")[0], 401)
+        self.assertEqual(
+            self.request("/v2/activity?broken", authorization=read_authorization())[0],
+            400,
         )
 
 

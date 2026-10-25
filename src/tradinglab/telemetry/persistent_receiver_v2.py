@@ -14,6 +14,8 @@ from tradinglab.telemetry.admission_v2 import (
 )
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
+    V2ActivityPage,
+    V2CoverageReport,
     V2StorageError,
     open_v2_registry,
 )
@@ -32,6 +34,7 @@ class PersistentV2TelemetryReceiver:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._account_id = account_id
         self._lock = threading.RLock()
         self._context = open_v2_registry(database, cross_thread=True)
         self._registry = self._context.__enter__()
@@ -91,6 +94,37 @@ class PersistentV2TelemetryReceiver:
                 "out_of_order": self._out_of_order,
                 "missing_sequences": self._gaps,
             }
+
+    def activity_history(
+        self,
+        entity_type: str,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[V2ActivityPage, V2CoverageReport]:
+        """Read one page and its coverage without interleaving a write."""
+
+        with self._lock:
+            self._require_open()
+            page = self._registry.activity_page(
+                self._account_id,
+                entity_type,
+                from_msc=from_msc,
+                to_msc=to_msc,
+                magic_number=magic_number,
+                limit=limit,
+                cursor=cursor,
+            )
+            coverage = self._registry.coverage_report(
+                self._account_id,
+                entity_type,
+                from_msc=from_msc,
+                to_msc=to_msc,
+            )
+            return page, coverage
 
     def close(self) -> None:
         with self._lock:

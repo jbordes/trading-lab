@@ -212,10 +212,19 @@ class HarnessChecksTest(unittest.TestCase):
             self.run_git(root, "checkout", "-b", "docs/test")
             (root / "docs" / "guide.md").write_text("# Cambio\n", encoding="utf-8")
 
-            self.assertEqual(CHECK.check_documentation_change_scope(root), [])
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_BASE_REF": "",
+                    "TRADINGLAB_BASE_SHA": "",
+                    "TRADINGLAB_HEAD_SHA": "",
+                },
+                clear=False,
+            ):
+                self.assertEqual(CHECK.check_documentation_change_scope(root), [])
 
-            (root / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
-            errors = CHECK.check_documentation_change_scope(root)
+                (root / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+                errors = CHECK.check_documentation_change_scope(root)
 
             self.assertEqual(errors, ["El modo docs solo admite documentación: src/app.py"])
 

@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
@@ -25,6 +26,9 @@ REQUIRED_PATHS = (
     ".gitattributes",
     ".gitignore",
     ".python-version",
+    ".codex/config.toml",
+    ".codex/agents/docs-recorder.toml",
+    ".codex/agents/git-operator.toml",
     "AGENTS.md",
     "README.md",
     "docs/architecture/development-harness-0.1.md",
@@ -229,6 +233,62 @@ def check_adrs(root: Path) -> list[str]:
     return errors
 
 
+def check_agent_configs(root: Path) -> list[str]:
+    errors: list[str] = []
+    config_path = root / ".codex" / "config.toml"
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"Configuración Codex inválida: {exc}"]
+    agents_config = config.get("agents")
+    if not isinstance(agents_config, dict) or agents_config.get("enabled") is not True:
+        errors.append("La configuración debe habilitar agentes explícitamente")
+    threads = agents_config.get("max_concurrent_threads_per_session") if agents_config else None
+    if not isinstance(threads, int) or isinstance(threads, bool) or not 1 <= threads <= 4:
+        errors.append("El máximo de subagentes concurrentes debe estar entre 1 y 4")
+
+    expected_names = {"git_operator", "docs_recorder"}
+    observed_names: set[str] = set()
+    for path in sorted((root / ".codex" / "agents").glob("*.toml")):
+        try:
+            agent = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            errors.append(f"Agente Codex inválido {path.name}: {exc}")
+            continue
+        name = agent.get("name")
+        for field in ("name", "description", "developer_instructions"):
+            if not isinstance(agent.get(field), str) or not agent[field].strip():
+                errors.append(f"Agente {path.name} sin {field} válido")
+        if isinstance(name, str):
+            if name in observed_names:
+                errors.append(f"Nombre de agente duplicado: {name}")
+            observed_names.add(name)
+        if name in expected_names:
+            if agent.get("model") != "gpt-6-luna":
+                errors.append(f"El agente económico {name} debe usar gpt-6-luna")
+            if agent.get("model_reasoning_effort") not in {"low", "medium"}:
+                errors.append(f"El agente económico {name} debe usar esfuerzo low o medium")
+            features = agent.get("features")
+            disabled = ("apps", "plugins", "memories", "request_permissions_tool")
+            if not isinstance(features, dict) or any(
+                features.get(key) is not False for key in disabled
+            ):
+                errors.append(f"El agente económico {name} debe limitar capacidades no necesarias")
+            skills = agent.get("skills")
+            bundled = skills.get("bundled") if isinstance(skills, dict) else None
+            if (
+                not isinstance(skills, dict)
+                or skills.get("include_instructions") is not False
+                or not isinstance(bundled, dict)
+                or bundled.get("enabled") is not False
+            ):
+                errors.append(f"El agente económico {name} debe omitir skills automáticas")
+    missing = expected_names - observed_names
+    if missing:
+        errors.append("Faltan agentes económicos requeridos: " + ", ".join(sorted(missing)))
+    return errors
+
+
 def changed_files(root: Path) -> tuple[set[Path], list[str]]:
     pull_request_base = os.environ.get("GITHUB_BASE_REF")
     base_ref = os.environ.get("TRADINGLAB_BASE_SHA")
@@ -269,6 +329,39 @@ def changed_files(root: Path) -> tuple[set[Path], list[str]]:
             Path(item.decode("utf-8")) for item in working_tree.stdout.split(b"\0") if item
         )
     return paths, []
+
+
+def local_changed_files(root: Path) -> tuple[set[Path], list[str]]:
+    paths: set[Path] = set()
+    for args in (
+        ("diff", "--name-only", "-z", "HEAD", "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        result = run_git(root, *args)
+        if result.returncode != 0:
+            return set(), ["No se pudo validar el alcance local del cambio"]
+        paths.update(Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item)
+    return paths, []
+
+
+def check_documentation_change_scope(root: Path) -> list[str]:
+    branch_paths, errors = changed_files(root)
+    if errors:
+        return errors
+    local_paths, errors = local_changed_files(root)
+    if errors:
+        return errors
+    paths = branch_paths | local_paths
+    allowed_files = {Path("AGENTS.md"), Path("README.md")}
+    unauthorized = {
+        path
+        for path in paths
+        if path not in allowed_files and (not path.parts or path.parts[0] != "docs")
+    }
+    if unauthorized:
+        names = ", ".join(sorted(path.as_posix() for path in unauthorized))
+        return [f"El modo docs solo admite documentación: {names}"]
+    return []
 
 
 def check_session_change_policy(root: Path, current_date: date | None = None) -> list[str]:
@@ -319,7 +412,6 @@ def run_unit_tests(root: Path) -> list[str]:
                 suite,
                 "-p",
                 "test_*.py",
-                "-v",
             ],
             cwd=root,
             check=False,
@@ -350,8 +442,13 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_mql5_read_only(root, files))
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
+    errors.extend(check_agent_configs(root))
     errors.extend(validate_sessions(root))
-    errors.extend(run_code_quality(root))
+    if mode == "docs":
+        errors.extend(check_documentation_change_scope(root))
+        errors.extend(check_session_change_policy(root))
+    else:
+        errors.extend(run_code_quality(root))
     if mode == "full":
         errors.extend(check_session_change_policy(root))
         errors.extend(run_unit_tests(root))
@@ -360,7 +457,7 @@ def validate(root: Path, mode: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("fast", "full"), nargs="?", default="fast")
+    parser.add_argument("mode", choices=("docs", "fast", "full"), nargs="?", default="fast")
     return parser.parse_args()
 
 
@@ -374,7 +471,10 @@ def main() -> int:
             print(f"[ERROR] {error}")
         print(f"Resultado: {len(errors)} error(es)")
         return 1
-    print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
+    if args.mode == "docs":
+        print("[OK] Documentación, límites, textos, secretos y enlaces")
+    else:
+        print("[OK] Estructura, límites, textos, secretos, enlaces, formato y lint")
     if args.mode == "full":
         print("[OK] Tests automatizados")
     print("Resultado: validación correcta")

@@ -38,8 +38,9 @@
 ## Validación
 
 - Preparar el entorno con `uv sync --locked`.
-- Durante el trabajo ejecutar `uv run python scripts/check.py fast`.
-- Antes de cerrar un cambio ejecutar `uv run python scripts/check.py full`.
+- Para un cambio exclusivamente documental ejecutar `uv run python scripts/check.py docs`; el comando rechaza rutas fuera de `docs/`, `AGENTS.md` y `README.md`, y no ejecuta Ruff ni tests de producto.
+- Durante cambios de código ejecutar `uv run python scripts/check.py fast` y únicamente los tests dirigidos al comportamiento modificado.
+- Ejecutar `uv run python scripts/check.py full` una vez sobre el diff final antes de abrir o actualizar el pull request. Repetirlo solo si un cambio posterior puede invalidar el resultado.
 - Un cambio está terminado cuando las validaciones pasan, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff. La jornada se documenta por separado en la bitácora de hoy.
 
 ## Calidad del código
@@ -56,3 +57,11 @@
 - Las operaciones deterministas pertenecen a scripts testeables.
 - Las skills se crean únicamente después de ejecutar manualmente el procedimiento y conocer sus excepciones.
 - Los `AGENTS.md` de subdirectorios solo declaran diferencias locales; no duplican este archivo.
+
+## Enrutamiento por costo
+
+- Mantener análisis, arquitectura, depuración compleja, seguridad, conflictos y revisión material en el agente principal.
+- Delegar al agente `git_operator` únicamente paquetes mecánicos ya definidos que agrupen commit, push y/o PR. El agente principal entrega worktree, rama, rutas, mensaje y validación, y revisa antes el diff. Un comando Git aislado permanece en el agente principal.
+- Delegar al agente `docs_recorder` únicamente documentación derivada de decisiones ya aprobadas, con texto fuente y rutas explícitas. El agente principal revisa el resultado antes de publicarlo.
+- Enviar handoffs breves sin el historial completo. Si aparece ambigüedad, cambios inesperados, conflicto, nueva decisión o necesidad de permisos, el subagente frena y devuelve el trabajo al principal.
+- Ningún subagente hace merge, force-push, migraciones, borrados, despliegues ni push directo a `main`.

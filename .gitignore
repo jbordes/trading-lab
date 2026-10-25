@@ -30,7 +30,10 @@ __pycache__/
 venv/
 node_modules/
 .claude/
-.codex/
+.codex/*
+!.codex/config.toml
+!.codex/agents/
+!.codex/agents/*.toml
 .pytest_cache/
 .ruff_cache/
 .uv-cache/

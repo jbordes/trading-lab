@@ -159,6 +159,46 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_cost_agent_configs_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agents = root / ".codex" / "agents"
+            agents.mkdir(parents=True)
+            (root / ".codex" / "config.toml").write_text(
+                "[agents]\nenabled = true\nmax_concurrent_threads_per_session = 2\n",
+                encoding="utf-8",
+            )
+            template = (
+                'name = "{name}"\n'
+                'description = "Tarea acotada"\n'
+                'model = "gpt-6-luna"\n'
+                'model_reasoning_effort = "medium"\n'
+                'developer_instructions = "Frenar ante ambigüedad."\n'
+                "[features]\napps = false\nplugins = false\nmemories = false\n"
+                "request_permissions_tool = false\n"
+                "[skills]\ninclude_instructions = false\n"
+                "[skills.bundled]\nenabled = false\n"
+            )
+            for filename, name in (
+                ("git-operator.toml", "git_operator"),
+                ("docs-recorder.toml", "docs_recorder"),
+            ):
+                (agents / filename).write_text(template.format(name=name), encoding="utf-8")
+
+            self.assertEqual(CHECK.check_agent_configs(root), [])
+
+            path = agents / "git-operator.toml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("gpt-6-luna", "gpt-6.1-sol"),
+                encoding="utf-8",
+            )
+            errors = CHECK.check_agent_configs(root)
+
+            self.assertIn(
+                "El agente económico git_operator debe usar gpt-6-luna",
+                errors,
+            )
+
     def test_code_quality_reports_the_failing_tool(self) -> None:
         completed = (
             subprocess.CompletedProcess(args=[], returncode=0),
@@ -186,6 +226,68 @@ class HarnessChecksTest(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertIn("tests/harness", run.call_args_list[0].args[0])
         self.assertIn("tests/unit", run.call_args_list[1].args[0])
+        self.assertNotIn("-v", run.call_args_list[0].args[0])
+        self.assertNotIn("-v", run.call_args_list[1].args[0])
+
+    def test_documentation_scope_accepts_docs_and_rejects_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "docs").mkdir()
+            (root / "docs" / "guide.md").write_text("# Base\n", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+            self.run_git(root, "add", ".")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
+            self.run_git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+            self.run_git(root, "checkout", "-b", "docs/test")
+            (root / "docs" / "guide.md").write_text("# Cambio\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_BASE_REF": "",
+                    "TRADINGLAB_BASE_SHA": "",
+                    "TRADINGLAB_HEAD_SHA": "",
+                },
+                clear=False,
+            ):
+                self.assertEqual(CHECK.check_documentation_change_scope(root), [])
+
+                (root / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+                errors = CHECK.check_documentation_change_scope(root)
+
+            self.assertEqual(errors, ["El modo docs solo admite documentación: src/app.py"])
+
+    def test_docs_mode_skips_ruff_and_unit_tests(self) -> None:
+        with (
+            patch.object(CHECK, "versioned_files", return_value=([], [])),
+            patch.object(CHECK, "check_required", return_value=[]),
+            patch.object(CHECK, "check_repository_boundaries", return_value=[]),
+            patch.object(CHECK, "check_text_safety", return_value=[]),
+            patch.object(CHECK, "check_mql5_read_only", return_value=[]),
+            patch.object(CHECK, "check_markdown_links", return_value=[]),
+            patch.object(CHECK, "check_adrs", return_value=[]),
+            patch.object(CHECK, "validate_sessions", return_value=[]),
+            patch.object(CHECK, "check_documentation_change_scope", return_value=[]),
+            patch.object(CHECK, "check_session_change_policy", return_value=[]),
+            patch.object(CHECK, "run_code_quality") as quality,
+            patch.object(CHECK, "run_unit_tests") as tests,
+        ):
+            errors = CHECK.validate(Path("."), "docs")
+
+        self.assertEqual(errors, [])
+        quality.assert_not_called()
+        tests.assert_not_called()
 
     def test_feature_branch_rejects_daily_log_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

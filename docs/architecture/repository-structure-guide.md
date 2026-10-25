@@ -139,7 +139,14 @@ TRADINGLAB_LOG_LEVEL=INFO
 
 Sirve como contrato de configuración y lista de comprobación para nuevas instalaciones. Nunca debe contener contraseñas, tokens, rutas personales o credenciales funcionales.
 
-## 4. `.agents/` — Procedimientos para agentes
+## 4. `.codex/` y `.agents/` — Configuración y procedimientos para agentes
+
+### `.codex/agents/`
+
+Contiene agentes de Codex específicos del proyecto, con modelo, descripción e
+instrucciones acotadas. TradingLab implementa aquí los roles económicos definidos
+por ADR-0013. Solo se versionan `config.toml` y los TOML de agentes; el resto del
+estado local de Codex permanece ignorado.
 
 ### `.agents/skills/`
 

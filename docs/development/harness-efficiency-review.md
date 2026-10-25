@@ -1,0 +1,105 @@
+# Revisión de eficiencia del harness
+
+**Estado:** inspección orientativa y selección documental en CI implementadas;
+otras automatizaciones pendientes de evaluación.
+
+Esta nota recoge hipótesis para reducir el costo total del trabajo con agentes.
+No cambia el enrutamiento ni las validaciones vigentes. La configuración actual
+de roles está descrita en [Agentes de costo acotado](cost-aware-agents.md), bajo
+ADR-0013.
+
+## Primer paso disponible: inspección sin ejecución
+
+`uv run python scripts/change.py inspect` muestra rama, base, rutas, cantidad de
+archivos y recomendación. En ramas compara con el ancestro común de `origin/main`
+local e incluye cambios locales y archivos nuevos no ignorados. En `main` o HEAD
+separado compara con HEAD. No actualiza referencias remotas. `--base HEAD` permite
+revisar solo el trabajo local; `--base <commit>` compara con ese commit concreto.
+
+El tamaño se expresa como cantidad de archivos: no calcula líneas ni lee contenidos
+para generar estadísticas. Incluye eliminaciones y ambos nombres de un renombrado.
+Las rutas desconocidas requieren revisar el alcance; no se presumen seguras.
+
+El comando es opcional: preguntas y análisis sin modificaciones no requieren
+ejecutarlo. No corre pruebas, inicia agentes, consulta la red ni modifica Git.
+No convierte una recomendación en bloqueo. Si falla una consulta Git, termina con
+un error sin reintentos. No se implementó caché ni detección de pruebas previas;
+el responsable evita repetir validaciones vigentes. Las recomendaciones de alcance
+local no reemplazan la revisión del diff completo antes del PR.
+
+La clasificación documental es conservadora: Markdown bajo `docs/`, `README.md`
+y `AGENTS.md`. Las imágenes, configuraciones, dependencias y rutas no reconocidas
+requieren revisión explícita. Para código sugiere `fast` y pruebas dirigidas;
+para documentación `docs`. Los comandos se ejecutan mediante `uv run python
+scripts/check.py <modo>`.
+
+## Validación proporcional en GitHub
+
+Quality clasifica el diff con `scripts/ci_scope.py`, reutilizando las reglas de
+rutas de la inspección. Solo un diff no vacío compuesto por Markdown documental
+ejecuta `check.py docs` en Ubuntu. Código, harness, dependencias, imágenes, rutas
+desconocidas y cambios mixtos conservan `full` en Ubuntu, Windows y macOS.
+Ejecuciones manuales, bases no disponibles y diffs vacíos también usan `full`.
+No hay reintentos ni caché de resultados.
+
+En PR se compara desde el ancestro común de base y cabeza; en push, el commit
+anterior con el nuevo. Se desactiva la detección de renombrados para no ocultar
+la eliminación de código movido a documentación. El modo documental conserva
+límites, secretos, enlaces y política de bitácora; no ejecuta tests de producto.
+
+`Quality gate` es el check estable de ambos caminos: se ejecuta incluso si falla
+una dependencia y exige selección y validación exitosas. Si se configuran checks
+obligatorios, usar `Quality gate`; Windows y macOS no existen en la matriz
+documental. No se modifica la protección del repositorio ni se vuelve obligatoria
+la inspección local. Los jobs auxiliares de selección y cierre también usan
+Ubuntu, sin instalar el entorno del producto.
+
+## Observaciones y preparación existente
+
+Se observan cuatro fuentes posibles de fricción: exceso de contexto en los
+encargos, repetición de verificaciones, delegaciones demasiado pequeñas y
+confusión entre documentar una decisión e implementar el cambio. Ya están
+preparados el chequeo `docs` y los agentes `git_operator` y `docs_recorder`.
+El ahorro no se ha medido. El piloto anterior invocó el agente manualmente;
+queda pendiente verificar el descubrimiento automático de los archivos TOML.
+
+## Cómo evaluar
+
+Probar primero cinco encargos reales y registrar para cada uno el rol usado,
+escalamientos y retrabajo. Delegar paquetes con resultado claro, no comandos
+aislados. El agente principal conserva el juicio y las decisiones; los scripts
+se ocupan de la mecánica determinista.
+
+El criterio de éxito es el ahorro total de coordinación, ejecución y
+retrabajo. No se debe inferir ahorro por usar un modelo más barato. Si no hay
+medición de tokens, usar indicadores observables sin inventar porcentajes. Cada
+paso debe producir un resultado preciso: contrato documentado, receptor
+implementado o comportamiento probado con datos reales. La entrega resume qué
+cambió, qué se validó y qué queda pendiente sin duplicar documentos.
+
+## Candidatas para evaluar después del piloto
+
+- Evaluar el resumen y selector documental ya implementados antes de ampliar
+  las reglas. Diffstat por líneas y consulta de PR siguen pospuestos.
+- Registrar qué se validó y repetir solo lo que un cambio posterior pueda
+  invalidar. Se pospone crear receipts o caché: el hash del diff por sí solo
+  no representa la base, las dependencias, el entorno ni los archivos no
+  versionados relevantes.
+- Posponer el comando para agregar entradas a la bitácora y un auditor de
+  worktrees hasta tener evidencia de costo. Evaluar ignorar `/.tmp-*/` para
+  reducir ruido en Git, revisando antes su alcance. Nunca borrar esos
+  directorios automáticamente.
+- No añadir roles. Considerar esfuerzo `low` para razonamiento de Git solo
+  después de los pilotos y con evidencia.
+
+## Límites vigentes y siguiente paso
+
+Se mantienen las ramas cortas y el flujo de PR con merge humano. La bitácora
+diaria se gestiona aparte: solo se modifica directamente en `main`, para la
+fecha actual de Europe/Madrid, y sin mezclar otras rutas. Una rama de cambio no
+incluye entradas de `docs/sessions/`; las fechas anteriores son inmutables.
+
+No se requiere una ADR nueva mientras la evaluación siga pendiente bajo
+ADR-0013. Tras los pilotos, revisar los resultados y elegir únicamente la
+automatización que reduzca fricción; después, devolver el foco al historial y
+las métricas.

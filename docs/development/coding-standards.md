@@ -96,4 +96,5 @@ Antes del PR se comprueba que el cambio:
 - contempla fallos parciales y repetición segura;
 - incluye pruebas proporcionales al riesgo;
 - no agrega abstracciones, dependencias o infraestructura sin una necesidad concreta;
-- pasa `uv run python scripts/check.py full`.
+- pasa `uv run python scripts/check.py full` una vez sobre el diff final. Los
+  commits intermedios usan `docs`, `fast` y tests dirigidos según su alcance.

@@ -27,7 +27,8 @@ Por estas razones se adopta un harness pequeño, portable y evolutivo. Se evita 
 
 - Reglas de simplicidad, aislamiento entre proyectos y seguridad de Git.
 - Prohibición de secretos y artefactos operativos dentro del repositorio.
-- Comandos rápidos durante el desarrollo y validación completa antes de cerrar.
+- Validación proporcional durante el desarrollo y suite completa sobre el diff
+  final antes del pull request.
 - Pull requests con revisión y merge humano.
 - Automatización determinista en scripts testeables.
 - Skills únicamente después de estabilizar el procedimiento manual.
@@ -44,8 +45,12 @@ Se fija Python 3.14 porque es una rama estable con mantenimiento activo en la fe
 
 ### Validación escalonada
 
+- `docs`: controles de repositorio y documentación; rechaza cambios de código y
+  omite Ruff y tests de producto.
 - `fast`: controles baratos adecuados para el ciclo habitual.
-- `full`: controles rápidos más tests del harness.
+- tests dirigidos: durante la implementación, solo para el comportamiento tocado.
+- `full`: controles rápidos más todos los tests; una vez sobre el diff final antes
+  del pull request y nuevamente solo si cambios posteriores afectan su validez.
 - validación futura de artefactos: ejecución explícita, nunca automática al abrir cada sesión.
 
 No se recorren `_storage/` ni grandes colecciones de resultados en los checks habituales. Un inventario podrá utilizar caché como optimización, pero toda ingestión o frontera de confianza deberá recalcular SHA-256.
@@ -60,12 +65,11 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 
 ### Enrutamiento por coste
 
-El [ADR-0013](../adr/0013-cost-aware-agent-routing.md) define la dirección de
-Harness 0.2: scripts para pasos deterministas, un agente económico para operaciones
-Git mecánicas y otro para registrar documentación ya decidida. Arquitectura,
-depuración compleja, conflictos y revisión material permanecen en el agente de
-razonamiento principal. Los roles todavía no están configurados; su implementación
-será un cambio separado y deberá demostrar ahorro con handoffs breves.
+El [ADR-0013](../adr/0013-cost-aware-agent-routing.md) define Harness 0.2:
+scripts para pasos deterministas y dos [agentes de costo acotado](../development/cost-aware-agents.md)
+para paquetes Git mecánicos y documentación ya decidida. Arquitectura, depuración
+compleja, conflictos y revisión material permanecen en el agente principal. Los
+roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 
 ## 5. Contenido implementado
 

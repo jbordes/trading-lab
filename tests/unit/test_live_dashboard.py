@@ -27,8 +27,13 @@ from tradinglab.dashboard.snapshot import (  # noqa: E402
     ReceiverHealth,
     SourceHealth,
 )
-from tradinglab.dashboard.telemetry import TelemetryDeal, TelemetryDealPage  # noqa: E402
+from tradinglab.dashboard.telemetry import (  # noqa: E402
+    TelemetryDeal,
+    TelemetryDealPage,
+    TelemetryPerformance,
+)
 from tradinglab.dashboard.web import create_server  # noqa: E402
+from tradinglab.metrics import calculate_closed_deal_metrics  # noqa: E402
 
 Account = namedtuple(
     "Account",
@@ -90,6 +95,7 @@ class FakeHealthProvider:
 class FakeDealHistoryProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.performance_calls: list[dict[str, object]] = []
 
     def deal_history(self, **query: object) -> TelemetryDealPage:
         self.calls.append(query)
@@ -121,6 +127,18 @@ class FakeDealHistoryProvider:
             magic_number=query["magic_number"],
             deals=(deal,),
             next_cursor=None,
+        )
+
+    def performance_metrics(self, **query: object) -> TelemetryPerformance:
+        self.performance_calls.append(query)
+        page = self.deal_history(limit=50, cursor=None, **query)
+        return TelemetryPerformance(
+            account_id=page.account_id,
+            source_id=page.source_id,
+            from_msc=page.from_msc,
+            to_msc=page.to_msc,
+            magic_number=page.magic_number,
+            selection=calculate_closed_deal_metrics(page.deals),
         )
 
 
@@ -430,6 +448,7 @@ class LiveDashboardTest(unittest.TestCase):
                 payload = gzip.decompress(response.read())
                 self.assertTrue(payload.startswith(b'"use strict"'))
             for asset, content_type in (
+                ("vendor/echarts-6.1.0.min.js", "text/javascript; charset=utf-8"),
                 ("logo_black.png", "image/png"),
                 ("logo_white.png", "image/png"),
                 ("favicon-black.ico", "image/x-icon"),
@@ -516,7 +535,7 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no qued�
         smoke_test = r"""
 const fs = require("fs");
 const source = fs.readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("function renderChart(");
+const start = source.indexOf("function accountChartSeries(");
 const body = source.indexOf("{", start);
 let depth = 0;
 let definition = "";
@@ -525,40 +544,21 @@ for (let index = body; index < source.length; index += 1) {
   if (source[index] === "}") depth -= 1;
   if (depth === 0) { definition = source.slice(start, index + 1); break; }
 }
-if (!definition) throw new Error("No se encontró renderChart");
-function element() {
-  return {
-    textContent: "", hidden: false, attributes: {},
-    classList: { add() {}, remove() {} },
-    setAttribute(name, value) { this.attributes[name] = String(value); },
-  };
-}
-globalThis.chartEmpty = element();
-globalThis.balanceLine = element();
-globalThis.equityLine = element();
-globalThis.balanceReference = element();
-globalThis.chart = element();
-globalThis.chartHigh = element();
-globalThis.chartLow = element();
-globalThis.chartStart = element();
-globalThis.chartEnd = element();
-globalThis.chartSpan = element();
-globalThis.latestCurrency = "USD";
-globalThis.toDate = (value) => new Date(value);
-globalThis.money = (value) => String(value);
-globalThis.elapsed = (value) => `${value} s`;
-globalThis.timeFormatter = { format: (value) => value.toISOString() };
+if (!definition) throw new Error("No se encontró accountChartSeries");
 eval(definition);
-renderChart([
-  { observed_at: "2026-10-17T10:00:00Z", balance: 100, equity: 100 },
-  { observed_at: "2026-10-17T10:00:05Z", balance: 101, equity: 101 },
-  { observed_at: "2026-10-17T10:02:00Z", balance: 102, equity: 102 },
-  { observed_at: "2026-10-17T10:02:05Z", balance: 103, equity: 103 },
-], 5);
-const path = equityLine.attributes.d;
-if ((path.match(/M/g) || []).length !== 2) throw new Error(`Gap no visible: ${path}`);
-if (!chart.attributes["aria-label"].includes("interrupciones")) {
-  throw new Error("El texto accesible no informa el gap");
+const timeline = [
+  { at: new Date("2026-10-17T10:00:00Z"), balance: 100 },
+  { at: new Date("2026-10-17T10:00:05Z"), balance: 101 },
+  { at: new Date("2026-10-17T10:02:00Z"), balance: 102 },
+  { at: new Date("2026-10-17T10:02:05Z"), balance: 103 },
+];
+const result = accountChartSeries(timeline, "balance", 12500);
+if (result.gaps !== 1) throw new Error(`Cantidad de gaps incorrecta: ${result.gaps}`);
+if (result.data.filter((point) => point[1] === null).length !== 1) {
+  throw new Error("La serie no corta visualmente la interrupción");
+}
+if (result.data[0][0] !== timeline[0].at.getTime()) {
+  throw new Error("La serie no conserva el tiempo observado");
 }
 """
 
@@ -696,6 +696,15 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
             self.assertEqual(payload["deals"][0]["ticket"], "2")
             self.assertEqual(payload["magic_number"], "11122")
             self.assertEqual(provider.calls[0]["limit"], 50)
+            metrics_route = (
+                f"{base_url}/api/metrics?from_msc=999000&to_msc=1000000&magic_number=11122"
+            )
+            with opener.open(metrics_route, timeout=2) as response:
+                metrics = json.loads(response.read())
+            self.assertEqual(metrics["formula_version"], "partner-workbook-v1")
+            self.assertEqual(metrics["trade_count"], 1)
+            self.assertAlmostEqual(metrics["net_profit"], 0.69)
+            self.assertEqual(provider.performance_calls[0]["magic_number"], "11122")
             with self.assertRaises(urllib.error.HTTPError) as invalid:
                 opener.open(f"{base_url}/api/deals?from_msc=1&to_msc=1", timeout=2)
             self.assertEqual(invalid.exception.code, 400)
@@ -761,6 +770,21 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('id="history-period"', dashboard)
         self.assertIn('id="history-magic"', dashboard)
         self.assertIn('id="history-more"', dashboard)
+        self.assertIn('id="history-metrics"', dashboard)
+        self.assertIn('id="chart-cumulative"', dashboard)
+        for metric_id in (
+            "metric-max-dd-pct",
+            "metric-current-dd",
+            "metric-current-dd-pct",
+            "metric-standard-deviation",
+        ):
+            self.assertIn(f'id="{metric_id}"', dashboard)
+        self.assertIn("Límites de riesgo operativo", dashboard)
+        self.assertIn("distintos del Max Drawdown histórico por EA", dashboard)
+        self.assertIn("Trades/mes espera una fecha de activación", dashboard)
+        self.assertIn('id="chart" class="account-chart"', dashboard)
+        self.assertNotIn('<svg id="chart"', dashboard)
+        self.assertIn('src="/assets/vendor/echarts-6.1.0.min.js"', dashboard)
         self.assertNotIn('id="freshness" aria-live', dashboard)
         self.assertLess(dashboard.index("</nav>"), dashboard.index("<main "))
         self.assertLess(
@@ -774,8 +798,20 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         app = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "app.js").read_text(
             encoding="utf-8"
         )
+        styles = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "styles.css").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("Los filtros solo abarcan el detalle recibido", app)
         self.assertIn("/api/deals?", app)
+        self.assertIn("/api/metrics?", app)
+        self.assertIn('getPropertyValue("--chart-grid")', app)
+        self.assertIn("emphasis: { disabled: true }", app)
+        self.assertIn('type: "time"', app)
+        self.assertIn("connectNulls: false", app)
+        self.assertIn("markLine:", app)
+        self.assertIn("--chart-grid: #3a4038", styles)
+        self.assertIn("grid-template-columns: 192px minmax(0, 1fr)", styles)
+        self.assertIn(".site-nav .logout-form { position: fixed", styles)
         self.assertIn("HISTORY_CLIENT_LIMIT = 500", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:

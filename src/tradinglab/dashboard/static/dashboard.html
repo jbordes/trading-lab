@@ -8,6 +8,7 @@
     <link rel="icon" type="image/x-icon" href="/assets/favicon-black.ico?v=fitted-1" data-theme-icon="light">
     <script src="/assets/theme.js"></script>
     <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/vendor/echarts-6.1.0.min.js" defer></script>
     <script src="/assets/app.js" defer></script>
   </head>
   <body>
@@ -80,16 +81,7 @@
             </div>
           </div>
           <div class="chart-wrap">
-            <svg id="chart" viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Evolución reciente de balance y equity">
-              <g id="grid"></g>
-              <path id="balance-line" class="line balance-line" d=""></path>
-              <path id="equity-line" class="line equity-line" d=""></path>
-              <line id="balance-reference" class="reference-line is-hidden" x1="25" x2="975" y1="0" y2="0"></line>
-            </svg>
-            <p id="chart-high" class="chart-label chart-label-high"></p>
-            <p id="chart-low" class="chart-label chart-label-low"></p>
-            <p id="chart-start" class="chart-label chart-label-start"></p>
-            <p id="chart-end" class="chart-label chart-label-end"></p>
+            <div id="chart" class="account-chart" role="img" aria-label="Evolución reciente de balance y equity"></div>
             <p id="chart-empty" class="chart-empty">Recolectando observaciones…</p>
           </div>
         </article>
@@ -106,8 +98,8 @@
         </aside>
       </section>
       <details class="risk-note">
-        <summary>Métricas de riesgo · Pendientes de definición</summary>
-        <p>DDD y Max DD todavía no se calculan: falta acordar sus fórmulas y referencias. Los valores de cuenta no sustituyen una evaluación de riesgo. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
+        <summary>Límites de riesgo operativo · Pendientes de definición</summary>
+        <p>El límite diario y el límite general de pérdida de la cuenta todavía requieren fórmulas y referencias acordadas. Son controles operativos distintos del Max Drawdown histórico por EA que aparece en Historial. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
       </details>
       </section>
 
@@ -187,6 +179,34 @@
             <button class="primary-action" type="submit">Aplicar filtros</button>
             <button id="history-reset" class="clear-filter" type="button">Restablecer</button>
           </form>
+
+          <section id="history-metrics" class="history-metrics" aria-labelledby="history-metrics-title">
+            <div class="metrics-heading">
+              <h3 id="history-metrics-title">Rendimiento observado</h3>
+              <p id="metrics-status" class="metrics-status" role="status">Aplicá los filtros para calcular.</p>
+            </div>
+            <div class="metrics-grid">
+              <article><span>Resultado neto</span><strong id="metric-net">—</strong></article>
+              <article><span>Cierres</span><strong id="metric-count">—</strong></article>
+              <article><span>Profit Factor</span><strong id="metric-pf">—</strong></article>
+              <article><span>Ganadoras</span><strong id="metric-win">—</strong></article>
+              <article><span>Promedio</span><strong id="metric-average">—</strong></article>
+              <article><span>Max Drawdown</span><strong id="metric-max-dd">—</strong></article>
+              <article><span>Max Drawdown %</span><strong id="metric-max-dd-pct">—</strong></article>
+              <article><span>Drawdown actual</span><strong id="metric-current-dd">—</strong></article>
+              <article><span>Drawdown actual %</span><strong id="metric-current-dd-pct">—</strong></article>
+              <article><span>Return / DD</span><strong id="metric-return-dd">—</strong></article>
+              <article><span>Expectancy neta (R)</span><strong id="metric-expectancy">—</strong></article>
+              <article><span>Desviación estándar</span><strong id="metric-standard-deviation">—</strong></article>
+            </div>
+            <div class="metrics-charts">
+              <article class="metric-chart-card"><h4>Ganancia acumulada</h4><div id="chart-cumulative" class="metric-chart" role="img" aria-label="Gráfico de ganancia acumulada"></div></article>
+              <article class="metric-chart-card"><h4>Drawdown</h4><div id="chart-drawdown" class="metric-chart" role="img" aria-label="Gráfico de drawdown"></div></article>
+              <article class="metric-chart-card"><h4>Resultado por cierre</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de resultado por cierre"></div></article>
+              <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 cierres"></div></article>
+            </div>
+            <p class="operations-note">Fórmula provisional basada en el Excel del socio. Cada salida o cierre parcial es un resultado; no se afirma que sea un trade reconstruido. Trades/mes espera una fecha de activación válida para cada EA.</p>
+          </section>
 
           <p class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
           <div class="operation-stats" role="status" aria-live="polite">

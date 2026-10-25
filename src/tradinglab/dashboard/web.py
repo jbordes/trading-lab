@@ -13,7 +13,7 @@ from urllib.parse import parse_qs
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
 from tradinglab.dashboard.snapshot import DashboardReadError
-from tradinglab.dashboard.telemetry import TelemetryDealPage
+from tradinglab.dashboard.telemetry import TelemetryDealPage, TelemetryPerformance
 from tradinglab.telemetry.http_server import BoundedHTTPServer
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -23,6 +23,10 @@ STATIC_ROUTES = {
     "/dashboard": ("dashboard.html", "text/html; charset=utf-8"),
     "/dashboard/": ("dashboard.html", "text/html; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/assets/vendor/echarts-6.1.0.min.js": (
+        "vendor/echarts-6.1.0.min.js",
+        "text/javascript; charset=utf-8",
+    ),
     "/assets/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/assets/nav-icons.svg": ("nav-icons.svg", "image/svg+xml"),
@@ -56,6 +60,14 @@ class DealHistoryProvider(Protocol):
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryDealPage: ...
+
+    def performance_metrics(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+    ) -> TelemetryPerformance: ...
 
 
 def _read_static(filename: str) -> tuple[bytes, str]:
@@ -162,6 +174,37 @@ def create_server(
                     )
                     return
                 self._send_json(page.as_dict())
+                return
+            if path == "/api/metrics":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if history_provider is None:
+                    self._send_json({"error": "metrics_unavailable"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                try:
+                    history_query = self._history_query(raw_query)
+                    if history_query["limit"] != 50 or history_query["cursor"] is not None:
+                        raise ValueError("Parámetros innecesarios para métricas")
+                    result = history_provider.performance_metrics(
+                        from_msc=history_query["from_msc"],
+                        to_msc=history_query["to_msc"],
+                        magic_number=history_query["magic_number"],
+                    )
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_metrics_query"}, status=HTTPStatus.BAD_REQUEST
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "metrics_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json(result.as_dict())
                 return
             if path == "/health":
                 state = service.state()

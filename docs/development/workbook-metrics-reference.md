@@ -4,6 +4,38 @@
 
 **Estado:** descripción de una copia en trabajo; no es un contrato de métricas aprobado.
 
+## Revisión e implementación del 2026-10-24
+
+Se volvió a inspeccionar el workbook en uso, todavía abierto por Excel y por ello
+sin hash certificable. En esta revisión el selector contenía el Magic Number
+11131 y 16 resultados. La hoja había cambiado: incorporaba `Expectancy neta R`
+como promedio del resultado dividido por 200, desplazaba la desviación estándar
+y mantenía las cuatro curvas descriptas abajo. Esto confirma que el archivo es
+una referencia mutable y que cada interpretación debe conservar una versión.
+
+TradingLab implementa el primer adaptador como `partner-workbook-v1`. Selecciona
+solo deals comerciales MT5 de compra/venta que sean salidas, salidas parciales o
+reversiones; excluye aperturas y movimientos contables. Una orden pendiente no
+puede ingresar porque no es un deal. El resultado neto suma profit, comisión,
+swap y fee. Los cierres parciales siguen siendo filas independientes y no se
+presentan como trades reconstruidos.
+
+El dashboard calcula y muestra, para el período y Magic Number elegidos, resultado
+neto, cantidad de cierres, Profit Factor, porcentaje ganador, promedio, drawdown
+máximo y actual con sus porcentajes, Return/DD, expectancy neta y desviación
+estándar. También muestra ganancia acumulada, drawdown, resultado por cierre y
+media móvil de 20 cierres. `Average Trade (bene x trade)` no se duplica porque su
+fórmula coincide con Average Trade. Trades por mes espera una procedencia válida
+para la fecha de activación de cada EA. La consulta está limitada a 500 deals y
+falla explícitamente si el período excede ese límite, en vez de cargar un histórico
+creciente en memoria. Apache ECharts 6.1.0 se distribuye localmente con su licencia;
+el dashboard no depende de una CDN.
+
+Esta versión sigue siendo provisional: usa capital de referencia 100000 y riesgo
+de referencia 200 porque son las constantes observadas. El socio deberá confirmar
+si corresponden globalmente, por cuenta, por EA o por configuración. También sigue
+pendiente decidir cómo reconstruir trades con múltiples deals y qué hora mostrar.
+
 ## Fuente y alcance
 
 Archivo local `orders-scalping_1 (2).csv.xlsx`, en el Escritorio. Se inspeccionaron

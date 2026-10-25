@@ -164,8 +164,11 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
    7 y 30 días, Magic Number opcional y paginación manual. Órdenes históricas,
    posiciones y trades reconstruidos siguen pendientes y no se mezclan con deals.
 3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.
-4. Añadir una comparación por Magic Number después de acordar agrupación de trades,
-   costes, movimientos no comerciales, periodo y métricas con el socio.
+4. **Primer corte implementado:** calcular y visualizar por período y Magic Number
+   las fórmulas `partner-workbook-v1` observadas en el Excel del socio. Se incluyen
+   tarjetas y las cuatro curvas de referencia con ECharts local. Cada cierre MT5
+   sigue siendo una fila; la comparación entre bots y la reconstrucción de trades
+   con múltiples deals esperan definición con el socio.
    También queda pendiente acordar si la interfaz debe presentar la hora del
    broker/MT5, la hora local del usuario o ambas; hasta entonces no se usará esa
    escala temporal para calcular cortes diarios.

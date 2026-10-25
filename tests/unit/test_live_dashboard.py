@@ -805,9 +805,15 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         app = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "app.js").read_text(
             encoding="utf-8"
         )
+        styles = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "styles.css").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("Los filtros solo abarcan el detalle recibido", app)
         self.assertIn("/api/deals?", app)
         self.assertIn("/api/metrics?", app)
+        self.assertIn('getPropertyValue("--chart-grid")', app)
+        self.assertIn("emphasis: { disabled: true }", app)
+        self.assertIn("--chart-grid: #3a4038", styles)
         self.assertIn("HISTORY_CLIENT_LIMIT = 500", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:

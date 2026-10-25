@@ -705,18 +705,28 @@ function renderMetricCharts(series) {
     return;
   }
   const style = getComputedStyle(document.documentElement);
-  const ink = style.getPropertyValue("--ink-2").trim();
-  const border = style.getPropertyValue("--border").trim();
-  const accent = style.getPropertyValue("--accent").trim();
-  const profit = style.getPropertyValue("--profit").trim();
-  const loss = style.getPropertyValue("--loss").trim();
+  const ink = style.getPropertyValue("--chart-text").trim();
+  const border = style.getPropertyValue("--chart-grid").trim();
+  const axis = style.getPropertyValue("--chart-axis").trim();
+  const surface = style.getPropertyValue("--chart-surface").trim();
+  const accent = style.getPropertyValue("--chart-accent").trim();
+  const profit = style.getPropertyValue("--chart-profit").trim();
+  const loss = style.getPropertyValue("--chart-loss").trim();
   const labels = series.map((point) => dateTimeFormatter.format(new Date(point.time_msc)));
   const common = {
     animationDuration: 250,
     aria: { enabled: true },
     grid: { left: 12, right: 10, top: 16, bottom: 22, containLabel: true },
-    tooltip: { trigger: "axis", valueFormatter: (value) => money(value, latestCurrency, true) },
-    xAxis: { type: "category", data: labels, axisLabel: { color: ink, hideOverlap: true }, axisLine: { lineStyle: { color: border } } },
+    textStyle: { color: ink },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: surface,
+      borderColor: axis,
+      textStyle: { color: ink },
+      axisPointer: { type: "line", lineStyle: { color: axis, type: "dashed", width: 1 } },
+      valueFormatter: (value) => money(value, latestCurrency, true),
+    },
+    xAxis: { type: "category", data: labels, axisLabel: { color: ink, hideOverlap: true }, axisLine: { lineStyle: { color: axis } }, axisTick: { lineStyle: { color: axis } } },
     yAxis: { type: "value", axisLabel: { color: ink }, splitLine: { lineStyle: { color: border } } },
   };
   const definitions = [
@@ -737,7 +747,14 @@ function renderMetricCharts(series) {
       : series.map((point) => point[field]);
     instance.setOption({
       ...common,
-      series: [{ type, data, itemStyle: { color }, lineStyle: { color, width: 2 }, symbol: "none" }],
+      series: [{
+        type,
+        data,
+        itemStyle: { color },
+        lineStyle: { color, width: 2 },
+        showSymbol: false,
+        emphasis: { disabled: true },
+      }],
     }, true);
   });
 }

@@ -1,6 +1,6 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: provisión piloto v2 implementada; receptor y collectors pendientes.
+Fecha: 2026-10-25. Estado: provisión y receptor piloto v2 implementados; collectors pendientes.
 
 ## Evidencia del piloto
 
@@ -64,7 +64,12 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
    `--apply`, una base nueva y aislada con cuenta enmascarada y fuentes `live` y
    `activity` diferentes. La vista previa es el comportamiento predeterminado;
    no recibe tokens, no reemplaza archivos y verifica el registro antes de terminar.
-   Falta abrir el receptor v2 opt-in con credenciales por rol. Resolver la continuidad
+   **Receptor implementado:** el servicio opt-in abre exclusivamente esa base,
+   escucha en loopback y autentica `live` y `activity` con credenciales distintas
+   mantenidas en memoria. Autoriza rol, fuente e identidad antes de validar el
+   mensaje, confirma después del commit y diferencia aceptación, duplicado,
+   secuencia antigua, conflicto y fallo de almacenamiento. No expone todavía una
+   lectura para el dashboard. Resolver la continuidad
    del historial v1 con una transición explícita y consultas durables; cualquier
    migración de datos existentes requiere aprobación antes de ejecutarla.
 3. Implementar el collector de actividad y recuperación por tramos: inicio

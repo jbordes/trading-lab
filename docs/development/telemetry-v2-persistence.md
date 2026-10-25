@@ -74,6 +74,30 @@ acotada, descartable y reconstruible desde SQLite.
    explícita. La transición desde v1 y cualquier migración siguen pendientes.
 2. Diseñar proyecciones durables solo para consultas v2 concretas y validarlas con
    datos sintéticos de volumen y operaciones reales anonimizadas.
-3. Exponer un receptor v2 opt-in con credenciales separadas, manteniendo v1 activo.
+3. El receptor v2 opt-in ya expone `/v2/telemetry` solo en loopback, con
+   credenciales separadas en variables de entorno y sin modificar el receptor v1.
+   Falta conectarlo a collectors v2 y exponer lecturas para el dashboard.
 4. Implementar los dos collectors y validarlos primero en demo con rollback.
 5. Adaptar la API del dashboard después de aprobar su contrato de vista.
+
+## Operación piloto
+
+La provisión se revisa primero sin crear archivos:
+
+```text
+uv run python scripts/provision_telemetry_v2_db.py [metadatos y fuentes]
+```
+
+`--apply` crea una base nueva bajo `_storage/`; nunca abre ni migra una base v1.
+El receptor requiere esa ruta y la cuenta interna mediante `--sqlite-db` y
+`--account-id`. Lee credenciales ASCII distintas, de al menos 24 caracteres,
+desde `TRADINGLAB_TELEMETRY_LIVE_TOKEN` y
+`TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN`, y las conserva solo en memoria:
+
+```text
+uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <id>
+```
+
+La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
+`/health`. Este procedimiento prepara el backend; no instala collectors ni
+genera actividad por sí solo.

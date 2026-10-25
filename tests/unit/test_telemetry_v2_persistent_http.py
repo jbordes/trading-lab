@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
+
+from tradinglab.telemetry.admission_v2 import ProducerIdentity
+from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
+from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
+from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
+from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
+
+FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
+LIVE_TOKEN = "synthetic-live-credential-safe-length"
+ACTIVITY_TOKEN = "synthetic-activity-credential-safe-length"
+
+
+def fixture(name: str) -> dict[str, object]:
+    return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+
+
+class V2PersistentHttpTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.database = V2ProvisionPlan(
+            root,
+            "pilot.sqlite3",
+            "account-demo",
+            "Demo",
+            ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
+            "synthetic-live",
+            "synthetic-activity",
+        ).apply(clock=datetime(2026, 10, 25, 10, tzinfo=UTC))
+        self.start_receiver()
+        self.addCleanup(self.stop_receiver)
+
+    def start_receiver(self) -> None:
+        self.backend = PersistentV2TelemetryReceiver(
+            self.database,
+            account_id="account-demo",
+            live_token=LIVE_TOKEN,
+            activity_token=ACTIVITY_TOKEN,
+            clock=lambda: datetime(2026, 10, 25, 11, tzinfo=UTC),
+        )
+        self.server = create_v2_telemetry_server(self.backend, port=0)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def stop_receiver(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+        self.backend.close()
+
+    def request(
+        self,
+        route: str,
+        *,
+        body: bytes | None = None,
+        token: str | None = None,
+    ) -> tuple[int, dict[str, object]]:
+        headers: dict[str, str] = {}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(
+            self.base + route,
+            data=body,
+            headers=headers,
+            method="POST" if body is not None else "GET",
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=3)
+        except urllib.error.HTTPError as exc:
+            response = exc
+        with response:
+            return response.status, json.loads(response.read())
+
+    @staticmethod
+    def encoded(name: str) -> bytes:
+        return json.dumps(fixture(name), separators=(",", ":")).encode()
+
+    def test_both_roles_commit_and_retry_survives_restart(self) -> None:
+        live = self.encoded("live-empty")
+        activity = self.encoded("activity-canceled-order")
+        self.assertEqual(self.request("/v2/telemetry", body=live, token=LIVE_TOKEN)[0], 202)
+        self.assertEqual(self.request("/v2/telemetry", body=activity, token=ACTIVITY_TOKEN)[0], 202)
+        self.stop_receiver()
+        self.start_receiver()
+        status, retry = self.request("/v2/telemetry", body=activity, token=ACTIVITY_TOKEN)
+        self.assertEqual((status, retry["status"]), (200, "duplicate"))
+        with open_v2_registry(self.database) as registry:
+            evidence = registry.account_evidence("account-demo")
+        self.assertEqual(len(evidence.messages), 2)
+        self.assertEqual(len(evidence.messages[1].envelope.payload["orders"]["items"]), 1)
+
+    def test_authentication_precedes_parsing_and_roles_are_isolated(self) -> None:
+        invalid = b"not-json"
+        self.assertEqual(self.request("/v2/telemetry", body=invalid)[0], 401)
+        self.assertEqual(self.request("/v2/telemetry", body=invalid, token="x")[0], 401)
+        self.assertEqual(self.request("/v2/telemetry", body=invalid, token=LIVE_TOKEN)[0], 400)
+        self.assertEqual(
+            self.request(
+                "/v2/telemetry",
+                body=self.encoded("activity-canceled-order"),
+                token=LIVE_TOKEN,
+            )[0],
+            403,
+        )
+
+    def test_conflict_health_and_route_boundaries(self) -> None:
+        message = fixture("live-empty")
+        body = json.dumps(message).encode()
+        self.assertEqual(self.request("/v2/telemetry", body=body, token=LIVE_TOKEN)[0], 202)
+        message["payload"]["account"]["balance"] = 2
+        self.assertEqual(
+            self.request("/v2/telemetry", body=json.dumps(message).encode(), token=LIVE_TOKEN)[0],
+            409,
+        )
+        reused_event = fixture("live-empty")
+        reused_event["sequence"] = 2
+        self.assertEqual(
+            self.request("/v2/telemetry", body=json.dumps(reused_event).encode(), token=LIVE_TOKEN)[
+                0
+            ],
+            400,
+        )
+        status, health = self.request("/health")
+        self.assertEqual(status, 200)
+        self.assertEqual((health["storage"], health["accepted"]), ("sqlite-v2", 1))
+        self.assertNotIn("account_id", health)
+        self.assertEqual(self.request("/v1/telemetry", body=body, token=LIVE_TOKEN)[0], 404)
+        self.assertEqual(self.request("/v2/telemetry?x=1", body=body, token=LIVE_TOKEN)[0], 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

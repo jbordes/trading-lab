@@ -1,6 +1,6 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: backend y collector de actividad implementados; piloto pendiente.
+Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados; piloto pendiente.
 
 ## Evidencia del piloto
 
@@ -68,18 +68,22 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
    escucha en loopback y autentica `live` y `activity` con credenciales distintas
    mantenidas en memoria. Autoriza rol, fuente e identidad antes de validar el
    mensaje, confirma después del commit y diferencia aceptación, duplicado,
-   secuencia antigua, conflicto y fallo de almacenamiento. No expone todavía una
-   lectura para el dashboard. Resolver la continuidad
-   del historial v1 con una transición explícita y consultas durables; cualquier
-   migración de datos existentes requiere aprobación antes de ejecutarla.
+   secuencia antigua, conflicto y fallo de almacenamiento. La actividad ya se
+   proyecta y consulta localmente con paginación, filtros y cobertura, sin exponer
+   todavía una API para el dashboard. Resolver la continuidad del historial v1
+   con una transición explícita; cualquier migración de datos existentes requiere
+   aprobación antes de ejecutarla.
 3. **Implementado en código:** collector de actividad con inicio histórico
    explícito, cursor durable local por fuente/identidad, confirmación después del
    commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
    Conserva deals y órdenes finalizadas. Un rango mínimo saturado queda
    `truncated`, persiste un bloqueo y no entra en un ciclo de reenvíos. Compila
    con 0 errores y 0 warnings; falta instalarlo y validarlo contra MT5 real.
-4. Integrar el collector de estado vivo y las lecturas del dashboard. Mantener
-   cobertura de órdenes y deals por separado y mostrar límites de las métricas.
+4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
+   la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
+   con cursor estable; la cobertura completa y los lotes incompletos se informan
+   sin reconstruir la cuenta en memoria. Falta integrar el collector de estado vivo
+   y adaptar la API autenticada del dashboard.
 5. Validar reinicio, desorden, duplicados, error, truncamiento y caída prolongada.
    Probar que un lote antiguo no cambia balance/equity actuales y que una orden
    cancelada sin deal se conserva sin incrementar trades. Contrastar con MT5.

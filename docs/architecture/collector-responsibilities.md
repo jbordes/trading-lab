@@ -84,6 +84,12 @@ competidores ni nuevos microservicios para el piloto.
 
 ## Composición y recuperación
 
+El [plan de recuperación histórica](../development/history-recovery-plan.md)
+concreta el primer paso con evidencia del piloto. El alcance de actividad incluye
+órdenes históricas sin ejecución como evidencia de comportamiento, sin contarlas
+como trades. Los siguientes pasos integran los componentes v2 existentes antes
+del despliegue y mantienen separados frescura de cuenta y cobertura histórica.
+
 El backend compone la vista de cuenta a partir del último estado vivo válido y
 de la actividad reconciliada. Un lote histórico nunca reemplaza equity o balance.
 Cada flujo conserva frescura, cobertura y errores propios; no presentar la
@@ -123,8 +129,11 @@ no acelera una captura vieja: decidirlo después de medir el flujo completo.
    ausente. Antes del receptor v2 falta definir provisión/migración y proyecciones
    durables. No se conservará un historial creciente en memoria. El estado vivo
    continúa independiente de actividad y v2 no bloquea el historial v1 visible.
-3. Extraer módulos comunes y crear los dos collectors. Validar guardas demo,
-   límites, recuperación y compatibilidad antes de instalarlos.
+3. El collector de actividad v2 está implementado con guardas demo, límites y
+   cursor durable local; su compilación aislada pasa sin errores ni warnings.
+   Falta validarlo en terminal y crear el collector separado de estado vivo.
+   Extraer módulos comunes después del piloto evita consolidar abstracciones antes
+   de conocer las excepciones reales de ambos EAs.
 4. Prueba supervisada en la terminal actual, con instalación autorizada y rollback
    al collector único. Usar fuentes piloto explícitas; no mezclar productores
    viejos/nuevos en una misma identidad. Contrastar con MT5 operaciones reales.

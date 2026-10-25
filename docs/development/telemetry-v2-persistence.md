@@ -12,7 +12,7 @@ operativa. `create_v2_database` solo crea un archivo nuevo solicitado
 explícitamente y nunca reemplaza uno existente.
 
 El esquema vive en `src/tradinglab/telemetry/sqlite_store_v2.py`, usa
-`PRAGMA user_version = 2` y se abre únicamente si coincide exactamente con el
+`PRAGMA user_version = 3` y se abre únicamente si coincide exactamente con el
 esquema esperado. Una base v1 no se acepta como v2. La estrategia de migración se
 definirá antes de activar el nuevo receptor; crear una base de prueba no constituye
 una migración de producción.
@@ -59,20 +59,93 @@ La composición no afirma que ambos flujos formen una fotografía atómica. Una 
 cancelada sigue siendo actividad, no un trade ni P/L. Las fórmulas de métricas y
 agrupación de ejecuciones continúan dependiendo del contrato acordado con el socio.
 
-## Restricción de rendimiento
+## Historial consultable
 
-La lectura actual verifica y compone todos los mensajes de la cuenta. Es adecuada
-como referencia semántica, pero es O(n) y no debe ejecutarse en cada refresco del
-dashboard. Las vistas históricas crecientes se resolverán con consultas paginadas
-y, cuando haga falta, proyecciones durables actualizadas de forma idempotente. No
-se mantendrá todo el historial proyectado en RAM. Una caché futura deberá ser
-acotada, descartable y reconstruible desde SQLite.
+Cada `activity_batch` admitido proyecta sus observaciones y su cobertura dentro de
+la misma transacción que el mensaje original. Los reintentos idénticos no duplican
+la proyección. Deals y órdenes permanecen separados; las colecciones `truncated` o
+`error` se conservan pero no afirman cobertura completa.
+
+`activity_page` consulta por cuenta, tipo, período y Magic Number mediante
+paginación keyset de hasta 100 filas. SQLite resuelve correcciones por instante de
+captura y conserva la última observación no ambigua si dos sesiones discrepan. La
+consulta no llama a `account_evidence` ni reconstruye el historial completo en
+RAM. `coverage_report` une solamente intervalos `complete` y cuenta lotes
+incompletos superpuestos.
+
+La composición completa sigue siendo la referencia semántica para diagnóstico, no
+el camino de refresco del dashboard. Una caché futura deberá ser acotada,
+descartable y reconstruible desde SQLite.
+
+Para inspeccionar una página local sin abrir una API de lectura ni reutilizar las
+credenciales del collector:
+
+```text
+uv run python scripts/inspect_telemetry_v2_history.py --sqlite-db <ruta> \
+  --account-id <id> --entity deal --from-msc <inicio> --to-msc <fin>
+```
+
+El comando abre la base en modo solo lectura e informa la página, el cursor
+siguiente y la cobertura.
+
+El receptor también expone `GET /v2/activity` solo en loopback. Exige
+`TRADINGLAB_TELEMETRY_READ_TOKEN`, distinta de las credenciales `live` y
+`activity`, y autentica antes de analizar los parámetros. Admite entidad `deal` u
+`order`, período, Magic Number, límite y cursor. La respuesta combina una página
+resuelta con cobertura completa e indicador de lotes incompletos. El endpoint de
+salud continúa sin revelar cuenta ni requerir credenciales.
+
+El adaptador `LoopbackV2HistoryClient` valida estrictamente esa respuesta antes de
+convertir deals al modelo que ya usan `/api/deals` y `/api/metrics`. Por lo tanto,
+el navegador solo accede mediante la sesión autenticada del dashboard; nunca recibe
+la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros
 
-1. Diseñar provisión y migración explícitas para una base piloto, sin tocar v1.
-2. Diseñar proyecciones durables solo para consultas v2 concretas y validarlas con
-   datos sintéticos de volumen y operaciones reales anonimizadas.
-3. Exponer un receptor v2 opt-in con credenciales separadas, manteniendo v1 activo.
+1. La provisión piloto aislada ya está implementada con vista previa y creación
+   explícita. La transición desde v1 y cualquier migración siguen pendientes.
+2. Las proyecciones paginadas de actividad ya están implementadas y validadas con
+   datos sintéticos. Falta medirlas con volumen y operaciones reales anonimizadas.
+3. El receptor v2 opt-in ya expone `/v2/telemetry` solo en loopback, con
+   credenciales separadas en variables de entorno y sin modificar el receptor v1.
+   Falta conectarlo a collectors v2. La lectura autenticada y el adaptador del
+   dashboard ya están implementados de forma opt-in.
 4. Implementar los dos collectors y validarlos primero en demo con rollback.
 5. Adaptar la API del dashboard después de aprobar su contrato de vista.
+
+## Operación piloto
+
+La provisión se revisa primero sin crear archivos:
+
+```text
+uv run python scripts/provision_telemetry_v2_db.py [metadatos y fuentes]
+```
+
+`--apply` crea una base nueva bajo `_storage/`; nunca abre ni migra una base v1.
+El receptor requiere esa ruta y la cuenta interna mediante `--sqlite-db` y
+`--account-id`. Lee credenciales ASCII distintas, de al menos 24 caracteres,
+desde `TRADINGLAB_TELEMETRY_LIVE_TOKEN` y
+`TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN`; la lectura usa además
+`TRADINGLAB_TELEMETRY_READ_TOKEN`. Las tres deben ser distintas y se conservan
+solo en memoria:
+
+```text
+uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <id>
+```
+
+La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
+`/health`. La consulta vive en `/v2/activity`. Este procedimiento prepara el
+backend; no instala collectors ni genera actividad por sí solo.
+
+Durante la transición, el dashboard puede mantener estado vivo desde v1 y tomar
+el historial recuperado desde v2:
+
+```text
+uv run python scripts/live_dashboard.py --telemetry \
+  --telemetry-source <live-v1> --telemetry-port 8776 \
+  --history-v2 --history-v2-source <activity-v2> --history-v2-port 8777
+```
+
+Además del token normal del dashboard y el token v1, ese proceso recibe
+`TRADINGLAB_TELEMETRY_READ_TOKEN`. Rechaza reutilizar cualquiera de ellos. Sin
+`--history-v2`, el comportamiento previo no cambia.

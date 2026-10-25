@@ -320,6 +320,134 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(result.orders[0].ticket, "900000000000000001")
         self.assertEqual(result.activity_flow.source_id, "synthetic-activity")
 
+    def test_activity_projection_is_atomic_idempotent_and_queryable(self) -> None:
+        message = authorized("activity-canceled-order")
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(message, received_at=self.now)
+            registry.store_authorized(message, received_at=self.now.replace(hour=9))
+        with open_v2_registry(self.path, read_only=True) as registry:
+            page = registry.activity_page(
+                "account-demo",
+                "order",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+                magic_number="11122",
+            )
+            coverage = registry.coverage_report(
+                "account-demo",
+                "order",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+            )
+
+        self.assertEqual([item.ticket for item in page.items], ["900000000000000001"])
+        self.assertEqual(page.items[0].values["state"], 2)
+        self.assertIsNone(page.next_cursor)
+        self.assertEqual(
+            coverage.complete_ranges,
+            (("1792656000000", "1792656060000"),),
+        )
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_observations").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0],
+                2,
+            )
+
+    def test_activity_query_paginates_uint64_tickets_without_loading_account(self) -> None:
+        document = fixture("activity-truncated")
+        first = document["payload"]["deals"]["items"][0]
+        second = dict(first)
+        second["ticket"] = "99"
+        second["time_msc"] = "1792656020000"
+        document["payload"]["deals"] = {
+            "status": "complete",
+            "total": 2,
+            "items": [first, second],
+        }
+        message = directory().authorize(
+            json.dumps(document).encode(), f"Bearer {ACTIVITY_CREDENTIAL}"
+        )
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(message, received_at=self.now)
+            first_page = registry.activity_page(
+                "account-demo",
+                "deal",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+                limit=1,
+            )
+            second_page = registry.activity_page(
+                "account-demo",
+                "deal",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+                limit=1,
+                cursor=first_page.next_cursor,
+            )
+
+        self.assertEqual(first_page.items[0].ticket, "900000000000000002")
+        self.assertIsNotNone(first_page.next_cursor)
+        self.assertEqual(second_page.items[0].ticket, "99")
+        self.assertIsNone(second_page.next_cursor)
+
+    def test_truncated_batch_does_not_claim_complete_coverage(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(authorized("activity-truncated"), received_at=self.now)
+            deals = registry.coverage_report(
+                "account-demo",
+                "deal",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+            )
+            orders = registry.coverage_report(
+                "account-demo",
+                "order",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+            )
+
+        self.assertEqual(deals.complete_ranges, ())
+        self.assertEqual(deals.incomplete_batches, 1)
+        self.assertEqual(orders.incomplete_batches, 0)
+
+    def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
+        def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:
+            document = fixture("activity-canceled-order")
+            document["session_id"] = session
+            document["event_id"] = f"{session}:1"
+            document["captured_at"] = captured
+            document["payload"]["orders"]["items"][0]["price_open"] = price
+            return directory().authorize(
+                json.dumps(document).encode(), f"Bearer {ACTIVITY_CREDENTIAL}"
+            )
+
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                observation("older", "2026-10-22T08:00:00Z", 4200),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                observation("new-a", "2026-10-22T08:00:02Z", 4201),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                observation("new-b", "2026-10-22T08:00:02Z", 4202),
+                received_at=self.now,
+            )
+            page = registry.activity_page(
+                "account-demo",
+                "order",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+            )
+
+        self.assertEqual(page.items[0].values["price_open"], 4200)
+        self.assertEqual(page.items[0].conflict_at, "2026-10-22T08:00:02.000000Z")
+
 
 if __name__ == "__main__":
     unittest.main()

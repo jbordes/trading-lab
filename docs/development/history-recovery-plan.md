@@ -1,6 +1,6 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: provisión y receptor piloto v2 implementados; collectors pendientes.
+Fecha: 2026-10-25. Estado: backend y collector de actividad implementados; piloto pendiente.
 
 ## Evidencia del piloto
 
@@ -72,10 +72,12 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
    lectura para el dashboard. Resolver la continuidad
    del historial v1 con una transición explícita y consultas durables; cualquier
    migración de datos existentes requiere aprobación antes de ejecutarla.
-3. Implementar el collector de actividad y recuperación por tramos: inicio
-   histórico explícito, progreso durable por cuenta y colección, confirmación
-   después del commit, reenvío idempotente y subdivisión de rangos truncados.
-   Un rango mínimo saturado debe quedar incompleto y visible, sin bucle infinito.
+3. **Implementado en código:** collector de actividad con inicio histórico
+   explícito, cursor durable local por fuente/identidad, confirmación después del
+   commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
+   Conserva deals y órdenes finalizadas. Un rango mínimo saturado queda
+   `truncated`, persiste un bloqueo y no entra en un ciclo de reenvíos. Compila
+   con 0 errores y 0 warnings; falta instalarlo y validarlo contra MT5 real.
 4. Integrar el collector de estado vivo y las lecturas del dashboard. Mantener
    cobertura de órdenes y deals por separado y mostrar límites de las métricas.
 5. Validar reinicio, desorden, duplicados, error, truncamiento y caída prolongada.

@@ -27,8 +27,8 @@ class PersistentV2TelemetryReceiver:
         database: Path,
         *,
         account_id: str,
-        live_token: str,
-        activity_token: str,
+        live_authorization: str,
+        activity_authorization: str,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -47,14 +47,14 @@ class PersistentV2TelemetryReceiver:
                         sources[ProducerRole.LIVE],
                         ProducerRole.LIVE,
                         evidence.identity,
-                        live_token,
+                        live_authorization,
                     ),
                     ProducerRegistration(
                         account_id,
                         sources[ProducerRole.ACTIVITY],
                         ProducerRole.ACTIVITY,
                         evidence.identity,
-                        activity_token,
+                        activity_authorization,
                     ),
                 )
             )

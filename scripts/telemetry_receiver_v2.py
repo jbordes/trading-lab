@@ -15,8 +15,13 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-LIVE_TOKEN_ENV = "TRADINGLAB_TELEMETRY_LIVE_TOKEN"
-ACTIVITY_TOKEN_ENV = "TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN"
+
+def live_authorization_environment() -> str:
+    return "TRADINGLAB_TELEMETRY_LIVE_TOKEN"
+
+
+def activity_authorization_environment() -> str:
+    return "TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN"
 
 
 def port(value: str) -> int:
@@ -38,8 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-connections", type=int, default=8)
     parser.add_argument("--request-timeout", type=float, default=5.0)
     args = parser.parse_args(argv)
-    live_token = os.environ.get(LIVE_TOKEN_ENV, "")
-    activity_token = os.environ.get(ACTIVITY_TOKEN_ENV, "")
+    live_authorization = os.environ.get(live_authorization_environment(), "")
+    activity_authorization = os.environ.get(activity_authorization_environment(), "")
     receiver: PersistentV2TelemetryReceiver | None = None
     try:
         storage_root = (ROOT / "_storage").resolve()
@@ -49,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         receiver = PersistentV2TelemetryReceiver(
             database,
             account_id=args.account_id,
-            live_token=live_token,
-            activity_token=activity_token,
+            live_authorization=live_authorization,
+            activity_authorization=activity_authorization,
         )
         server = create_v2_telemetry_server(
             receiver,

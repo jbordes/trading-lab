@@ -149,3 +149,7 @@ uv run python scripts/live_dashboard.py --telemetry \
 Además del token normal del dashboard y el token v1, ese proceso recibe
 `TRADINGLAB_TELEMETRY_READ_TOKEN`. Rechaza reutilizar cualquiera de ellos. Sin
 `--history-v2`, el comportamiento previo no cambia.
+
+El piloto Juampi agrupa ambos receptores y el dashboard en un único supervisor.
+Los parámetros y chequeos manuales están en
+[Operación del piloto v2](telemetry-v2-pilot-operation.md).

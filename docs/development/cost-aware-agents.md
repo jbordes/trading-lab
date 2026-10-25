@@ -42,3 +42,6 @@ falta guardar prompts ni secretos. Si el handoff agrega más trabajo que el que
 elimina, reducir su alcance o retirar el rol antes de sumar otros agentes.
 
 Referencia: [Subagents — OpenAI Docs](https://learn.chatgpt.com/docs/agent-configuration/subagents).
+
+La evaluación de eficiencia del harness está pendiente; véase
+[Revisión de eficiencia del harness](harness-efficiency-review.md).

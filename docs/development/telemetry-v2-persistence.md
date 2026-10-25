@@ -70,7 +70,8 @@ acotada, descartable y reconstruible desde SQLite.
 
 ## Próximos pasos seguros
 
-1. Diseñar provisión y migración explícitas para una base piloto, sin tocar v1.
+1. La provisión piloto aislada ya está implementada con vista previa y creación
+   explícita. La transición desde v1 y cualquier migración siguen pendientes.
 2. Diseñar proyecciones durables solo para consultas v2 concretas y validarlas con
    datos sintéticos de volumen y operaciones reales anonimizadas.
 3. Exponer un receptor v2 opt-in con credenciales separadas, manteniendo v1 activo.

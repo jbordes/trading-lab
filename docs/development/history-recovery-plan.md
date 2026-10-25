@@ -1,6 +1,6 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: diseño de integración; pendiente de implementación.
+Fecha: 2026-10-25. Estado: provisión piloto v2 implementada; receptor y collectors pendientes.
 
 ## Evidencia del piloto
 
@@ -60,8 +60,11 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 
 1. **Este paso:** fijar responsabilidades, alcance de órdenes y criterios de
    integración. No implica que existan ya productores v2 operativos.
-2. Definir e implementar la provisión y apertura opt-in del receptor con fuentes
-   por rol, reutilizando validación y persistencia v2. Resolver la continuidad
+2. **Provisión implementada:** `provision_telemetry_v2_db.py` crea, solo con
+   `--apply`, una base nueva y aislada con cuenta enmascarada y fuentes `live` y
+   `activity` diferentes. La vista previa es el comportamiento predeterminado;
+   no recibe tokens, no reemplaza archivos y verifica el registro antes de terminar.
+   Falta abrir el receptor v2 opt-in con credenciales por rol. Resolver la continuidad
    del historial v1 con una transición explícita y consultas durables; cualquier
    migración de datos existentes requiere aprobación antes de ejecutarla.
 3. Implementar el collector de actividad y recuperación por tramos: inicio

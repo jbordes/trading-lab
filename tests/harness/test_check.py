@@ -159,6 +159,46 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_cost_agent_configs_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agents = root / ".codex" / "agents"
+            agents.mkdir(parents=True)
+            (root / ".codex" / "config.toml").write_text(
+                "[agents]\nenabled = true\nmax_concurrent_threads_per_session = 2\n",
+                encoding="utf-8",
+            )
+            template = (
+                'name = "{name}"\n'
+                'description = "Tarea acotada"\n'
+                'model = "gpt-6-luna"\n'
+                'model_reasoning_effort = "medium"\n'
+                'developer_instructions = "Frenar ante ambigüedad."\n'
+                "[features]\napps = false\nplugins = false\nmemories = false\n"
+                "request_permissions_tool = false\n"
+                "[skills]\ninclude_instructions = false\n"
+                "[skills.bundled]\nenabled = false\n"
+            )
+            for filename, name in (
+                ("git-operator.toml", "git_operator"),
+                ("docs-recorder.toml", "docs_recorder"),
+            ):
+                (agents / filename).write_text(template.format(name=name), encoding="utf-8")
+
+            self.assertEqual(CHECK.check_agent_configs(root), [])
+
+            path = agents / "git-operator.toml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("gpt-6-luna", "gpt-6.1-sol"),
+                encoding="utf-8",
+            )
+            errors = CHECK.check_agent_configs(root)
+
+            self.assertIn(
+                "El agente económico git_operator debe usar gpt-6-luna",
+                errors,
+            )
+
     def test_code_quality_reports_the_failing_tool(self) -> None:
         completed = (
             subprocess.CompletedProcess(args=[], returncode=0),

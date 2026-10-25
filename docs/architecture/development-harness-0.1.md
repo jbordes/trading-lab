@@ -65,12 +65,11 @@ Cada feature se desarrolla en una rama corta y llega a `main` mediante pull requ
 
 ### Enrutamiento por coste
 
-El [ADR-0013](../adr/0013-cost-aware-agent-routing.md) define la dirección de
-Harness 0.2: scripts para pasos deterministas, un agente económico para operaciones
-Git mecánicas y otro para registrar documentación ya decidida. Arquitectura,
-depuración compleja, conflictos y revisión material permanecen en el agente de
-razonamiento principal. Los roles todavía no están configurados; su implementación
-será un cambio separado y deberá demostrar ahorro con handoffs breves.
+El [ADR-0013](../adr/0013-cost-aware-agent-routing.md) define Harness 0.2:
+scripts para pasos deterministas y dos [agentes de costo acotado](../development/cost-aware-agents.md)
+para paquetes Git mecánicos y documentación ya decidida. Arquitectura, depuración
+compleja, conflictos y revisión material permanecen en el agente principal. Los
+roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 
 ## 5. Contenido implementado
 

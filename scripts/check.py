@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
@@ -25,6 +26,9 @@ REQUIRED_PATHS = (
     ".gitattributes",
     ".gitignore",
     ".python-version",
+    ".codex/config.toml",
+    ".codex/agents/docs-recorder.toml",
+    ".codex/agents/git-operator.toml",
     "AGENTS.md",
     "README.md",
     "docs/architecture/development-harness-0.1.md",
@@ -229,6 +233,62 @@ def check_adrs(root: Path) -> list[str]:
     return errors
 
 
+def check_agent_configs(root: Path) -> list[str]:
+    errors: list[str] = []
+    config_path = root / ".codex" / "config.toml"
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"Configuración Codex inválida: {exc}"]
+    agents_config = config.get("agents")
+    if not isinstance(agents_config, dict) or agents_config.get("enabled") is not True:
+        errors.append("La configuración debe habilitar agentes explícitamente")
+    threads = agents_config.get("max_concurrent_threads_per_session") if agents_config else None
+    if not isinstance(threads, int) or isinstance(threads, bool) or not 1 <= threads <= 4:
+        errors.append("El máximo de subagentes concurrentes debe estar entre 1 y 4")
+
+    expected_names = {"git_operator", "docs_recorder"}
+    observed_names: set[str] = set()
+    for path in sorted((root / ".codex" / "agents").glob("*.toml")):
+        try:
+            agent = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            errors.append(f"Agente Codex inválido {path.name}: {exc}")
+            continue
+        name = agent.get("name")
+        for field in ("name", "description", "developer_instructions"):
+            if not isinstance(agent.get(field), str) or not agent[field].strip():
+                errors.append(f"Agente {path.name} sin {field} válido")
+        if isinstance(name, str):
+            if name in observed_names:
+                errors.append(f"Nombre de agente duplicado: {name}")
+            observed_names.add(name)
+        if name in expected_names:
+            if agent.get("model") != "gpt-6-luna":
+                errors.append(f"El agente económico {name} debe usar gpt-6-luna")
+            if agent.get("model_reasoning_effort") not in {"low", "medium"}:
+                errors.append(f"El agente económico {name} debe usar esfuerzo low o medium")
+            features = agent.get("features")
+            disabled = ("apps", "plugins", "memories", "request_permissions_tool")
+            if not isinstance(features, dict) or any(
+                features.get(key) is not False for key in disabled
+            ):
+                errors.append(f"El agente económico {name} debe limitar capacidades no necesarias")
+            skills = agent.get("skills")
+            bundled = skills.get("bundled") if isinstance(skills, dict) else None
+            if (
+                not isinstance(skills, dict)
+                or skills.get("include_instructions") is not False
+                or not isinstance(bundled, dict)
+                or bundled.get("enabled") is not False
+            ):
+                errors.append(f"El agente económico {name} debe omitir skills automáticas")
+    missing = expected_names - observed_names
+    if missing:
+        errors.append("Faltan agentes económicos requeridos: " + ", ".join(sorted(missing)))
+    return errors
+
+
 def changed_files(root: Path) -> tuple[set[Path], list[str]]:
     pull_request_base = os.environ.get("GITHUB_BASE_REF")
     base_ref = os.environ.get("TRADINGLAB_BASE_SHA")
@@ -382,6 +442,7 @@ def validate(root: Path, mode: str) -> list[str]:
     errors.extend(check_mql5_read_only(root, files))
     errors.extend(check_markdown_links(root, files))
     errors.extend(check_adrs(root))
+    errors.extend(check_agent_configs(root))
     errors.extend(validate_sessions(root))
     if mode == "docs":
         errors.extend(check_documentation_change_scope(root))

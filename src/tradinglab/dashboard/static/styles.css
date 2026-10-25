@@ -245,18 +245,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
 .equity-key::before { border-top-style: solid; color: var(--accent); }
 
 .chart-wrap { position: relative; min-height: 260px; margin-top: 12px; }
-#chart { display: block; width: 100%; height: 260px; overflow: visible; }
-.chart-label { position: absolute; margin: 0; color: var(--ink-3); font-size: 0.75rem; font-variant-numeric: tabular-nums; pointer-events: none; }
-.chart-label-high { top: 4px; left: 2.5%; }
-.chart-label-low { bottom: 32px; left: 2.5%; }
-.chart-label-start { bottom: 4px; left: 2.5%; }
-.chart-label-end { bottom: 4px; right: 2.5%; }
-.line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.balance-line { stroke: var(--ink-2); stroke-dasharray: 6 4; opacity: 0.9; }
-.equity-line { stroke: var(--accent); }
-.grid-line { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.reference-line { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
-.reference-line.is-hidden { display: none; }
+.account-chart { display: block; width: 100%; height: 260px; }
 .chart-empty { position: absolute; inset: 45% 0 auto; text-align: center; color: var(--ink-3); }
 
 .side-stack { display: grid; gap: 16px; min-width: 0; }
@@ -549,7 +538,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .operation-stats { gap: 4px 12px; margin-top: 12px; }
   .chart-panel { min-height: 300px; }
   .chart-wrap { min-height: 220px; margin-top: 10px; }
-  #chart { height: 220px; }
+  .account-chart { height: 220px; }
   .panel-heading-right { width: 100%; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
   .chart-span { white-space: normal; }
   .receiver-counters dd { min-width: 0; overflow-wrap: anywhere; }

@@ -16,15 +16,7 @@ const plainSummary = document.getElementById("plain-summary");
 const errorBox = document.getElementById("error");
 const chartEmpty = document.getElementById("chart-empty");
 const chart = document.getElementById("chart");
-const chartHigh = document.getElementById("chart-high");
-const chartLow = document.getElementById("chart-low");
-const chartStart = document.getElementById("chart-start");
-const chartEnd = document.getElementById("chart-end");
 const chartSpan = document.getElementById("chart-span");
-const balanceLine = document.getElementById("balance-line");
-const equityLine = document.getElementById("equity-line");
-const balanceReference = document.getElementById("balance-reference");
-const grid = document.getElementById("grid");
 const magicFilter = document.getElementById("magic-filter");
 const kindFilter = document.getElementById("kind-filter");
 const modeNotice = document.getElementById("mode-notice");
@@ -79,6 +71,7 @@ let historyLoading = false;
 let historyRequest = 0;
 let metricsRequest = 0;
 let historyMetrics = null;
+let accountChart = null;
 const metricCharts = new Map();
 const operationNodes = new Map();
 const expandedOperationTickets = new Set();
@@ -302,6 +295,7 @@ function renderState(state) {
   telemetryMode = value.source === "mt5-telemetry";
   if (value.observed_at === lastObservedAt) {
     if (currencyChanged && activeView === "history") renderHistory();
+    if (currencyChanged && activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
     return;
   }
   lastObservedAt = value.observed_at;
@@ -699,19 +693,25 @@ function renderHistoryMetrics() {
   renderMetricCharts(Array.isArray(value.series) ? value.series : []);
 }
 
+function resolvedChartTheme() {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    ink: style.getPropertyValue("--chart-text").trim(),
+    grid: style.getPropertyValue("--chart-grid").trim(),
+    axis: style.getPropertyValue("--chart-axis").trim(),
+    surface: style.getPropertyValue("--chart-surface").trim(),
+    accent: style.getPropertyValue("--chart-accent").trim(),
+    profit: style.getPropertyValue("--chart-profit").trim(),
+    loss: style.getPropertyValue("--chart-loss").trim(),
+  };
+}
+
 function renderMetricCharts(series) {
   if (!window.echarts) {
     metricsStatus.textContent = "La librería de gráficos no pudo cargarse.";
     return;
   }
-  const style = getComputedStyle(document.documentElement);
-  const ink = style.getPropertyValue("--chart-text").trim();
-  const border = style.getPropertyValue("--chart-grid").trim();
-  const axis = style.getPropertyValue("--chart-axis").trim();
-  const surface = style.getPropertyValue("--chart-surface").trim();
-  const accent = style.getPropertyValue("--chart-accent").trim();
-  const profit = style.getPropertyValue("--chart-profit").trim();
-  const loss = style.getPropertyValue("--chart-loss").trim();
+  const { ink, grid: border, axis, surface, accent, profit, loss } = resolvedChartTheme();
   const labels = series.map((point) => dateTimeFormatter.format(new Date(point.time_msc)));
   const common = {
     animationDuration: 250,
@@ -1070,25 +1070,37 @@ function price(value) {
   return Number.isFinite(value) ? priceFormatter.format(value) : "—";
 }
 
+function accountChartSeries(timeline, key, gapThreshold) {
+  const data = [];
+  let gaps = 0;
+  timeline.forEach((item, index) => {
+    const timestamp = item.at.getTime();
+    const previous = index > 0 ? timeline[index - 1].at.getTime() : null;
+    if (previous !== null && timestamp - previous > gapThreshold) {
+      data.push([Math.max(previous + 1, timestamp - 1), null]);
+      gaps += 1;
+    }
+    data.push([timestamp, item[key]]);
+  });
+  return { data, gaps };
+}
+
 function renderChart(history, intervalSeconds) {
-  const clearLabels = () => {
-    chartHigh.textContent = "";
-    chartLow.textContent = "";
-    chartStart.textContent = "";
-    chartEnd.textContent = "";
-    chartSpan.textContent = "";
-  };
   const timeline = history
     .map((item) => ({ ...item, at: toDate(item.observed_at) }))
     .filter((item) => item.at && Number.isFinite(item.balance) && Number.isFinite(item.equity))
     .sort((left, right) => left.at - right.at);
   if (timeline.length < 2) {
     chartEmpty.hidden = false;
-    balanceLine.setAttribute("d", "");
-    equityLine.setAttribute("d", "");
-    balanceReference.classList.add("is-hidden");
+    chartEmpty.textContent = "Recolectando observaciones…";
+    if (accountChart) accountChart.clear();
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
-    clearLabels();
+    chartSpan.textContent = "";
+    return;
+  }
+  if (!window.echarts) {
+    chartEmpty.hidden = false;
+    chartEmpty.textContent = "La librería de gráficos no pudo cargarse.";
     return;
   }
   chartEmpty.hidden = true;
@@ -1105,45 +1117,84 @@ function renderChart(history, intervalSeconds) {
   const endAt = timeline[timeline.length - 1].at;
   const timeRange = Math.max(1, endAt.getTime() - startAt.getTime());
   const gapThreshold = intervalSeconds * 2.5 * 1000;
-  let gaps = 0;
-  const toPath = (key) => timeline.map((item, index) => {
-    const x = 25 + ((item.at.getTime() - startAt.getTime()) / timeRange) * 950;
-    const y = 295 - ((item[key] - low) / (high - low)) * 270;
-    const followsGap = index > 0 && item.at.getTime() - timeline[index - 1].at.getTime() > gapThreshold;
-    if (key === "balance" && followsGap) gaps += 1;
-    return `${index === 0 || followsGap ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  balanceLine.setAttribute("d", toPath("balance"));
-  equityLine.setAttribute("d", toPath("equity"));
-  const referenceY = 295 - ((timeline[0].balance - low) / (high - low)) * 270;
-  balanceReference.setAttribute("y1", String(referenceY));
-  balanceReference.setAttribute("y2", String(referenceY));
-  balanceReference.classList.remove("is-hidden");
-  chartHigh.textContent = `Máx ${money(maximum, latestCurrency)}`;
-  chartLow.textContent = `Mín ${money(minimum, latestCurrency)}`;
-  chartStart.textContent = timeFormatter.format(startAt);
-  chartEnd.textContent = timeFormatter.format(endAt);
+  const balance = accountChartSeries(timeline, "balance", gapThreshold);
+  const equity = accountChartSeries(timeline, "equity", gapThreshold);
+  const gaps = balance.gaps;
   const spanSeconds = Math.max(0, timeRange / 1000);
   const span = elapsed(spanSeconds);
-  chartSpan.textContent = gaps ? `Ventana ${span} · ${gaps} ${gaps === 1 ? "interrupción" : "interrupciones"}` : `Ventana ${span}`;
+  const interruption = gaps
+    ? ` · ${gaps} ${gaps === 1 ? "interrupción" : "interrupciones"}`
+    : "";
+  chartSpan.textContent = `Mín ${money(minimum, latestCurrency)} · Máx ${money(maximum, latestCurrency)} · Ventana ${span}${interruption}`;
   chart.setAttribute(
     "aria-label",
     `Evolución de balance y equity, ventana ${span}${gaps ? `, ${gaps} interrupciones de captura` : ""}`,
   );
-}
-
-function drawGrid() {
-  const namespace = "http://www.w3.org/2000/svg";
-  for (let index = 0; index < 5; index += 1) {
-    const line = document.createElementNS(namespace, "line");
-    const y = 25 + index * 67.5;
-    line.setAttribute("x1", "25");
-    line.setAttribute("x2", "975");
-    line.setAttribute("y1", String(y));
-    line.setAttribute("y2", String(y));
-    line.setAttribute("class", "grid-line");
-    grid.appendChild(line);
-  }
+  const { ink, grid: gridColor, axis, surface, accent } = resolvedChartTheme();
+  accountChart ||= window.echarts.init(chart);
+  const seriesTooltip = {
+    valueFormatter: (value) => money(Array.isArray(value) ? value[1] : value, latestCurrency),
+  };
+  accountChart.setOption({
+    animationDuration: 250,
+    aria: { enabled: true },
+    grid: { left: 12, right: 12, top: 14, bottom: 16, containLabel: true },
+    textStyle: { color: ink },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: surface,
+      borderColor: axis,
+      textStyle: { color: ink },
+      axisPointer: { type: "line", lineStyle: { color: axis, type: "dashed", width: 1 } },
+    },
+    xAxis: {
+      type: "time",
+      min: startAt.getTime(),
+      max: endAt.getTime(),
+      axisLabel: { color: ink, hideOverlap: true, formatter: (value) => timeFormatter.format(new Date(value)) },
+      axisLine: { lineStyle: { color: axis } },
+      axisTick: { lineStyle: { color: axis } },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      min: low,
+      max: high,
+      axisLabel: { color: ink, formatter: (value) => money(value, latestCurrency) },
+      splitLine: { lineStyle: { color: gridColor } },
+    },
+    series: [
+      {
+        name: "Balance",
+        type: "line",
+        data: balance.data,
+        connectNulls: false,
+        showSymbol: false,
+        itemStyle: { color: ink },
+        lineStyle: { color: ink, width: 2, type: "dashed" },
+        emphasis: { disabled: true },
+        tooltip: seriesTooltip,
+        markLine: {
+          silent: true,
+          symbol: "none",
+          label: { show: false },
+          lineStyle: { color: axis, width: 1, type: "dotted" },
+          data: [{ yAxis: timeline[0].balance }],
+        },
+      },
+      {
+        name: "Equity",
+        type: "line",
+        data: equity.data,
+        connectNulls: false,
+        showSymbol: false,
+        itemStyle: { color: accent },
+        lineStyle: { color: accent, width: 2 },
+        emphasis: { disabled: true },
+        tooltip: seriesTooltip,
+      },
+    ],
+  }, true);
 }
 
 let retryMultiplier = 1;
@@ -1197,7 +1248,6 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh();
 });
 
-drawGrid();
 window.setInterval(updateFreshness, 1000);
 function activateView(view) {
   const titles = {
@@ -1221,7 +1271,10 @@ function activateView(view) {
     window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
   }
   else if (activeView === "activity") renderActivity();
-  else renderChart(lastHistory, latestIntervalSeconds);
+  else {
+    renderChart(lastHistory, latestIntervalSeconds);
+    window.requestAnimationFrame(() => accountChart?.resize());
+  }
 }
 
 document.querySelectorAll(".view-tab").forEach((button) => {
@@ -1252,16 +1305,19 @@ window.addEventListener("resize", () => {
   if (chartResizeFrame !== null) window.cancelAnimationFrame(chartResizeFrame);
   chartResizeFrame = window.requestAnimationFrame(() => {
     metricCharts.forEach((chart) => chart.resize());
+    if (accountChart && activeView === "overview") accountChart.resize();
     chartResizeFrame = null;
   });
 });
 
 new MutationObserver(() => {
   if (historyMetrics) renderMetricCharts(historyMetrics.series);
+  if (activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
 }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (historyMetrics && !document.documentElement.dataset.theme) {
-    renderMetricCharts(historyMetrics.series);
+  if (!document.documentElement.dataset.theme) {
+    if (historyMetrics) renderMetricCharts(historyMetrics.series);
+    if (activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
   }
 });
 const FILTER_STORE = "tradinglab-dashboard-filters";

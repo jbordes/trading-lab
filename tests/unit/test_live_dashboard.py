@@ -814,6 +814,8 @@ if (!chart.attributes["aria-label"].includes("interrupciones")) {
         self.assertIn('getPropertyValue("--chart-grid")', app)
         self.assertIn("emphasis: { disabled: true }", app)
         self.assertIn("--chart-grid: #3a4038", styles)
+        self.assertIn("grid-template-columns: 192px minmax(0, 1fr)", styles)
+        self.assertIn(".site-nav .logout-form { position: fixed", styles)
         self.assertIn("HISTORY_CLIENT_LIMIT = 500", app)
 
     def test_local_server_exposes_read_only_state_and_security_headers(self) -> None:

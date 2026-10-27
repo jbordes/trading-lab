@@ -84,6 +84,22 @@ class PositionCycleProvider(Protocol):
     ) -> PositionCyclePage: ...
 
 
+class HistoricalOrderPage(Protocol):
+    def as_dict(self) -> dict[str, object]: ...
+
+
+class HistoricalOrderProvider(Protocol):
+    def order_history(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> HistoricalOrderPage: ...
+
+
 def _read_static(filename: str) -> tuple[bytes, str]:
     """Read a static file from disk, caching bytes and a size+mtime ETag."""
     path = STATIC_ROOT / filename
@@ -104,6 +120,7 @@ def create_server(
     dashboard_token: str,
     history_provider: DealHistoryProvider | None = None,
     position_cycle_provider: PositionCycleProvider | None = None,
+    historical_order_provider: HistoricalOrderProvider | None = None,
     max_connections: int = 16,
     request_timeout: float = 5.0,
 ) -> BoundedHTTPServer:
@@ -244,6 +261,34 @@ def create_server(
                 except DashboardReadError:
                     self._send_json(
                         {"error": "position_cycles_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json(page.as_dict())
+                return
+            if path == "/api/orders":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if historical_order_provider is None:
+                    self._send_json(
+                        {"error": "order_history_unavailable"}, status=HTTPStatus.NOT_FOUND
+                    )
+                    return
+                try:
+                    history_query = self._history_query(raw_query)
+                    page = historical_order_provider.order_history(**history_query)
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_order_history_query"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "order_history_unavailable"},
                         status=HTTPStatus.SERVICE_UNAVAILABLE,
                     )
                     return

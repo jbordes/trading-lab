@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -126,6 +127,56 @@ class TelemetryPositionCyclePage:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class TelemetryHistoricalOrder:
+    account_id: str
+    source_id: str
+    message_id: int
+    captured_at: str
+    ticket: str
+    magic_number: str
+    symbol: str
+    order_type: int
+    state: int
+    volume_initial: float
+    volume_current: float
+    price_open: float
+    stop_loss: float
+    take_profit: float
+    setup_time_msc: int
+    done_time_msc: int
+    position_id: str
+    position_by_id: str
+    comment: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryHistoricalOrderPage:
+    account_id: str
+    source_id: str
+    from_msc: int
+    to_msc: int
+    magic_number: str | None
+    orders: tuple[TelemetryHistoricalOrder, ...]
+    next_cursor: str | None
+    coverage: dict[str, object]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "account_id": self.account_id,
+            "source_id": self.source_id,
+            "from_msc": self.from_msc,
+            "to_msc": self.to_msc,
+            "magic_number": self.magic_number,
+            "orders": [order.as_dict() for order in self.orders],
+            "next_cursor": self.next_cursor,
+            "coverage": self.coverage,
+        }
+
+
 class LoopbackV2HistoryClient:
     """Read recovered deals through the authenticated loopback v2 API."""
 
@@ -212,6 +263,55 @@ class LoopbackV2HistoryClient:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DashboardReadError("El receptor devolvió actividad v2 inválida") from exc
+
+    def order_history(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> TelemetryHistoricalOrderPage:
+        parameters: dict[str, str | int] = {
+            "entity": "order",
+            "from_msc": from_msc,
+            "to_msc": to_msc,
+            "limit": limit,
+        }
+        if magic_number is not None:
+            parameters["magic_number"] = magic_number
+        if cursor is not None:
+            parameters["cursor"] = cursor
+        request = urllib.request.Request(
+            f"{self._activity_url}?{urllib.parse.urlencode(parameters)}",
+            headers={"Authorization": self._authorization, "Accept": "application/json"},
+        )
+        try:
+            with self._opener.open(request, timeout=self._timeout) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if 300 <= exc.code < 400:
+                raise DashboardReadError("El receptor v2 intentó una redirección") from exc
+            if exc.code == 401:
+                raise DashboardReadError("El receptor v2 rechazó la lectura") from exc
+            if exc.code == 400:
+                raise ValueError("Consulta de órdenes v2 inválida") from exc
+            raise DashboardReadError(f"El receptor v2 respondió HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise DashboardReadError("No se pudieron leer las órdenes v2 locales") from exc
+        if len(body) > MAX_BODY_BYTES:
+            raise DashboardReadError("La respuesta de órdenes v2 supera el límite")
+        try:
+            return self._order_page(
+                json.loads(body),
+                from_msc=from_msc,
+                to_msc=to_msc,
+                magic_number=magic_number,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DashboardReadError("El receptor devolvió órdenes v2 inválidas") from exc
 
     def position_cycles(
         self,
@@ -341,6 +441,139 @@ class LoopbackV2HistoryClient:
             | {"time_msc": int(time_msc)}
         )
         return _telemetry_deal(row, account_id=account_id)
+
+    def _order_page(
+        self,
+        payload: object,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None,
+    ) -> TelemetryHistoricalOrderPage:
+        if not isinstance(payload, dict) or set(payload) != _RESPONSE_FIELDS:
+            raise ValueError("Respuesta de órdenes v2 inválida")
+        account_id = payload["account_id"]
+        if not isinstance(account_id, str) or not IDENTIFIER.fullmatch(account_id):
+            raise ValueError("Cuenta de órdenes v2 inválida")
+        if (
+            payload["entity_type"] != "order"
+            or payload["from_msc"] != from_msc
+            or payload["to_msc"] != to_msc
+            or payload["magic_number"] != magic_number
+        ):
+            raise ValueError("Filtros de órdenes v2 inesperados")
+        items = payload["items"]
+        if not isinstance(items, list) or len(items) > 100:
+            raise ValueError("Cantidad de órdenes v2 inválida")
+        orders = tuple(self._historical_order(item, account_id) for item in items)
+        for previous, current in zip(orders, orders[1:], strict=False):
+            left = (previous.done_time_msc, int(previous.ticket))
+            right = (current.done_time_msc, int(current.ticket))
+            if left <= right:
+                raise ValueError("Orden de órdenes v2 inválido")
+        coverage = self._coverage(payload["coverage"], from_msc, to_msc)
+        next_cursor = payload["next_cursor"]
+        if next_cursor is not None:
+            event_msc, ticket = self._cursor(next_cursor)
+            if not orders or (event_msc, ticket) != (
+                orders[-1].done_time_msc,
+                orders[-1].ticket,
+            ):
+                raise ValueError("Cursor de órdenes v2 inconsistente")
+        return TelemetryHistoricalOrderPage(
+            account_id=account_id,
+            source_id=self._source_id,
+            from_msc=from_msc,
+            to_msc=to_msc,
+            magic_number=magic_number,
+            orders=orders,
+            next_cursor=next_cursor,
+            coverage=coverage.as_dict(),
+        )
+
+    def _historical_order(self, item: object, account_id: str) -> TelemetryHistoricalOrder:
+        if not isinstance(item, dict) or set(item) != _ITEM_FIELDS:
+            raise ValueError("Observación de orden v2 inválida")
+        if (
+            item["source_id"] != self._source_id
+            or isinstance(item["message_id"], bool)
+            or not isinstance(item["message_id"], int)
+            or item["message_id"] < 1
+            or not isinstance(item["observed_at"], str)
+            or not UTC_TIMESTAMP.fullmatch(item["observed_at"])
+            or not isinstance(item["received_at"], str)
+            or not UTC_TIMESTAMP.fullmatch(item["received_at"])
+            or not isinstance(item["session_id"], str)
+            or not IDENTIFIER.fullmatch(item["session_id"])
+            or isinstance(item["sequence"], bool)
+            or not isinstance(item["sequence"], int)
+            or not 1 <= item["sequence"] <= MAX_INT64
+            or (
+                item["conflict_at"] is not None
+                and (
+                    not isinstance(item["conflict_at"], str)
+                    or not UTC_TIMESTAMP.fullmatch(item["conflict_at"])
+                )
+            )
+        ):
+            raise ValueError("Procedencia de orden v2 inválida")
+        values = item["values"]
+        if not isinstance(values, dict) or set(values) != {
+            "ticket",
+            "magic_number",
+            "symbol",
+            "order_type",
+            "state",
+            "volume_initial",
+            "volume_current",
+            "price_open",
+            "stop_loss",
+            "take_profit",
+            "setup_time_msc",
+            "done_time_msc",
+            "position_id",
+            "position_by_id",
+            "comment",
+        }:
+            raise ValueError("Campos de orden v2 inválidos")
+        ticket = self._unsigned_text(values["ticket"], allow_zero=False)
+        if ticket != item["ticket"]:
+            raise ValueError("Ticket de orden v2 inconsistente")
+        magic = self._magic_text(values["magic_number"], allow_none=False)
+        assert magic is not None
+        symbol = self._bounded_text(values["symbol"], 128, allow_empty=False)
+        comment = self._bounded_text(values["comment"], 256, allow_empty=True)
+        order_type = self._bounded_integer(values["order_type"], 0, 8)
+        state = self._bounded_integer(values["state"], 0, 9)
+        volume_initial = self._finite_number(values["volume_initial"])
+        volume_current = self._finite_number(values["volume_current"])
+        if not 0 <= volume_current <= volume_initial:
+            raise ValueError("Volúmenes de orden v2 inconsistentes")
+        setup = int(self._unsigned_text(values["setup_time_msc"], allow_zero=True))
+        done = int(self._unsigned_text(values["done_time_msc"], allow_zero=True))
+        if setup > done:
+            raise ValueError("Tiempos de orden v2 inconsistentes")
+        return TelemetryHistoricalOrder(
+            account_id=account_id,
+            source_id=self._source_id,
+            message_id=item["message_id"],
+            captured_at=item["observed_at"],
+            ticket=ticket,
+            magic_number=magic,
+            symbol=symbol,
+            order_type=order_type,
+            state=state,
+            volume_initial=volume_initial,
+            volume_current=volume_current,
+            price_open=self._finite_number(values["price_open"]),
+            stop_loss=self._finite_number(values["stop_loss"]),
+            take_profit=self._finite_number(values["take_profit"]),
+            setup_time_msc=setup,
+            done_time_msc=done,
+            position_id=self._unsigned_text(values["position_id"], allow_zero=True),
+            position_by_id=self._unsigned_text(values["position_by_id"], allow_zero=True),
+            comment=comment,
+        )
 
     def _position_cycle_page(
         self,
@@ -503,6 +736,32 @@ class LoopbackV2HistoryClient:
         return result
 
     @staticmethod
+    def _bounded_integer(value: object, minimum: int, maximum: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ValueError("Entero de orden v2 inválido")
+        return value
+
+    @staticmethod
+    def _finite_number(value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("Número de orden v2 inválido")
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("Número de orden v2 inválido")
+        return result
+
+    @staticmethod
+    def _bounded_text(value: object, maximum: int, *, allow_empty: bool) -> str:
+        if (
+            not isinstance(value, str)
+            or len(value) > maximum
+            or (not allow_empty and not value)
+            or any(not character.isprintable() for character in value)
+        ):
+            raise ValueError("Texto de orden v2 inválido")
+        return value
+
+    @staticmethod
     def _coverage(payload: object, from_msc: int, to_msc: int) -> V2Coverage:
         if not isinstance(payload, dict) or set(payload) != {
             "complete_ranges",
@@ -591,6 +850,23 @@ class V2HistoryProvider:
     ) -> TelemetryPositionCyclePage:
         return self._client.position_cycles(
             owner_magic=owner_magic,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def order_history(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        magic_number: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> TelemetryHistoricalOrderPage:
+        return self._client.order_history(
+            from_msc=from_msc,
+            to_msc=to_msc,
+            magic_number=magic_number,
             limit=limit,
             cursor=cursor,
         )

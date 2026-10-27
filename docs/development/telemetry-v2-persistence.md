@@ -115,11 +115,12 @@ keyset; autentica antes de validar parámetros. Cada fila conserva procedencia,
 clasificación, resultado observado, Magic relacionados, exclusiones y elegibilidad.
 No calcula métricas ni devuelve posiciones inferidas desde rangos incompletos.
 
-El adaptador `LoopbackV2HistoryClient` valida estrictamente ambas respuestas antes
-de convertir deals o ciclos a modelos del dashboard. Los deals continúan
-alimentando `/api/deals` y `/api/metrics`; los ciclos se exponen de manera acotada
-por `/api/position-cycles`, pero todavía no alteran esas fórmulas ni tienen una
-vista visual. El navegador solo accede mediante la sesión autenticada del
+El adaptador `LoopbackV2HistoryClient` valida estrictamente las respuestas antes
+de convertir deals, órdenes o ciclos a modelos del dashboard. Deals y órdenes se
+exponen mediante `/api/deals` y `/api/orders`; solo los deals continúan alimentando
+las métricas provisionales de `/api/metrics`. Los ciclos se exponen de manera
+acotada por `/api/position-cycles`, pero todavía no alteran esas fórmulas ni tienen
+una vista visual. El navegador solo accede mediante la sesión autenticada del
 dashboard; nunca recibe la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros

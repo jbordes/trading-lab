@@ -34,6 +34,8 @@ from tradinglab.dashboard.telemetry import (  # noqa: E402
     TelemetryPerformance,
 )
 from tradinglab.dashboard.telemetry_v2 import (  # noqa: E402
+    TelemetryHistoricalOrder,
+    TelemetryHistoricalOrderPage,
     TelemetryPositionCycle,
     TelemetryPositionCyclePage,
 )
@@ -106,6 +108,7 @@ class FakeDealHistoryProvider:
         self.calls: list[dict[str, object]] = []
         self.performance_calls: list[dict[str, object]] = []
         self.position_cycle_calls: list[dict[str, object]] = []
+        self.order_history_calls: list[dict[str, object]] = []
 
     def deal_history(self, **query: object) -> TelemetryDealPage:
         self.calls.append(query)
@@ -178,6 +181,40 @@ class FakeDealHistoryProvider:
                 ),
             ),
             next_cursor=None,
+        )
+
+    def order_history(self, **query: object) -> TelemetryHistoricalOrderPage:
+        self.order_history_calls.append(query)
+        order = TelemetryHistoricalOrder(
+            account_id="account-demo",
+            source_id="demo-terminal-01",
+            message_id=4,
+            captured_at="2026-10-20T12:00:00.000000Z",
+            ticket="70",
+            magic_number="11122",
+            symbol="XAUUSD",
+            order_type=3,
+            state=2,
+            volume_initial=0.01,
+            volume_current=0.01,
+            price_open=4200.0,
+            stop_loss=4220.0,
+            take_profit=4160.0,
+            setup_time_msc=999000,
+            done_time_msc=999003,
+            position_id="0",
+            position_by_id="0",
+            comment="cancelled",
+        )
+        return TelemetryHistoricalOrderPage(
+            account_id="account-demo",
+            source_id="demo-terminal-01",
+            from_msc=int(query["from_msc"]),
+            to_msc=int(query["to_msc"]),
+            magic_number=query["magic_number"],
+            orders=(order,),
+            next_cursor=None,
+            coverage={"complete_ranges": [], "incomplete_batches": 0},
         )
 
 
@@ -719,12 +756,14 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             dashboard_token=ACCESS,
             history_provider=provider,
             position_cycle_provider=provider,
+            historical_order_provider=provider,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
         route = f"{base_url}/api/deals?from_msc=999000&to_msc=1000000&magic_number=11122"
         cycles_route = f"{base_url}/api/position-cycles?owner_magic=11122&limit=25"
+        orders_route = f"{base_url}/api/orders?from_msc=999000&to_msc=1000000&magic_number=11122"
         try:
             with self.assertRaises(urllib.error.HTTPError) as unauthorized:
                 urllib.request.urlopen(route, timeout=2)
@@ -734,6 +773,10 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
                 urllib.request.urlopen(cycles_route, timeout=2)
             self.assertEqual(unauthorized_cycles.exception.code, 401)
             unauthorized_cycles.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as unauthorized_orders:
+                urllib.request.urlopen(orders_route, timeout=2)
+            self.assertEqual(unauthorized_orders.exception.code, 401)
+            unauthorized_orders.exception.close()
 
             opener = authenticated_opener(base_url)
             with opener.open(route, timeout=2) as response:
@@ -757,6 +800,11 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             self.assertTrue(cycles["cycles"][0]["cycle"]["eligible_for_autonomous_metrics"])
             self.assertEqual(provider.position_cycle_calls[0]["owner_magic"], "11122")
             self.assertEqual(provider.position_cycle_calls[0]["limit"], 25)
+            with opener.open(orders_route, timeout=2) as response:
+                orders = json.loads(response.read())
+            self.assertEqual(orders["orders"][0]["ticket"], "70")
+            self.assertEqual(orders["orders"][0]["state"], 2)
+            self.assertEqual(provider.order_history_calls[0]["magic_number"], "11122")
             with self.assertRaises(urllib.error.HTTPError) as invalid_cycles:
                 opener.open(f"{base_url}/api/position-cycles?owner_magic=01", timeout=2)
             self.assertEqual(invalid_cycles.exception.code, 400)

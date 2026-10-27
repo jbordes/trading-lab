@@ -59,6 +59,22 @@ Respuestas principales: `200`, `400 invalid_history_query`, `401
 authentication_required`, `404 history_unavailable`, `503
 history_unavailable`.
 
+### `GET /api/orders`
+
+Devuelve una página descendente de órdenes históricas, incluidas las canceladas,
+vencidas, rechazadas y ejecutadas que entregue MT5. Usa los mismos parámetros y
+límites que `/api/deals`: `from_msc`, `to_msc`, `magic_number`, `limit` y
+`cursor`.
+
+La respuesta contiene `account_id`, `source_id`, rango, filtro, `orders`,
+`next_cursor` y `coverage`. Cada orden conserva tipo, estado, volúmenes, precios,
+SL/TP, tiempos, posición relacionada y comentario. Una orden sin ejecución puede
+tener `position_id` igual a `0`; no constituye un trade ni genera P/L.
+
+Respuestas principales: `200`, `400 invalid_order_history_query`, `401
+authentication_required`, `404 order_history_unavailable`, `503
+order_history_unavailable`.
+
 ### `GET /api/metrics`
 
 Calcula las métricas actualmente implementadas sobre los deals seleccionados.

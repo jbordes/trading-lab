@@ -1,21 +1,21 @@
 # Persistencia y composición aisladas de telemetría v2
 
-**Estado:** implementado como componente opt-in; no conectado al receptor ni al
-dashboard.
+**Estado:** activo como piloto local opt-in; la migración a esquema 4 está
+implementada en código pero todavía no fue aplicada a la base de Juampi.
 
 ## Objetivo y límites
 
 Este incremento convierte las reglas de admisión v2 en evidencia durable y permite
 componer una cuenta sin mezclar estado vivo con actividad histórica. No migra ni
-modifica bases v1, no instala collectors, no abre rutas HTTP y no cambia la base
-operativa. `create_v2_database` solo crea un archivo nuevo solicitado
-explícitamente y nunca reemplaza uno existente.
+modifica bases v1 ni instala collectors. `create_v2_database` solo crea un archivo
+nuevo solicitado explícitamente y nunca reemplaza uno existente; la migración v2
+es una acción operativa separada y con guarda explícita.
 
 El esquema vive en `src/tradinglab/telemetry/sqlite_store_v2.py`, usa
-`PRAGMA user_version = 3` y se abre únicamente si coincide exactamente con el
-esquema esperado. Una base v1 no se acepta como v2. La estrategia de migración se
-definirá antes de activar el nuevo receptor; crear una base de prueba no constituye
-una migración de producción.
+`PRAGMA user_version = 4` y se abre únicamente si coincide exactamente con el
+esquema esperado. Una base v1 no se acepta como v2. La migración admitida es solo
+de v2 esquema 3 a 4, exige una copia nueva verificada y no se ejecuta al abrir el
+receptor.
 
 ## Identidades y seguridad
 
@@ -73,6 +73,20 @@ consulta no llama a `account_evidence` ni reconstruye el historial completo en
 RAM. `coverage_report` une solamente intervalos `complete` y cuenta lotes
 incompletos superpuestos.
 
+## Ciclos de posición durables
+
+Un mensaje `position_reconcile` proyecta, en la misma transacción, una observación
+append-only del ciclo identificado por `account_id + position_id`. Conserva Magic
+propietario y observados, deals, resultado neto, volumen remanente, clasificación
+y motivos de exclusión. `position_cycles` resuelve la última observación no ambigua
+por posición y permite filtrar por Magic propietario sin cargar mensajes ni el
+historial completo en memoria. Los deals y el mensaje original siguen siendo la
+evidencia auditable; la proyección es reconstruible.
+
+El esquema 4 no convierte automáticamente rangos históricos en ciclos. Solo usa
+evidencia `position_reconcile`, porque una ventana temporal equilibrada no prueba
+por sí sola que contenga la vida completa de una posición.
+
 La composición completa sigue siendo la referencia semántica para diagnóstico, no
 el camino de refresco del dashboard. Una caché futura deberá ser acotada,
 descartable y reconstruible desde SQLite.
@@ -102,16 +116,18 @@ la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros
 
-1. La provisión piloto aislada ya está implementada con vista previa y creación
-   explícita. La transición desde v1 y cualquier migración siguen pendientes.
+1. La provisión piloto aislada y la migración v2 de esquema 3 a 4 están
+   implementadas con vista previa, copia verificada y aplicación explícita.
 2. Las proyecciones paginadas de actividad ya están implementadas y validadas con
    datos sintéticos. Falta medirlas con volumen y operaciones reales anonimizadas.
 3. El receptor v2 opt-in ya expone `/v2/telemetry` solo en loopback, con
    credenciales separadas en variables de entorno y sin modificar el receptor v1.
    Falta conectarlo a collectors v2. La lectura autenticada y el adaptador del
    dashboard ya están implementados de forma opt-in.
-4. Implementar los dos collectors y validarlos primero en demo con rollback.
-5. Adaptar la API del dashboard después de aprobar su contrato de vista.
+4. Validar observaciones `position_reconcile` reales en demo y contrastarlas con
+   MT5 antes de consumir ciclos en métricas.
+5. Exponer la consulta de ciclos en la API y adaptar el dashboard después de
+   aprobar su contrato de vista.
 
 ## Operación piloto
 
@@ -136,6 +152,22 @@ uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <
 La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
 `/health`. La consulta vive en `/v2/activity`. Este procedimiento prepara el
 backend; no instala collectors ni genera actividad por sí solo.
+
+Para actualizar una base v2 existente, detener primero el supervisor y revisar la
+vista previa. El nombre de copia debe ser nuevo:
+
+```text
+uv run python scripts/migrate_telemetry_v2_db.py \
+  --filename piloto-v2.sqlite3 \
+  --backup-filename piloto-v2-before-schema-4.sqlite3
+```
+
+Solo después de revisar rutas se repite con `--apply`. El comando rechaza otra
+versión, un esquema alterado o una copia ya existente; crea la copia mediante la
+API de backup de SQLite, verifica integridad, migra atómicamente y reproyecta los
+`position_reconcile` que ya estuvieran guardados. No restaura automáticamente: la
+copia queda disponible para una recuperación humana si la validación posterior
+fallara.
 
 Durante la transición, el dashboard puede mantener estado vivo desde v1 y tomar
 el historial recuperado desde v2:

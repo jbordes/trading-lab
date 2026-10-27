@@ -194,9 +194,9 @@ La dirección se rige por
    entidades MT5 ni forzar una única tabla de almacenamiento.
 2. Exponer las órdenes históricas ya admitidas por telemetría v2 y su cobertura;
    conservar canceladas y vencidas para analizar comportamiento, no rendimiento.
-3. Definir una proyección durable de ciclos por `account_id + position_id`, solo
-   después de precisar la consulta y migración necesarias. No reconstruir el
-   historial creciente completo en memoria.
+3. Proyectar durablemente ciclos por `account_id + position_id`, mediante una
+   migración explícita y sin reconstruir el historial creciente completo en
+   memoria. **Implementado en código; despliegue piloto pendiente.**
 4. Registrar Magic propietario, Magic observados, completitud y motivo de
    exclusión. Detectar intervención y colisión netting mediante evidencia
    relacionada, no mediante un único campo.
@@ -222,8 +222,10 @@ posiciones candidatas al observar salidas o reversas y usa
 `HistorySelectByPosition` antes de avanzar el cursor confirmado. Si puede probar
 una posición cerrada completa, emite deals y órdenes como `position_reconcile`;
 el receptor los valida y persiste sin confundir esa selección con cobertura global
-de la cuenta. Falta validar el collector compilado contra MT5 real y crear la
-proyección durable por `account_id + position_id` que consumirá esa evidencia.
+de la cuenta. El collector compilado ya envía `activity-0.2.0` en Juampi; falta
+observar un cierre real. La proyección durable y la migración 3 a 4 están
+implementadas en código, pero todavía no se aplicaron a la base piloto ni se
+expusieron a métricas o UI.
 
 Criterio del primer corte alcanzado en código: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los

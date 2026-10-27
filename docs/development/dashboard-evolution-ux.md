@@ -2,12 +2,16 @@
 
 **Fecha:** 2026-10-15
 
-**Estado:** guía de diseño del prototipo, vigente hasta que el contrato de métricas (incremento 1) introduzca los valores reales.
+**Estado:** guía de diseño del prototipo. La dirección de navegación y métricas
+por ciclo fue actualizada el 2026-10-27 mediante ADR-0014.
 
 **Documentos relacionados:** [Dashboard local de riesgo](../architecture/live-risk-dashboard.md), [Roadmap](live-risk-dashboard-roadmap.md), [Guía de métricas para el socio](guia-metricas-para-el-socio.md).
 
 **Actualización de navegación (19 de octubre de 2026):**
 [análisis visual y adaptación](adaptive-navigation-visual-analysis.md).
+
+**Actualización de actividad de trading (27 de octubre de 2026):**
+[ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md).
 
 ## 1. Rol de esta pantalla dentro del laboratorio
 
@@ -91,10 +95,28 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 - **Locale `es-AR`** con hora 24 h, agrupación de miles consistente y signo explícito en resultados.
 - **Fuente del sistema**: sin fuentes descargadas; el sistema operativo provee la tipografía (sin `@font-face` ni dependencias).
 - **Sin dependencias externas ni build**: HTML/CSS/JS/SVG servidos por la biblioteca estándar; ECharts se incorpora solo en el incremento 3 como archivo local fijado.
-- **Navegación**: Resumen, Operaciones, Actividad y (incremento 3) Riesgo — estable a lo largo del tiempo.
+- **Navegación actual**: Resumen, Operaciones, Historial y Actividad. Es un estado
+  transitorio que todavía refleja la separación técnica entre snapshot e historia.
+- **Dirección aprobada**: Resumen, Trading, Rendimiento y Estado del sistema.
+  Trading integra `En curso`, `Ejecuciones`, `Órdenes` y `Todo`; Rendimiento solo
+  consume ciclos completos elegibles y Estado conserva captura y diagnóstico.
 - **Filtros que no recargan**: match exacto por Magic Number y selección de
   posiciones u órdenes; se persisten por fuente para no arrastrar silenciosamente
-  un filtro entre cuentas. La agrupación por bot sigue diferida.
+  un filtro entre cuentas. La experiencia unificada extenderá el mismo principio
+  a período, símbolo, entidad, estado e identificadores relacionados.
+
+### Actividad observada y rendimiento atribuible
+
+La pantalla unificada no convierte orden, deal y posición en sinónimos. Comparte
+la navegación y los filtros, pero cada registro mantiene su entidad y presenta
+solo las columnas comunes antes de abrir el detalle específico. `Todo` es una
+cronología para investigar; no es una tabla sobre la que se calculen métricas
+mezclando clases diferentes.
+
+Rendimiento utiliza ciclos reconstruidos por `account_id + position_id`. El Magic
+Number atribuye el ciclo a un EA cuando todo el recorrido es completo y no hubo
+intervenciones ni otros Magic. Las exclusiones serán visibles y explicables. Una
+colisión entre EAs en una cuenta netting no generará métricas individuales.
 
 ## 5. Lo que NO se construye antes de su gate
 

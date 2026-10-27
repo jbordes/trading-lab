@@ -94,7 +94,8 @@ Las decisiones y el diseño se detallan en
 [ADR-0002](../adr/0002-local-live-risk-dashboard.md),
 [ADR-0004](../adr/0004-mt5-collector-primary-source.md),
 [ADR-0010](../adr/0010-separate-dashboard-authentication.md),
-[ADR-0012](../adr/0012-durable-operation-history.md) y
+[ADR-0012](../adr/0012-durable-operation-history.md),
+[ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md) y
 [Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza un collector
 MQL5 por terminal como fuente operativa; la API Python queda limitada a
 diagnóstico o reconciliación aislada con identidad explícita. El acceso humano
@@ -116,6 +117,16 @@ Number. Las nuevas proyecciones de consulta serán durables y se agregarán medi
 migraciones explícitas cuando una necesidad concreta lo justifique. El historial
 creciente no se conservará completo en RAM; una caché futura será acotada,
 descartable y reconstruible desde SQLite.
+
+La evolución de producto unifica `Operaciones` e `Historial` en una experiencia
+de `Actividad de trading`, sin unificar artificialmente sus entidades o fuentes.
+La consulta distinguirá estado en curso, deals y órdenes, con filtros compartidos
+y cobertura explícita. El rendimiento se calculará aparte sobre ciclos completos
+de posición reconstruidos por `account_id + position_id`. El Magic Number es una
+dimensión de atribución: ciclos incompletos, intervenidos o con varios EAs quedan
+fuera de las métricas autónomas y permanecen disponibles como evidencia. En
+cuentas netting, una colisión de Magic Numbers sobre el mismo símbolo no se
+repartirá mediante resultados sintéticos.
 
 La persistencia local se incorpora incrementalmente según
 [ADR-0006](../adr/0006-incremental-local-telemetry-persistence.md). El primer bloque

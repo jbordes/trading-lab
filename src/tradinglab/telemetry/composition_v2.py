@@ -284,6 +284,7 @@ def _coverage(
     for message in messages:
         if (
             message.envelope.kind == "activity_batch"
+            and message.envelope.payload["reason"] != "position_reconcile"
             and message.envelope.payload[collection]["status"] == "complete"
         ):
             window = message.envelope.payload["window"]

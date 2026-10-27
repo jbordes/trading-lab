@@ -215,8 +215,15 @@ comerciales por cuenta y posición, suma volumen y resultado neto, conserva tick
 y Magic observados y clasifica ciclos cerrados, abiertos, incompletos o
 inconsistentes. Solo devuelve resultado definitivo cuando el llamador confirma la
 cobertura y no existen acciones sin atribución ni Magic mixtos. Todavía no alimenta
-las métricas ni la UI: primero debe existir una forma durable de demostrar cobertura
-por ciclo, en vez de inferirla de un rango de fechas acotado.
+las métricas ni la UI.
+
+**Evidencia por ciclo implementada en código:** el collector de actividad detecta
+posiciones candidatas al observar salidas o reversas y usa
+`HistorySelectByPosition` antes de avanzar el cursor confirmado. Si puede probar
+una posición cerrada completa, emite deals y órdenes como `position_reconcile`;
+el receptor los valida y persiste sin confundir esa selección con cobertura global
+de la cuenta. Falta validar el collector compilado contra MT5 real y crear la
+proyección durable por `account_id + position_id` que consumirá esa evidencia.
 
 Criterio del primer corte alcanzado en código: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los

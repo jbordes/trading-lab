@@ -24,15 +24,38 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("HistoryDealGetTicket(", self.source)
 
     def test_cursor_advances_only_after_receiver_ack(self) -> None:
-        sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
+        sender = self.source.split("bool TrySendPending", 1)[1].split("void ResetRetryState", 1)[0]
         success = sender.split("if(status == 200 || status == 202)", 1)[1]
         before_success = sender.split("if(status == 200 || status == 202)", 1)[0]
         self.assertNotIn("confirmed_from_msc =", before_success)
-        self.assertIn("PersistValue(cursor_key, next_cursor)", success)
+        self.assertIn("batch_waiting_for_positions = true", success)
+        self.assertNotIn("confirmed_from_msc =", success)
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "void ResetCandidatePositions", 1
+        )[0]
+        self.assertIn("PersistValue(cursor_key, next_cursor)", finalizer)
         self.assertLess(
-            success.index("PersistValue(cursor_key"), success.index("confirmed_from_msc =")
+            finalizer.index("PersistValue(cursor_key"),
+            finalizer.index("confirmed_from_msc ="),
         )
         self.assertIn("pending_body", sender)
+
+    def test_closed_position_evidence_precedes_cursor_advance(self) -> None:
+        self.assertIn("HistorySelectByPosition((ulong)position_id)", self.source)
+        self.assertIn("position_reconcile", self.source)
+        self.assertIn("MathAbs(signed_volume) > 0.00000001", self.source)
+        self.assertIn("has_opening_order", self.source)
+
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("ContinuePositionReconciliation()", timer)
+        reconciler = self.source.split("void ContinuePositionReconciliation", 1)[1].split(
+            "bool PersistValue", 1
+        )[0]
+        self.assertIn("BuildPositionReconcilePayload", reconciler)
+        self.assertLess(
+            reconciler.index("BuildPositionReconcilePayload"),
+            reconciler.index("FinalizeConfirmedBatch"),
+        )
 
     def test_saturation_splits_then_blocks_without_advancing(self) -> None:
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]

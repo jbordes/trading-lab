@@ -414,6 +414,35 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(deals.incomplete_batches, 1)
         self.assertEqual(orders.incomplete_batches, 0)
 
+    def test_position_reconcile_is_durable_without_claiming_account_range(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized("activity-position-reconcile"), received_at=self.now
+            )
+            deals = registry.activity_page(
+                "account-demo",
+                "deal",
+                from_msc=1792569600000,
+                to_msc=1792656060001,
+            )
+            coverage = registry.coverage_report(
+                "account-demo",
+                "deal",
+                from_msc=1792569600000,
+                to_msc=1792656060001,
+            )
+
+        self.assertEqual(len(deals.items), 2)
+        self.assertEqual(coverage.complete_ranges, ())
+        self.assertEqual(coverage.incomplete_batches, 0)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_observations").fetchone()[0], 4
+            )
+
     def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
         def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:
             document = fixture("activity-canceled-order")

@@ -109,8 +109,16 @@ El receptor también expone `GET /v2/activity` solo en loopback. Exige
 resuelta con cobertura completa e indicador de lotes incompletos. El endpoint de
 salud continúa sin revelar cuenta ni requerir credenciales.
 
-El adaptador `LoopbackV2HistoryClient` valida estrictamente esa respuesta antes de
-convertir deals al modelo que ya usan `/api/deals` y `/api/metrics`. Por lo tanto,
+`GET /v2/position-cycles` reutiliza esa credencial de lectura y devuelve una
+página acotada de ciclos reconciliados. Admite `owner_magic`, `limit` y cursor
+keyset; autentica antes de validar parámetros. Cada fila conserva procedencia,
+clasificación, resultado observado, Magic relacionados, exclusiones y elegibilidad.
+No calcula métricas ni devuelve posiciones inferidas desde rangos incompletos.
+
+El adaptador `LoopbackV2HistoryClient` valida estrictamente ambas respuestas antes
+de convertir deals o ciclos a modelos del dashboard. Los deals continúan
+alimentando `/api/deals` y `/api/metrics`; los ciclos quedan preparados para el
+contrato de métricas definitivo, pero todavía no alteran esas fórmulas. Por lo tanto,
 el navegador solo accede mediante la sesión autenticada del dashboard; nunca recibe
 la credencial interna de lectura ni las de los collectors.
 
@@ -126,8 +134,8 @@ la credencial interna de lectura ni las de los collectors.
    dashboard ya están implementados de forma opt-in.
 4. Validar observaciones `position_reconcile` reales en demo y contrastarlas con
    MT5 antes de consumir ciclos en métricas.
-5. Exponer la consulta de ciclos en la API y adaptar el dashboard después de
-   aprobar su contrato de vista.
+5. La consulta interna de ciclos y su cliente validado están implementados. Falta
+   aprobar el contrato de métricas/vista antes de exponerlos al navegador.
 
 ## Operación piloto
 

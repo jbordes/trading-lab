@@ -242,6 +242,14 @@ class V2PositionCycleItem:
 
 
 @dataclass(frozen=True, slots=True)
+class V2PositionCyclePage:
+    account_id: str
+    owner_magic: str | None
+    items: tuple[V2PositionCycleItem, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _PositionDeal:
     account_id: str
     ticket: str
@@ -827,8 +835,9 @@ class V2TelemetryRegistry:
         account_id: str,
         *,
         owner_magic: str | None = None,
-        limit: int = 100,
-    ) -> tuple[V2PositionCycleItem, ...]:
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> V2PositionCyclePage:
         """Return the latest unambiguous durable observation of each position cycle."""
 
         account = _identifier(account_id, "account_id")
@@ -841,12 +850,31 @@ class V2TelemetryRegistry:
                 int(owner_magic)
             except ValueError as exc:
                 raise ValueError("owner_magic inválido") from exc
+        cursor_event, cursor_position = self._decode_activity_cursor(cursor)
+        if cursor_position is not None and (
+            cursor_position == "0" or str(int(cursor_position)) != cursor_position
+        ):
+            raise ValueError("Cursor de ciclos inválido")
         filters = ["account_id = ?"]
         parameters: list[object] = [account]
         if owner_magic is not None:
             filters.append("owner_magic = ?")
             parameters.append(owner_magic)
-        parameters.append(limit)
+        result_filter = "capture_rank = 1"
+        if cursor_event is not None and cursor_position is not None:
+            result_filter += """ AND (last_event_at_msc < ? OR
+                (last_event_at_msc = ? AND (length(position_id) < ? OR
+                (length(position_id) = ? AND position_id < ?))))"""
+            parameters.extend(
+                (
+                    cursor_event,
+                    cursor_event,
+                    len(cursor_position),
+                    len(cursor_position),
+                    cursor_position,
+                )
+            )
+        parameters.append(limit + 1)
         rows = self._connection.execute(
             f"""WITH filtered AS (
                 SELECT * FROM position_cycle_observations
@@ -870,7 +898,7 @@ class V2TelemetryRegistry:
                    position_id, owner_magic, started_at_msc, last_event_at_msc,
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
                    observed_magics_json, deal_tickets_json, exclusions_json
-            FROM eligible WHERE capture_rank = 1
+            FROM eligible WHERE {result_filter}
             ORDER BY last_event_at_msc DESC, length(position_id) DESC, position_id DESC
             LIMIT ?""",
             parameters,
@@ -909,7 +937,15 @@ class V2TelemetryRegistry:
             if actual != expected:
                 raise V2StorageError("Columnas y ciclo de posición guardado no coinciden")
             items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3]))
-        return tuple(items)
+        page_items = tuple(items[:limit])
+        next_cursor = None
+        if len(items) > limit and page_items:
+            cycle = page_items[-1].cycle
+            next_cursor = self._encode_activity_cursor(
+                cycle.last_event_at_msc,
+                cycle.position_id,
+            )
+        return V2PositionCyclePage(account, owner_magic, page_items, next_cursor)
 
     @staticmethod
     def _encode_activity_cursor(event_msc: int, ticket: str) -> str:

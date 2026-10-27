@@ -16,6 +16,7 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
     V2CoverageReport,
+    V2PositionCyclePage,
     V2StorageError,
     open_v2_registry,
 )
@@ -125,6 +126,24 @@ class PersistentV2TelemetryReceiver:
                 to_msc=to_msc,
             )
             return page, coverage
+
+    def position_cycles(
+        self,
+        *,
+        owner_magic: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> V2PositionCyclePage:
+        """Read a bounded page of durable position cycles."""
+
+        with self._lock:
+            self._require_open()
+            return self._registry.position_cycles(
+                self._account_id,
+                owner_magic=owner_magic,
+                limit=limit,
+                cursor=cursor,
+            )
 
     def close(self) -> None:
         with self._lock:

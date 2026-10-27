@@ -79,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"Receptor MT5 v2 piloto: http://127.0.0.1:{server.server_port}/v2/telemetry")
     print(f"Lectura histórica v2: http://127.0.0.1:{server.server_port}/v2/activity")
+    print(f"Ciclos de posición v2: http://127.0.0.1:{server.server_port}/v2/position-cycles")
     print("Credenciales live/activity/lectura separadas, solo en memoria. Ctrl+C para detener.")
     try:
         server.serve_forever(poll_interval=0.25)

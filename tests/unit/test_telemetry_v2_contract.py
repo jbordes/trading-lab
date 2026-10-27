@@ -240,6 +240,42 @@ class TelemetryV2ContractTest(unittest.TestCase):
             collection["items"][1]["ticket"] = "18446744073709551615"
             parse_envelope_v2(encoded(value))
 
+    def test_position_reconcile_requires_one_complete_position_lifecycle(self) -> None:
+        original = fixture("activity-position-reconcile")
+        result = parse_envelope_v2(encoded(original))
+        self.assertEqual(result.payload["reason"], "position_reconcile")
+        self.assertGreater(
+            int(result.payload["window"]["to_server_msc"])
+            - int(result.payload["window"]["from_server_msc"]),
+            86_400_000,
+        )
+
+        changes = []
+        value = copy.deepcopy(original)
+        value["payload"]["deals"]["status"] = "truncated"
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["deals"].update(status="complete", total=0, items=[])
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["deals"]["items"][1]["position_id"] = "99"
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["deals"]["items"][1]["volume"] = 0.005
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["deals"]["items"][1]["deal_type"] = 2
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["orders"]["items"][0]["ticket"] = "99"
+        changes.append(value)
+        value = copy.deepcopy(original)
+        value["payload"]["orders"]["items"][1]["position_id"] = "99"
+        changes.append(value)
+        for candidate in changes:
+            with self.subTest(candidate=candidate), self.assertRaises(TelemetryValidationError):
+                parse_envelope_v2(encoded(candidate))
+
     def test_heartbeat_counts_and_live_numbers_are_strict(self) -> None:
         for name, group, field in [
             ("heartbeat", (), "queued_messages"),

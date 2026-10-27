@@ -7,6 +7,7 @@ Authorization, replay handling and projections belong to later boundaries.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from tradinglab.telemetry import contract as v1
@@ -149,11 +150,13 @@ def _activity(payload: dict[str, Any]) -> None:
         "activity_batch",
     )
     _identity(payload["identity"])
-    if v1._required_string(payload, "reason") not in {
+    reason = v1._required_string(payload, "reason")
+    if reason not in {
         "startup",
         "trade_activity",
         "reconcile",
         "recovery",
+        "position_reconcile",
     }:
         raise TelemetryValidationError("Motivo de actividad inválido")
     window = _object(payload["window"], "window")
@@ -161,10 +164,13 @@ def _activity(payload: dict[str, Any]) -> None:
     for field in ("from_server_msc", "to_server_msc"):
         v1._decimal_text(window, field, minimum=0, maximum=v1.MAX_INT64)
     start, end = int(window["from_server_msc"]), int(window["to_server_msc"])
-    if not 0 <= end - start <= 86_400_000:
+    duration = end - start
+    if duration < 0 or (reason != "position_reconcile" and duration > 86_400_000):
         raise TelemetryValidationError("Ventana de actividad inválida")
+    collections: dict[str, list[dict[str, Any]]] = {}
     for name in ("deals", "orders"):
         rows = _collection(payload[name])
+        collections[name] = rows
         seen: set[str] = set()
         for item in rows:
             row = _object(item, name)
@@ -179,6 +185,37 @@ def _activity(payload: dict[str, Any]) -> None:
             if row["ticket"] in seen:
                 raise TelemetryValidationError("Ticket duplicado dentro de la colección")
             seen.add(row["ticket"])
+    if reason == "position_reconcile":
+        _position_reconcile(payload, collections)
+
+
+def _position_reconcile(
+    payload: dict[str, Any], collections: dict[str, list[dict[str, Any]]]
+) -> None:
+    for name in ("deals", "orders"):
+        collection = payload[name]
+        if collection["status"] != "complete" or collection["total"] != len(collections[name]):
+            raise TelemetryValidationError("Reconciliación de posición incompleta")
+    deals = collections["deals"]
+    if not deals:
+        raise TelemetryValidationError("Reconciliación de posición sin deals")
+    position_id = deals[0]["position_id"]
+    if position_id == "0" or any(row["position_id"] != position_id for row in deals):
+        raise TelemetryValidationError("Deals de reconciliación pertenecen a otra posición")
+    if any(row["deal_type"] not in {0, 1} for row in deals):
+        raise TelemetryValidationError("Reconciliación de posición contiene deals no comerciales")
+    signed_volume = math.fsum(
+        row["volume"] if row["deal_type"] == 0 else -row["volume"] for row in deals
+    )
+    if not math.isclose(signed_volume, 0.0, rel_tol=0.0, abs_tol=1e-8):
+        raise TelemetryValidationError("Reconciliación de posición todavía abierta")
+    orders = collections["orders"]
+    if not orders or not any(row["ticket"] == position_id for row in orders):
+        raise TelemetryValidationError("Falta la orden de apertura de la posición")
+    if any(
+        row["position_id"] != position_id and row["position_by_id"] != position_id for row in orders
+    ):
+        raise TelemetryValidationError("Órdenes de reconciliación pertenecen a otra posición")
 
 
 def _collection(value: Any) -> list[Any]:

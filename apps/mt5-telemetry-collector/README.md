@@ -50,6 +50,14 @@ la composición del backend resuelve reobservaciones por ticket. Los rechazos 4x
 detienen el EA y los fallos transitorios reintentan el mismo cuerpo con espera
 creciente.
 
+Desde `activity-0.2.0`, cuando una ventana contiene una salida o reversión, el
+collector selecciona además el historial completo de esa posición con
+`HistorySelectByPosition`. Solo envía `position_reconcile` si puede demostrar una
+única posición, su orden inicial y volumen neto cerrado; después confirma el cursor
+del rango. Una caída entre ambos envíos vuelve a recorrer la ventana, por lo que
+no pierde silenciosamente la oportunidad de reconciliar. El mensaje por posición
+no declara cobertura temporal de toda la cuenta.
+
 La base y el cursor no se coordinan automáticamente. Si se recrea la base, cambia
 la fuente o se desea reiniciar el período, el operador debe revisar y eliminar
 manualmente las variables `TL2.ACT.*` correspondientes antes de volver a adjuntar

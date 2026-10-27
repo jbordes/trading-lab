@@ -427,24 +427,30 @@ class V2TelemetryRegistry:
             ("orders", "order", "done_time_msc"),
         ):
             evidence = payload[collection]
-            connection.execute(
-                """INSERT INTO activity_coverage
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    message_id,
-                    account_id,
-                    entity_type,
-                    int(window["from_server_msc"]),
-                    int(window["to_server_msc"]),
-                    evidence["status"],
-                    evidence["total"],
-                    captured,
-                    envelope.source_id,
-                    envelope.session_id,
-                    str(envelope.sequence),
-                    json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-                ),
-            )
+            if payload["reason"] != "position_reconcile":
+                connection.execute(
+                    """INSERT INTO activity_coverage
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        message_id,
+                        account_id,
+                        entity_type,
+                        int(window["from_server_msc"]),
+                        int(window["to_server_msc"]),
+                        evidence["status"],
+                        evidence["total"],
+                        captured,
+                        envelope.source_id,
+                        envelope.session_id,
+                        str(envelope.sequence),
+                        json.dumps(
+                            evidence,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
             for row in evidence["items"]:
                 canonical_row = json.dumps(
                     row, ensure_ascii=False, sort_keys=True, separators=(",", ":")

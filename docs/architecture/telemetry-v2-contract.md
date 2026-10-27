@@ -55,7 +55,8 @@ marca conflicto hasta una observación posterior no ambigua.
 ## Actividad: `activity_batch` (rol activity)
 
 Payload exacto: `reason`, `identity`, `window`, `deals`, `orders`.
-Reason: `startup`, `trade_activity`, `reconcile`, `recovery`.
+Reason: `startup`, `trade_activity`, `reconcile`, `recovery`,
+`position_reconcile`.
 Window contiene `from_server_msc`, `to_server_msc`, como enteros decimales en
 texto: rango inclusivo, ordenado, máximo 24 horas, tiempo MT5 del broker, no UTC.
 Conservar el valor original; no convertir usando un desplazamiento supuesto.
@@ -89,6 +90,16 @@ creada antes del rango y cancelada dentro debe aparecer. La validación en MT5 d
 confirmar la semántica real de selección antes de declarar cobertura completa.
 `complete` se refiere al rango y tipo consultados, nunca al historial de toda la
 cuenta ni a la coherencia atómica entre las dos colecciones.
+
+`position_reconcile` es la excepción al máximo de 24 horas: representa
+la selección completa que MT5 devuelve mediante `HistorySelectByPosition` para
+una sola posición, aunque su ciclo dure más. Exige deals y órdenes `complete`,
+al menos un deal comercial, volumen comprado y vendido neteado en cero, un único
+`position_id` no nulo y la orden inicial cuyo ticket coincide con ese
+identificador. Todas las órdenes deben referir la misma posición mediante
+`position_id` o `position_by_id`. Este mensaje conserva evidencia durable
+del ciclo, pero **no** confirma cobertura de toda la cuenta entre los extremos de
+su ventana y por eso no genera un rango en `activity_coverage`.
 
 ## Heartbeat y diagnóstico
 

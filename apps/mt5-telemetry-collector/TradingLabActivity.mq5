@@ -19,7 +19,7 @@ input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.1.0";
+const string COLLECTOR_VERSION = "activity-0.2.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 
 string session_id = "";
@@ -31,7 +31,12 @@ string pending_body = "";
 long pending_from_msc = 0;
 long pending_to_msc = 0;
 bool pending_blocks_recovery = false;
+bool pending_is_position_reconcile = false;
 bool recovery_blocked = false;
+bool batch_waiting_for_positions = false;
+long candidate_position_ids[];
+int candidate_position_count = 0;
+int candidate_position_index = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
 bool safety_stopped = false;
@@ -135,6 +140,11 @@ void OnTimer()
       TrySendPending(GetTickCount64());
       return;
    }
+   if(batch_waiting_for_positions)
+   {
+      ContinuePositionReconciliation();
+      return;
+   }
    long now_msc = (long)TimeCurrent() * 1000;
    if(now_msc <= confirmed_from_msc + (long)OverlapSeconds * 1000)
       return;
@@ -216,6 +226,14 @@ bool TrySendPending(const ulong now_ms)
    send_attempts++;
    if(status == 200 || status == 202)
    {
+      if(pending_is_position_reconcile)
+      {
+         pending_body = "";
+         pending_is_position_reconcile = false;
+         candidate_position_index++;
+         ResetRetryState();
+         return true;
+      }
       if(pending_blocks_recovery)
       {
          if(!PersistValue(blocked_key, pending_from_msc))
@@ -227,25 +245,19 @@ bool TrySendPending(const ulong now_ms)
          recovery_blocked = true;
          PrintFormat("TradingLab activity: saturated range requires operator review (%I64d..%I64d)",
                      pending_from_msc, pending_to_msc);
+         pending_body = "";
+         pending_blocks_recovery = false;
+         ResetRetryState();
       }
       else
       {
-         long next_cursor = pending_to_msc - (long)OverlapSeconds * 1000;
-         if(next_cursor <= confirmed_from_msc || !PersistValue(cursor_key, next_cursor))
-         {
-            Print("TradingLab activity: cannot persist confirmed recovery cursor");
-            StopForSafety();
-            return false;
-         }
-         confirmed_from_msc = next_cursor;
+         pending_body = "";
+         batch_waiting_for_positions = true;
+         candidate_position_index = 0;
+         ResetRetryState();
+         if(candidate_position_count == 0)
+            return FinalizeConfirmedBatch();
       }
-      pending_body = "";
-      pending_blocks_recovery = false;
-      startup_pending = false;
-      trade_activity_pending = false;
-      retry_delay_seconds = 2;
-      send_attempts = 0;
-      next_send_ms = 0;
       return true;
    }
    bool retryable = status == -1 || status == 408 || status == 429 || status >= 500;
@@ -261,6 +273,214 @@ bool TrySendPending(const ulong now_ms)
       PrintFormat("TradingLab activity: retrying the same unconfirmed batch (attempt %d)",
                   send_attempts);
    return false;
+}
+
+
+void ResetRetryState()
+{
+   retry_delay_seconds = 2;
+   send_attempts = 0;
+   next_send_ms = 0;
+}
+
+
+bool FinalizeConfirmedBatch()
+{
+   long next_cursor = pending_to_msc - (long)OverlapSeconds * 1000;
+   if(next_cursor <= confirmed_from_msc || !PersistValue(cursor_key, next_cursor))
+   {
+      Print("TradingLab activity: cannot persist confirmed recovery cursor");
+      StopForSafety();
+      return false;
+   }
+   confirmed_from_msc = next_cursor;
+   batch_waiting_for_positions = false;
+   pending_blocks_recovery = false;
+   pending_is_position_reconcile = false;
+   ResetCandidatePositions();
+   startup_pending = false;
+   trade_activity_pending = false;
+   ResetRetryState();
+   return true;
+}
+
+
+int BuildPositionReconcilePayload(const long position_id, string &payload)
+{
+   ResetLastError();
+   if(position_id <= 0 || !HistorySelectByPosition((ulong)position_id))
+   {
+      PrintFormat("TradingLab activity: cannot select position %I64d history (%d)",
+                  position_id, GetLastError());
+      return -1;
+   }
+
+   int deal_total = HistoryDealsTotal();
+   int order_total = HistoryOrdersTotal();
+   if(deal_total < 1 || order_total < 1)
+   {
+      PrintFormat("TradingLab activity: position %I64d has incomplete history; skipped",
+                  position_id);
+      return 0;
+   }
+   if(deal_total > MaxItemsPerCollection || order_total > MaxItemsPerCollection)
+   {
+      PrintFormat("TradingLab activity: position %I64d exceeds collection limit; skipped",
+                  position_id);
+      return 0;
+   }
+
+   bool valid = true;
+   bool has_event_time = false;
+   bool has_opening_order = false;
+   long from_msc = 0;
+   long to_msc = 0;
+   double signed_volume = 0.0;
+   string deals = "[";
+   for(int index = 0; index < deal_total; index++)
+   {
+      ResetLastError();
+      ulong ticket = HistoryDealGetTicket(index);
+      long row_position_id = HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+      long time_msc = HistoryDealGetInteger(ticket, DEAL_TIME_MSC);
+      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      double volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      if(ticket == 0 || GetLastError() != 0 || row_position_id != position_id ||
+         time_msc <= 0 || !MathIsValidNumber(volume) || volume < 0.0)
+      {
+         PrintFormat("TradingLab activity: position %I64d deal history is invalid; skipped",
+                     position_id);
+         return 0;
+      }
+      if(deal_type == DEAL_TYPE_BUY)
+         signed_volume += volume;
+      else if(deal_type == DEAL_TYPE_SELL)
+         signed_volume -= volume;
+      else
+      {
+         PrintFormat("TradingLab activity: position %I64d has a non-trading deal; skipped",
+                     position_id);
+         return 0;
+      }
+      if(!has_event_time || time_msc < from_msc)
+         from_msc = time_msc;
+      if(!has_event_time || time_msc > to_msc)
+         to_msc = time_msc;
+      has_event_time = true;
+      string row = BuildHistoricalDeal(ticket, valid);
+      if(!valid)
+         return -1;
+      if(index > 0)
+         deals += ",";
+      deals += row;
+   }
+   deals += "]";
+
+   string orders = "[";
+   for(int index = 0; index < order_total; index++)
+   {
+      ResetLastError();
+      ulong ticket = HistoryOrderGetTicket(index);
+      long order_position_id = HistoryOrderGetInteger(ticket, ORDER_POSITION_ID);
+      long position_by_id = HistoryOrderGetInteger(ticket, ORDER_POSITION_BY_ID);
+      long done_msc = HistoryOrderGetInteger(ticket, ORDER_TIME_DONE_MSC);
+      if(ticket == 0 || GetLastError() != 0 || done_msc <= 0 ||
+         (order_position_id != position_id && position_by_id != position_id))
+      {
+         PrintFormat("TradingLab activity: position %I64d order history is invalid; skipped",
+                     position_id);
+         return 0;
+      }
+      if((long)ticket == position_id)
+         has_opening_order = true;
+      if(!has_event_time || done_msc < from_msc)
+         from_msc = done_msc;
+      if(!has_event_time || done_msc > to_msc)
+         to_msc = done_msc;
+      has_event_time = true;
+      string row = BuildHistoricalOrder(ticket, valid);
+      if(!valid)
+         return -1;
+      if(index > 0)
+         orders += ",";
+      orders += row;
+   }
+   orders += "]";
+
+   if(!has_event_time || !has_opening_order || MathAbs(signed_volume) > 0.00000001)
+   {
+      PrintFormat("TradingLab activity: position %I64d is open or cannot be proven complete; skipped",
+                  position_id);
+      return 0;
+   }
+
+   payload = "{";
+   payload += "\"reason\":\"position_reconcile\",";
+   payload += "\"identity\":" + BuildIdentity() + ",";
+   payload += "\"window\":{\"from_server_msc\":\"" + IntegerToString(from_msc) +
+              "\",\"to_server_msc\":\"" + IntegerToString(to_msc) + "\"},";
+   payload += "\"deals\":" + CollectionJson(deal_total, deals, false) + ",";
+   payload += "\"orders\":" + CollectionJson(order_total, orders, false);
+   payload += "}";
+   return 1;
+}
+
+
+void ResetCandidatePositions()
+{
+   ArrayResize(candidate_position_ids, 0);
+   candidate_position_count = 0;
+   candidate_position_index = 0;
+}
+
+
+void AddCandidatePosition(const long position_id)
+{
+   for(int index = 0; index < candidate_position_count; index++)
+      if(candidate_position_ids[index] == position_id)
+         return;
+   if(ArrayResize(candidate_position_ids, candidate_position_count + 1) < 0)
+   {
+      Print("TradingLab activity: cannot retain position reconciliation candidate");
+      StopForSafety();
+      return;
+   }
+   candidate_position_ids[candidate_position_count] = position_id;
+   candidate_position_count++;
+}
+
+
+void ContinuePositionReconciliation()
+{
+   while(candidate_position_index < candidate_position_count)
+   {
+      long position_id = candidate_position_ids[candidate_position_index];
+      string payload = "";
+      int result = BuildPositionReconcilePayload(position_id, payload);
+      if(result < 0)
+         return;
+      if(result == 0)
+      {
+         candidate_position_index++;
+         continue;
+      }
+      sequence_number++;
+      string envelope = BuildEnvelope(payload, sequence_number);
+      if(!CheckPilotSafety())
+         return;
+      if(!PayloadSizeIsValid(envelope))
+      {
+         PrintFormat("TradingLab activity: position %I64d evidence exceeds payload limit; skipped",
+                     position_id);
+         candidate_position_index++;
+         continue;
+      }
+      pending_body = envelope;
+      pending_is_position_reconcile = true;
+      TrySendPending(GetTickCount64());
+      return;
+   }
+   FinalizeConfirmedBatch();
 }
 
 
@@ -323,6 +543,7 @@ int SendMessage(const string body)
 string BuildActivityPayload(const string reason, const long from_msc, const long to_msc,
                             bool &truncated)
 {
+   ResetCandidatePositions();
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
    ResetLastError();
@@ -386,6 +607,15 @@ string BuildHistoricalDeals(const long from_msc, const long to_msc, int &total, 
       }
       if(time_msc < from_msc || time_msc > to_msc)
          continue;
+      long position_id = HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(GetLastError() != 0)
+      {
+         valid = false;
+         return "[]";
+      }
+      if(position_id > 0 && entry != DEAL_ENTRY_IN)
+         AddCandidatePosition(position_id);
       total++;
       if(emitted >= MaxItemsPerCollection)
          continue;

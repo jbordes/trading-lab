@@ -184,6 +184,32 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 6. Considerar una caché acotada únicamente después de medir consultas repetidas;
    SQLite seguirá siendo la fuente de verdad.
 
+### Siguiente evolución acordada — Actividad y ciclos de posición
+
+La dirección se rige por
+[ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md):
+
+1. Unificar `Operaciones` e `Historial` como experiencia de `Trading`, con
+   alcances `En curso`, `Ejecuciones`, `Órdenes` y `Todo`, sin reemplazar las
+   entidades MT5 ni forzar una única tabla de almacenamiento.
+2. Exponer las órdenes históricas ya admitidas por telemetría v2 y su cobertura;
+   conservar canceladas y vencidas para analizar comportamiento, no rendimiento.
+3. Definir una proyección durable de ciclos por `account_id + position_id`, solo
+   después de precisar la consulta y migración necesarias. No reconstruir el
+   historial creciente completo en memoria.
+4. Registrar Magic propietario, Magic observados, completitud y motivo de
+   exclusión. Detectar intervención y colisión netting mediante evidencia
+   relacionada, no mediante un único campo.
+5. Crear un contrato versionado de métricas por ciclo completamente cerrado.
+   Excluir ciclos abiertos, incompletos, intervenidos o con atribución ambigua.
+6. Separar `Rendimiento` de `Estado del sistema`: los gráficos analíticos consumen
+   solo ciclos elegibles; frescura, cobertura y errores siguen siendo visibles
+   como contexto y diagnóstico.
+
+Antes de implementar la reconstrucción, preparar fixtures de entrada múltiple,
+cierre parcial, Stop Loss/Take Profit, intervención manual, Magic mixto, reversa
+netting, orden sin ejecución y ventana histórica incompleta.
+
 Criterio del primer corte alcanzado en código: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los
 mensajes en memoria ni depender de v2. Falta la validación visual manual contra la

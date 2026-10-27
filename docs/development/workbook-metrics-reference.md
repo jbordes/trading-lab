@@ -36,6 +36,22 @@ de referencia 200 porque son las constantes observadas. El socio deberá confirm
 si corresponden globalmente, por cuenta, por EA o por configuración. También sigue
 pendiente decidir cómo reconstruir trades con múltiples deals y qué hora mostrar.
 
+## Decisión posterior sobre métricas definitivas (2026-10-27)
+
+`partner-workbook-v1` permanece como reproducción versionada de la referencia y
+no se reinterpretará silenciosamente. La métrica definitiva de autonomía de un EA
+no contará cada salida como un trade independiente: utilizará ciclos completos de
+posición agrupados por `account_id + position_id`, de acuerdo con
+[ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md).
+
+Solo serán elegibles los ciclos cerrados de principio a fin, con resultado neto
+definitivo, cobertura completa y atribución inequívoca a un único EA. Posiciones
+abiertas, evidencia incompleta, intervención externa y colisiones de Magic Numbers
+se excluirán de las métricas individuales sin eliminarse del historial. Las salidas
+por Stop Loss o Take Profit propias de la operación no son intervenciones por sí
+mismas. En cuentas netting no se repartirá de forma sintética el resultado de una
+posición compartida entre EAs.
+
 ## Fuente y alcance
 
 Archivo local `orders-scalping_1 (2).csv.xlsx`, en el Escritorio. Se inspeccionaron

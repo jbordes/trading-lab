@@ -210,6 +210,14 @@ Antes de implementar la reconstrucción, preparar fixtures de entrada múltiple,
 cierre parcial, Stop Loss/Take Profit, intervención manual, Magic mixto, reversa
 netting, orden sin ejecución y ventana histórica incompleta.
 
+**Primer corte de dominio implementado:** un reconstructor puro agrupa deals
+comerciales por cuenta y posición, suma volumen y resultado neto, conserva tickets
+y Magic observados y clasifica ciclos cerrados, abiertos, incompletos o
+inconsistentes. Solo devuelve resultado definitivo cuando el llamador confirma la
+cobertura y no existen acciones sin atribución ni Magic mixtos. Todavía no alimenta
+las métricas ni la UI: primero debe existir una forma durable de demostrar cobertura
+por ciclo, en vez de inferirla de un rango de fechas acotado.
+
 Criterio del primer corte alcanzado en código: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los
 mensajes en memoria ni depender de v2. Falta la validación visual manual contra la

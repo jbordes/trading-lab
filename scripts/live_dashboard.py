@@ -103,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(argv)
     history_provider = None
+    position_cycle_provider = None
     access = os.environ.get(DASHBOARD_TOKEN_ENV, "")
     if not access:
         try:
@@ -161,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                         port=args.history_v2_port,
                     )
                 )
+                position_cycle_provider = history_provider
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
@@ -177,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         dashboard_token=access,
         history_provider=history_provider,
+        position_cycle_provider=position_cycle_provider,
     )
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")

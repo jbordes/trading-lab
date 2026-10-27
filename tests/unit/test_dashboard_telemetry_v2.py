@@ -87,6 +87,21 @@ class DashboardTelemetryV2Test(unittest.TestCase):
         self.assertEqual(result.selection.metrics.trade_count, 1)
         self.assertEqual(float(result.selection.metrics.net_profit), -2.1)
 
+    def test_reconciled_position_cycle_reaches_validated_dashboard_shape(self) -> None:
+        body = (FIXTURES / "activity-position-reconcile.json").read_bytes()
+        self.backend.accept(body, f"Bearer {ACTIVITY_AUTHORIZATION}")
+
+        page = V2HistoryProvider(self.client()).position_cycles(owner_magic="11122")
+
+        self.assertEqual(page.account_id, "account-demo")
+        self.assertEqual(page.source_id, "synthetic-activity")
+        self.assertEqual(page.owner_magic, "11122")
+        self.assertIsNone(page.next_cursor)
+        cycle = page.cycles[0].cycle
+        self.assertEqual(cycle.position_id, "600000000000000001")
+        self.assertEqual(str(cycle.observed_net_result), "9.8")
+        self.assertTrue(cycle.eligible_for_autonomous_metrics)
+
 
 if __name__ == "__main__":
     unittest.main()

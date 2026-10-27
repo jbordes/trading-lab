@@ -223,9 +223,15 @@ posiciones candidatas al observar salidas o reversas y usa
 una posición cerrada completa, emite deals y órdenes como `position_reconcile`;
 el receptor los valida y persiste sin confundir esa selección con cobertura global
 de la cuenta. El collector compilado ya envía `activity-0.2.0` en Juampi; falta
-observar un cierre real. La proyección durable y la migración 3 a 4 están
-implementadas en código, pero todavía no se aplicaron a la base piloto ni se
-expusieron a métricas o UI.
+observar un cierre real. La proyección durable está desplegada en la base piloto
+con esquema 4 y copia previa verificada; todavía no se expone a métricas o UI.
+
+**Consulta interna implementada en código:** el receptor expone ciclos paginados
+en loopback con la credencial de lectura v2, filtro por Magic propietario y
+validación estricta en el cliente del dashboard. La API pública del dashboard,
+las métricas por ciclo y su presentación continúan pendientes de validar evidencia
+real y acordar el contrato de producto; las métricas provisionales por deals no
+cambian silenciosamente.
 
 Criterio del primer corte alcanzado en código: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los

@@ -440,10 +440,11 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(len(deals.items), 2)
         self.assertEqual(coverage.complete_ranges, ())
         self.assertEqual(coverage.incomplete_batches, 0)
-        self.assertEqual(len(cycles), 1)
-        self.assertEqual(filtered_cycles, cycles)
-        self.assertEqual(other_cycles, ())
-        cycle = cycles[0].cycle
+        self.assertEqual(len(cycles.items), 1)
+        self.assertEqual(filtered_cycles.items, cycles.items)
+        self.assertEqual(other_cycles.items, ())
+        self.assertIsNone(cycles.next_cursor)
+        cycle = cycles.items[0].cycle
         self.assertEqual(cycle.position_id, "600000000000000001")
         self.assertEqual(cycle.owner_magic, "11122")
         self.assertEqual(cycle.observed_net_result, Decimal("9.8"))
@@ -486,8 +487,42 @@ class V2SqliteTest(unittest.TestCase):
             self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
         with open_v2_registry(self.path) as registry:
             cycles = registry.position_cycles("account-demo")
-        self.assertEqual(len(cycles), 1)
-        self.assertEqual(cycles[0].cycle.position_id, "600000000000000001")
+        self.assertEqual(len(cycles.items), 1)
+        self.assertEqual(cycles.items[0].cycle.position_id, "600000000000000001")
+
+    def test_position_cycles_use_stable_keyset_pagination(self) -> None:
+        second = fixture("activity-position-reconcile")
+        second["sequence"] = 6
+        second["event_id"] = "synthetic-session-1:6"
+        position_id = "600000000000000003"
+        for index, row in enumerate(second["payload"]["deals"]["items"]):
+            row["ticket"] = str(700000000000000003 + index)
+            row["order_id"] = str(600000000000000003 + index)
+            row["position_id"] = position_id
+        for index, row in enumerate(second["payload"]["orders"]["items"]):
+            row["ticket"] = str(600000000000000003 + index)
+            row["position_id"] = position_id
+        second_authorized = directory().authorize(
+            json.dumps(second).encode(),
+            f"Bearer {ACTIVITY_CREDENTIAL}",
+        )
+
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized("activity-position-reconcile"), received_at=self.now
+            )
+            registry.store_authorized(second_authorized, received_at=self.now)
+            first = registry.position_cycles("account-demo", limit=1)
+            following = registry.position_cycles(
+                "account-demo",
+                limit=1,
+                cursor=first.next_cursor,
+            )
+
+        self.assertEqual(first.items[0].cycle.position_id, position_id)
+        self.assertIsNotNone(first.next_cursor)
+        self.assertEqual(following.items[0].cycle.position_id, "600000000000000001")
+        self.assertIsNone(following.next_cursor)
 
     def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
         def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:

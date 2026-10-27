@@ -22,6 +22,8 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
     V2CoverageReport,
+    V2PositionCycleItem,
+    V2PositionCyclePage,
     V2StorageError,
 )
 
@@ -41,6 +43,14 @@ class V2TelemetryBackend(Protocol):
         limit: int = 50,
         cursor: str | None = None,
     ) -> tuple[V2ActivityPage, V2CoverageReport]: ...
+
+    def position_cycles(
+        self,
+        *,
+        owner_magic: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> V2PositionCyclePage: ...
 
 
 def create_v2_telemetry_server(
@@ -105,11 +115,37 @@ def create_v2_telemetry_server(
                 state.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, state)
                 return
-            if target.path != "/v2/activity":
+            if target.path not in {"/v2/activity", "/v2/position-cycles"}:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not self._is_read_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if target.path == "/v2/position-cycles":
+                try:
+                    query = self._position_cycles_query(target.query)
+                    page = backend.position_cycles(**query)
+                except ValueError:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": "invalid_position_cycles_query"},
+                    )
+                    return
+                except V2StorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "storage_unavailable"},
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "account_id": page.account_id,
+                        "owner_magic": page.owner_magic,
+                        "items": [self._position_cycle_item(item) for item in page.items],
+                        "next_cursor": page.next_cursor,
+                    },
+                )
                 return
             try:
                 query = self._activity_query(target.query)
@@ -259,6 +295,50 @@ def create_v2_telemetry_server(
                 "magic_number": values.get("magic_number", [None])[0],
                 "limit": integer("limit", "50"),
                 "cursor": values.get("cursor", [None])[0],
+            }
+
+        @staticmethod
+        def _position_cycles_query(query: str) -> dict[str, Any]:
+            values = parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=3,
+            )
+            if not set(values) <= {"owner_magic", "limit", "cursor"}:
+                raise ValueError("Parámetros de ciclos inválidos")
+            if any(len(items) != 1 for items in values.values()):
+                raise ValueError("Parámetros de ciclos repetidos")
+            limit = values.get("limit", ["50"])[0]
+            if not limit.isascii() or not limit.isdecimal() or str(int(limit)) != limit:
+                raise ValueError("Límite de ciclos inválido")
+            return {
+                "owner_magic": values.get("owner_magic", [None])[0],
+                "limit": int(limit),
+                "cursor": values.get("cursor", [None])[0],
+            }
+
+        @staticmethod
+        def _position_cycle_item(item: V2PositionCycleItem) -> dict[str, object]:
+            cycle = item.cycle
+            return {
+                "message_id": item.message_id,
+                "source_id": item.source_id,
+                "captured_at": item.captured_at,
+                "cycle": {
+                    "account_id": cycle.account_id,
+                    "position_id": cycle.position_id,
+                    "owner_magic": cycle.owner_magic,
+                    "observed_magics": cycle.observed_magics,
+                    "started_at_msc": cycle.started_at_msc,
+                    "last_event_at_msc": cycle.last_event_at_msc,
+                    "lifecycle": cycle.lifecycle.value,
+                    "remaining_signed_volume": str(cycle.remaining_signed_volume),
+                    "observed_net_result": str(cycle.observed_net_result),
+                    "deal_tickets": cycle.deal_tickets,
+                    "exclusions": tuple(reason.value for reason in cycle.exclusions),
+                    "eligible_for_autonomous_metrics": (cycle.eligible_for_autonomous_metrics),
+                },
             }
 
         def _method_not_allowed(self) -> None:

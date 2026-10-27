@@ -214,6 +214,36 @@ class V2PersistentHttpTest(unittest.TestCase):
             400,
         )
 
+    def test_position_cycles_require_read_auth_and_preserve_eligibility(self) -> None:
+        self.assertEqual(
+            self.request(
+                "/v2/telemetry",
+                body=self.encoded("activity-position-reconcile"),
+                authorization=activity_authorization(),
+            )[0],
+            202,
+        )
+        route = "/v2/position-cycles?owner_magic=11122&limit=1"
+        self.assertEqual(self.request(route)[0], 401)
+        status, payload = self.request(route, authorization=read_authorization())
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["account_id"], "account-demo")
+        self.assertEqual(payload["owner_magic"], "11122")
+        self.assertIsNone(payload["next_cursor"])
+        cycle = payload["items"][0]["cycle"]
+        self.assertEqual(cycle["position_id"], "600000000000000001")
+        self.assertEqual(cycle["observed_net_result"], "9.8")
+        self.assertTrue(cycle["eligible_for_autonomous_metrics"])
+
+        self.assertEqual(
+            self.request(
+                "/v2/position-cycles?limit=01",
+                authorization=read_authorization(),
+            )[0],
+            400,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

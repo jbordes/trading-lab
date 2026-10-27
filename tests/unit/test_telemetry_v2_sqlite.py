@@ -8,6 +8,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from tradinglab.telemetry.admission_v2 import (
@@ -29,6 +30,7 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     V2StorageError,
     V2TelemetryRegistry,
     create_v2_database,
+    migrate_v2_database_v3_to_v4,
     open_v2_registry,
 )
 
@@ -425,6 +427,9 @@ class V2SqliteTest(unittest.TestCase):
                 from_msc=1792569600000,
                 to_msc=1792656060001,
             )
+            cycles = registry.position_cycles("account-demo")
+            filtered_cycles = registry.position_cycles("account-demo", owner_magic="11122")
+            other_cycles = registry.position_cycles("account-demo", owner_magic="99999")
             coverage = registry.coverage_report(
                 "account-demo",
                 "deal",
@@ -435,6 +440,15 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(len(deals.items), 2)
         self.assertEqual(coverage.complete_ranges, ())
         self.assertEqual(coverage.incomplete_batches, 0)
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(filtered_cycles, cycles)
+        self.assertEqual(other_cycles, ())
+        cycle = cycles[0].cycle
+        self.assertEqual(cycle.position_id, "600000000000000001")
+        self.assertEqual(cycle.owner_magic, "11122")
+        self.assertEqual(cycle.observed_net_result, Decimal("9.8"))
+        self.assertEqual(cycle.deal_tickets, ("700000000000000001", "700000000000000002"))
+        self.assertTrue(cycle.eligible_for_autonomous_metrics)
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0
@@ -442,6 +456,38 @@ class V2SqliteTest(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM activity_observations").fetchone()[0], 4
             )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM position_cycle_observations").fetchone()[
+                    0
+                ],
+                1,
+            )
+
+    def test_v3_migration_creates_verified_backup_and_backfills_cycles(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized("activity-position-reconcile"), received_at=self.now
+            )
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("DROP INDEX position_cycle_observations_query")
+            connection.execute("DROP TABLE position_cycle_observations")
+            connection.execute("PRAGMA user_version = 3")
+
+        backup = self.path.with_name("telemetry-v2-before-v4.sqlite3")
+        self.assertEqual(migrate_v2_database_v3_to_v4(self.path, backup), 1)
+
+        with closing(sqlite3.connect(backup)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name = 'position_cycle_observations'"
+                ).fetchone()
+            )
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+        with open_v2_registry(self.path) as registry:
+            cycles = registry.position_cycles("account-demo")
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0].cycle.position_id, "600000000000000001")
 
     def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
         def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:

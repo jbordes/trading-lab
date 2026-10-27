@@ -40,8 +40,9 @@
 - Preparar el entorno con `uv sync --locked`.
 - Para un cambio exclusivamente documental ejecutar `uv run python scripts/check.py docs`; el comando rechaza rutas fuera de `docs/`, `AGENTS.md` y `README.md`, y no ejecuta Ruff ni tests de producto.
 - Durante cambios de código ejecutar `uv run python scripts/check.py fast` y únicamente los tests dirigidos al comportamiento modificado.
-- Ejecutar `uv run python scripts/check.py full` una vez sobre el diff final antes de abrir o actualizar el pull request. Repetirlo solo si un cambio posterior puede invalidar el resultado.
-- Un cambio está terminado cuando las validaciones pasan, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff. La jornada se documenta por separado en la bitácora de hoy.
+- GitHub Actions ejecuta `uv run python scripts/check.py full` como gate del pull request. No duplicar esa ejecución localmente por rutina.
+- Ejecutar `full` localmente solo cuando el cambio sea transversal, afecte a la mayoría de las pruebas, modifique el propio pipeline de validación o exista una razón concreta para reproducir o anticipar un fallo de CI.
+- Un cambio está listo para abrir PR cuando pasan las validaciones locales proporcionales, la documentación y ADR relevantes están actualizados y no quedan secretos ni artefactos prohibidos en el diff. Está terminado cuando además pasa el gate completo de CI y recibe el merge humano. La jornada se documenta por separado en la bitácora de hoy.
 
 ## Calidad del código
 

@@ -15,6 +15,8 @@ from urllib.parse import unquote
 
 from session import madrid_now, session_date_from_name, validate_sessions
 
+HARNESS_VERSION = "0.2"
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -31,7 +33,7 @@ REQUIRED_PATHS = (
     ".codex/agents/git-operator.toml",
     "AGENTS.md",
     "README.md",
-    "docs/architecture/development-harness-0.1.md",
+    "docs/architecture/development-harness-0.2.md",
     "docs/adr/0001-portable-development-harness.md",
     "docs/adr/README.md",
     "docs/development/environment.md",
@@ -464,7 +466,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
-    print(f"TradingLab Harness 0.1 | modo={args.mode}")
+    print(f"TradingLab Harness {HARNESS_VERSION} | modo={args.mode}")
     errors = validate(root, args.mode)
     if errors:
         for error in errors:

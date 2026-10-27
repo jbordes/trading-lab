@@ -1,6 +1,6 @@
 # Agentes de costo acotado
 
-**Estado:** Implementación inicial de Harness 0.2.
+**Estado:** Vigente en Harness 0.2; evaluación de eficiencia todavía abierta.
 
 Esta configuración implementa [ADR-0013](../adr/0013-cost-aware-agent-routing.md)
 mediante agentes de proyecto de Codex. La selección sigue la documentación

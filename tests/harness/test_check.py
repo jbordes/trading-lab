@@ -22,6 +22,17 @@ class HarnessChecksTest(unittest.TestCase):
     def run_git(root: Path, *args: str) -> None:
         subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
+    def test_current_harness_version_is_consistent(self) -> None:
+        document = f"docs/architecture/development-harness-{CHECK.HARNESS_VERSION}.md"
+
+        self.assertEqual(CHECK.HARNESS_VERSION, "0.2")
+        self.assertIn(document, CHECK.REQUIRED_PATHS)
+        self.assertTrue((ROOT / document).is_file())
+        self.assertIn(
+            f"Harness {CHECK.HARNESS_VERSION}",
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+        )
+
     def test_repository_boundaries_reject_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

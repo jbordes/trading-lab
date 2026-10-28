@@ -84,8 +84,10 @@ esos tres procesos.
    identidad, rango saturado o configuración inválida.
 3. Abrir `http://127.0.0.1:8775/dashboard`, iniciar sesión con el segundo token y
    comprobar que el estado vivo siga mostrando `juampi-demo-01`.
-4. En Historial, elegir un período que incluya `HistoryStartServerTime`; verificar
-   que los deals y el filtro por Magic Number provengan de v2.
+4. En Trading → Operaciones cerradas, elegir un período que incluya
+   `HistoryStartServerTime`; verificar los ciclos y el filtro por Magic Number.
+   En Trading → Registro MT5, comprobar deals, órdenes y actividad en curso sin
+   alterar las métricas.
 5. Contrastar una muestra con Historial de MT5. Una orden cancelada puede existir
    en SQLite aunque no incremente trades ni métricas.
 6. Detener con Ctrl+C y volver a iniciar. El cursor debe continuar desde lo
@@ -94,3 +96,61 @@ esos tres procesos.
 La cobertura ya viaja por la API, pero su indicador visual continúa pendiente. Un
 lote `truncated` no se considera cobertura completa y requiere revisión antes de
 usar métricas como si el período estuviera íntegro.
+
+## Operaciones cerradas vacías después de actualizar el collector
+
+`Operaciones cerradas` y sus métricas no se derivan de cualquier deal aislado.
+Exigen una evidencia `position_reconcile` que contenga el ciclo completo de una
+posición. Por eso es posible que `Registro MT5` muestre deals y órdenes mientras
+ambas vistas continúan vacías.
+
+Esto ocurre, en particular, si se sustituye `TradingLabActivity` 0.1 por 0.2
+después de que las posiciones ya se cerraron. La versión 0.2 conserva el cursor
+confirmado de la versión anterior y solo intenta reconciliar posiciones cuyos
+deals de salida vuelve a observar. Los cierres anteriores al cursor permanecen
+guardados como actividad, pero no producen retroactivamente un ciclo completo.
+
+### Diagnóstico previo
+
+Antes de cambiar estado, comprobar en modo de solo lectura:
+
+1. el receptor v2 sigue aceptando mensajes recientes de
+   `TradingLabActivity` 0.2;
+2. `activity_observations` contiene deals de entrada y salida;
+3. `position_cycle_observations` permanece vacía, o no contiene las posiciones
+   esperadas;
+4. no existen mensajes cuyo `payload.reason` sea `position_reconcile` para esas
+   posiciones;
+5. la primera ventana procesada por 0.2 comienza después de los cierres que
+   faltan.
+
+Si se cumplen estas cinco condiciones, no es un error de la interfaz ni de las
+fórmulas: falta recuperar la evidencia completa desde MT5.
+
+### Procedimiento de recuperación controlada
+
+La corrección consiste en retroceder exclusivamente el cursor del collector de
+actividad y dejar que la versión actual recorra otra vez el intervalo comprendido
+desde `HistoryStartServerTime`. No se debe borrar ni recrear SQLite, cambiar el
+`SourceId` para eludir el cursor, ni tocar cursores de otras fuentes.
+
+Este procedimiento modifica estado operativo y requiere aprobación humana. Antes
+de ejecutarlo se debe:
+
+1. detener el collector de actividad sin cerrar ni modificar los EAs de trading;
+2. identificar de forma inequívoca su variable global
+   `TL2.ACT.<hash>.CURSOR`; no borrar variables por patrón;
+3. comprobar que `HistoryStartServerTime` cubra las posiciones que faltan;
+4. conservar la base existente y verificar que haya espacio para repetir la
+   evidencia cruda;
+5. retirar solo ese cursor y volver a iniciar `TradingLabActivity` 0.2 con la
+   misma cuenta, `SourceId` y configuración;
+6. esperar a que la recuperación alcance el presente y comprobar que aparecen
+   mensajes `position_reconcile` y filas en `position_cycle_observations`;
+7. contrastar una muestra contra MT5 antes de aceptar las métricas.
+
+La repetición puede conservar observaciones crudas de un mismo ticket en mensajes
+distintos. Las consultas funcionales seleccionan la evidencia vigente por ticket
+o posición; no se debe limpiar manualmente la base para ocultar esa repetición.
+Si aparece un rango saturado, un rechazo del receptor o una identidad diferente,
+detener el procedimiento y diagnosticarlo antes de continuar.

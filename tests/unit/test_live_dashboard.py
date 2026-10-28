@@ -34,6 +34,7 @@ from tradinglab.dashboard.telemetry import (  # noqa: E402
     TelemetryPerformance,
 )
 from tradinglab.dashboard.telemetry_v2 import (  # noqa: E402
+    TelemetryCyclePerformance,
     TelemetryHistoricalOrder,
     TelemetryHistoricalOrderPage,
     TelemetryPositionCycle,
@@ -108,6 +109,7 @@ class FakeDealHistoryProvider:
         self.calls: list[dict[str, object]] = []
         self.performance_calls: list[dict[str, object]] = []
         self.position_cycle_calls: list[dict[str, object]] = []
+        self.cycle_performance_calls: list[dict[str, object]] = []
         self.order_history_calls: list[dict[str, object]] = []
 
     def deal_history(self, **query: object) -> TelemetryDealPage:
@@ -181,6 +183,18 @@ class FakeDealHistoryProvider:
                 ),
             ),
             next_cursor=None,
+        )
+
+    def cycle_performance_metrics(self, **query: object) -> TelemetryCyclePerformance:
+        self.cycle_performance_calls.append(query)
+        page = self.position_cycles(owner_magic=query["owner_magic"])
+        return TelemetryCyclePerformance(
+            account_id=page.account_id,
+            source_id=page.source_id,
+            from_msc=int(query["from_msc"]),
+            to_msc=int(query["to_msc"]),
+            owner_magic=query["owner_magic"],
+            cycles=page.cycles,
         )
 
     def order_history(self, **query: object) -> TelemetryHistoricalOrderPage:
@@ -763,6 +777,13 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
         base_url = f"http://127.0.0.1:{server.server_port}"
         route = f"{base_url}/api/deals?from_msc=999000&to_msc=1000000&magic_number=11122"
         cycles_route = f"{base_url}/api/position-cycles?owner_magic=11122&limit=25"
+        closed_cycles_route = (
+            f"{base_url}/api/position-cycles?owner_magic=11122&from_msc=999000"
+            "&to_msc=1000000&closed=true&limit=25"
+        )
+        cycle_metrics_route = (
+            f"{base_url}/api/cycle-metrics?from_msc=999000&to_msc=1000000&magic_number=11122"
+        )
         orders_route = f"{base_url}/api/orders?from_msc=999000&to_msc=1000000&magic_number=11122"
         try:
             with self.assertRaises(urllib.error.HTTPError) as unauthorized:
@@ -773,6 +794,10 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
                 urllib.request.urlopen(cycles_route, timeout=2)
             self.assertEqual(unauthorized_cycles.exception.code, 401)
             unauthorized_cycles.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as unauthorized_cycle_metrics:
+                urllib.request.urlopen(cycle_metrics_route, timeout=2)
+            self.assertEqual(unauthorized_cycle_metrics.exception.code, 401)
+            unauthorized_cycle_metrics.exception.close()
             with self.assertRaises(urllib.error.HTTPError) as unauthorized_orders:
                 urllib.request.urlopen(orders_route, timeout=2)
             self.assertEqual(unauthorized_orders.exception.code, 401)
@@ -800,6 +825,15 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             self.assertTrue(cycles["cycles"][0]["cycle"]["eligible_for_autonomous_metrics"])
             self.assertEqual(provider.position_cycle_calls[0]["owner_magic"], "11122")
             self.assertEqual(provider.position_cycle_calls[0]["limit"], 25)
+            with opener.open(closed_cycles_route, timeout=2) as response:
+                closed_cycles = json.loads(response.read())
+            self.assertEqual(closed_cycles["cycles"][0]["cycle"]["lifecycle"], "closed")
+            self.assertTrue(provider.position_cycle_calls[-1]["closed_only"])
+            with opener.open(cycle_metrics_route, timeout=2) as response:
+                cycle_metrics = json.loads(response.read())
+            self.assertEqual(cycle_metrics["formula_version"], "position-cycle-v1")
+            self.assertEqual(cycle_metrics["trade_count"], 1)
+            self.assertEqual(provider.cycle_performance_calls[0]["owner_magic"], "11122")
             with opener.open(orders_route, timeout=2) as response:
                 orders = json.loads(response.read())
             self.assertEqual(orders["orders"][0]["ticket"], "70")
@@ -875,6 +909,10 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
         self.assertIn('id="history-magic"', dashboard)
         self.assertIn('id="history-more"', dashboard)
         self.assertIn('id="history-metrics"', dashboard)
+        self.assertIn('data-trading-scope="current"', dashboard)
+        self.assertIn('data-trading-scope="closed"', dashboard)
+        self.assertIn('data-trading-scope="registry"', dashboard)
+        self.assertIn('id="history-entity"', dashboard)
         self.assertIn('id="chart-cumulative"', dashboard)
         for metric_id in (
             "metric-max-dd-pct",
@@ -895,9 +933,11 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             dashboard.index('id="activity-content"'),
             dashboard.index('class="technical-health"'),
         )
-        for view in ("overview", "operations", "history", "activity"):
+        for view in ("overview", "trading", "activity"):
             self.assertIn(f'aria-controls="{view}-view"', dashboard)
             self.assertIn(f'id="{view}-view"', dashboard)
+        self.assertNotIn('id="operations-view"', dashboard)
+        self.assertNotIn('id="history-view"', dashboard)
 
         app = (ROOT / "src" / "tradinglab" / "dashboard" / "static" / "app.js").read_text(
             encoding="utf-8"
@@ -906,8 +946,8 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             encoding="utf-8"
         )
         self.assertIn("Los filtros solo abarcan el detalle recibido", app)
-        self.assertIn("/api/deals?", app)
-        self.assertIn("/api/metrics?", app)
+        self.assertIn("`/api/${entity}?${parameters}`", app)
+        self.assertIn("/api/cycle-metrics?", app)
         self.assertIn('getPropertyValue("--chart-grid")', app)
         self.assertIn("emphasis: { disabled: true }", app)
         self.assertIn('type: "time"', app)
@@ -948,9 +988,9 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
 
             with opener.open(f"{base_url}/dashboard", timeout=2) as response:
                 page = response.read().decode()
-                self.assertIn('id="operations-view"', page)
+                self.assertIn('id="trading-view"', page)
                 self.assertIn('id="magic-filter"', page)
-                self.assertIn('id="history-view"', page)
+                self.assertIn('data-trading-scope="registry"', page)
                 self.assertIn('id="activity-view"', page)
 
             request = urllib.request.Request(f"{base_url}/api/state", method="POST")

@@ -14,6 +14,7 @@ from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
 from tradinglab.dashboard.snapshot import DashboardReadError
 from tradinglab.dashboard.telemetry import TelemetryDealPage, TelemetryPerformance
+from tradinglab.dashboard.telemetry_v2 import TelemetryCyclePerformance
 from tradinglab.telemetry.http_server import BoundedHTTPServer
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -79,9 +80,20 @@ class PositionCycleProvider(Protocol):
         self,
         *,
         owner_magic: str | None = None,
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> PositionCyclePage: ...
+
+    def cycle_performance_metrics(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        owner_magic: str | None = None,
+    ) -> TelemetryCyclePerformance: ...
 
 
 class HistoricalOrderPage(Protocol):
@@ -233,6 +245,40 @@ def create_server(
                 except DashboardReadError:
                     self._send_json(
                         {"error": "metrics_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json(result.as_dict())
+                return
+            if path == "/api/cycle-metrics":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if position_cycle_provider is None:
+                    self._send_json(
+                        {"error": "cycle_metrics_unavailable"}, status=HTTPStatus.NOT_FOUND
+                    )
+                    return
+                try:
+                    history_query = self._history_query(raw_query)
+                    if history_query["limit"] != 50 or history_query["cursor"] is not None:
+                        raise ValueError("Parámetros innecesarios para métricas")
+                    result = position_cycle_provider.cycle_performance_metrics(
+                        from_msc=history_query["from_msc"],
+                        to_msc=history_query["to_msc"],
+                        owner_magic=history_query["magic_number"],
+                    )
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_cycle_metrics_query"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "cycle_metrics_unavailable"},
                         status=HTTPStatus.SERVICE_UNAVAILABLE,
                     )
                     return
@@ -517,9 +563,16 @@ def create_server(
                 raw_query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=3,
+                max_num_fields=6,
             )
-            if not set(values) <= {"owner_magic", "limit", "cursor"}:
+            if not set(values) <= {
+                "owner_magic",
+                "from_msc",
+                "to_msc",
+                "closed",
+                "limit",
+                "cursor",
+            }:
                 raise ValueError("Parámetros de ciclos inválidos")
             if any(len(items) != 1 for items in values.values()):
                 raise ValueError("Parámetros de ciclos repetidos")
@@ -542,8 +595,28 @@ def create_server(
             cursor = values.get("cursor", [None])[0]
             if cursor == "":
                 raise ValueError("Cursor de ciclos inválido")
+            from_text = values.get("from_msc", [None])[0]
+            to_text = values.get("to_msc", [None])[0]
+            if (from_text is None) != (to_text is None):
+                raise ValueError("Período de ciclos incompleto")
+            from_msc = to_msc = None
+            if from_text is not None and to_text is not None:
+                if not all(
+                    value.isascii() and value.isdecimal() and str(int(value)) == value
+                    for value in (from_text, to_text)
+                ):
+                    raise ValueError("Período de ciclos inválido")
+                from_msc, to_msc = int(from_text), int(to_text)
+                if not 0 <= from_msc < to_msc < 2**63:
+                    raise ValueError("Período de ciclos inválido")
+            closed = values.get("closed", ["false"])[0]
+            if closed not in {"true", "false"}:
+                raise ValueError("Filtro de ciclo cerrado inválido")
             return {
                 "owner_magic": owner_magic,
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+                "closed_only": closed == "true",
                 "limit": int(limit_text),
                 "cursor": cursor,
             }

@@ -143,7 +143,7 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
 de Python. No descarga scripts de terceros ni necesita Node. `/` presenta el
 proyecto y ofrece una entrada al panel; `/dashboard` es el espacio de trabajo
-de la cuenta, con Resumen, Operaciones y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
+de la cuenta, con Resumen, Trading y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
 sigue la preferencia del sistema, sin flash al recargar. La portada permanece
 pública; el panel y su API exigen una sesión local obtenida con un token humano
@@ -162,17 +162,20 @@ El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
 principal neutral, el resultado abierto con semántica de signo y color, balance y
 margen libre secundarios, una curva reciente de balance/equity y una franja de
 origen. La curva respeta los tiempos observados y deja huecos cuando se interrumpe
-la captura. Operaciones lista posiciones abiertas y órdenes pendientes, muestra
+la captura. Trading agrupa `En curso`, `Operaciones cerradas` y `Registro MT5`. En curso lista
+posiciones abiertas y órdenes pendientes, muestra
 el Magic Number sin abrir el detalle y filtra por Magic y tipo desde una barra
 encima de los resultados. El selector enumera los Magic disponibles, conserva
 como texto los identificadores y hace explícito un bot filtrado sin operaciones.
 En móvil la tabla adopta jerarquía de tarjeta, sin scroll interno; los nodos se
 actualizan por tipo/ticket conservando detalle y foco. Los filtros se persisten por fuente y los
-timestamps no validados se muestran como "No informada". Actividad antepone una
+timestamps no validados se muestran como "No informada". Operaciones cerradas
+consulta ciclos reconstruidos por período y Magic; sus métricas `position-cycle-v1`
+solo incluyen ciclos elegibles. Registro MT5 combina ejecuciones, órdenes y el
+snapshot en curso para diagnóstico, sin alimentar métricas. Actividad antepone una
 conclusión comprensible y mantiene en un diagnóstico desplegable la salud global
-del receptor, la actualización de la vista y sus contadores técnicos. La ventana
-de deals recibida por telemetría se incorporará después de validar la escala
-horaria del servidor.
+del receptor, la actualización de la vista y sus contadores técnicos. La escala
+horaria informada por MT5 permanece pendiente de validación con el socio.
 
 Cuando el total informado por MT5 supera el detalle incluido por el collector,
 Operaciones muestra la cantidad recibida sobre el total y advierte que los

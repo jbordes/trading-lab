@@ -54,8 +54,8 @@ La primera frontera compartida contiene únicamente:
   representados como texto para conservar identificadores de 64 bits;
 - símbolo, tipo, volumen, precios, SL/TP, resultado flotante, hora y comentario de
   cada operación disponible;
-- estado y ventana acotada de deals recientes; su proyección en la UI queda
-  pendiente de validar la escala horaria del servidor;
+- estado y ventana acotada de deals recientes, conservando la referencia temporal
+  del broker y el instante convertible a la zona local del usuario;
 - estado de captura con intentos, éxitos, fallos consecutivos, duración y último
   instante correcto.
 
@@ -68,9 +68,9 @@ repetir todas las operaciones en cada punto.
 
 En cada captura el collector relee una ventana completa de deals del servidor MT5;
 por defecto cubre una hora y como máximo 200 filas. Informa de forma explícita si
-la ventana está completa, truncada o falló. El receptor reemplaza la vista previa
-por la última ventana validada y no crea todavía una base histórica propia. Los
-deals aún no se muestran en la UI hasta validar la escala horaria del servidor.
+la ventana está completa, truncada o falló. El receptor v1 reemplaza la vista
+previa por la última ventana validada; el collector de actividad v2 conserva el
+historial durable de deals y órdenes que consume `Trading`.
 
 El servicio mide cada intento con un reloj monotónico y publica conteos de éxito
 y fallo, fallos consecutivos, duración de la última captura, máximo observado y
@@ -98,9 +98,10 @@ El collector incorpora una ventana móvil de ejecuciones (`deals`) para recupera
 actividad entre muestras: una hora y hasta 200 filas por defecto, con estados
 explícitos completo/truncado/error. La vista recibida se reemplaza al reconciliar,
 no se acumulan solapamientos. Es memoria temporal, sin emparejar trades ni
-alimentar todavía la UI; no reemplaza una futura persistencia durable. Los tiempos
-de ejecución conservan la escala del servidor
-MT5 hasta validar su conversión.
+alimentar la persistencia durable v2. Los tiempos de ejecución conservan la
+referencia del servidor MT5. La conversión a hora local solo se realiza cuando el
+instante y la zona u offset del broker son explícitos; no se adivina una zona a
+partir del reloj de la VPS.
 
 La primera integración visible conserva receptor y dashboard como procesos
 separados. El receptor expone la última muestra de una fuente mediante
@@ -110,8 +111,7 @@ pueden desplazar su resultado. Un adaptador del lado servidor del dashboard vuel
 a validar el contrato y el `source_id` esperado, y degrada la vista cuando la
 muestra supera la antigüedad configurada.
 El token no llega al navegador. Balance, equity y operaciones actuales se
-proyectan en la interfaz; los deals y los timestamps operativos quedan fuera de
-esta integración hasta validar la zona horaria del servidor MT5.
+proyectan en la interfaz; la actividad durable se integra mediante telemetría v2.
 
 ### StocksTrader
 
@@ -132,11 +132,15 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 ## Estado y persistencia
 
-- El incremento inicial conserva un buffer limitado en memoria.
-- Un reinicio pierde esa ventana visual y no se considera pérdida de evidencia autoritativa.
+- V1 conserva un buffer limitado en memoria para el estado vivo y la curva
+  reciente; perderlo tras un reinicio no elimina actividad histórica durable.
+- V2 persiste en SQLite mensajes, cobertura, deals, órdenes y ciclos de posición.
+  SQLite es la fuente de verdad local del historial piloto.
 - El diagnóstico MT5 puede seguir generando evidencia inmutable bajo `_storage/`.
-- Cuando las métricas históricas tengan contrato se evaluará una SQLite append-only mínima.
-- PostgreSQL y TimescaleDB no forman parte del piloto; requieren evidencia de concurrencia, volumen o centralización.
+- Las tablas derivadas adicionales y una caché solo se incorporarán ante consultas
+  medidas; no se mantendrá una proyección histórica ilimitada en memoria.
+- PostgreSQL y TimescaleDB no forman parte del piloto; requieren evidencia de
+  concurrencia, volumen o centralización.
 
 ## Presentación
 
@@ -169,13 +173,24 @@ encima de los resultados. El selector enumera los Magic disponibles, conserva
 como texto los identificadores y hace explícito un bot filtrado sin operaciones.
 En móvil la tabla adopta jerarquía de tarjeta, sin scroll interno; los nodos se
 actualizan por tipo/ticket conservando detalle y foco. Los filtros se persisten por fuente y los
-timestamps no validados se muestran como "No informada". Operaciones cerradas
+timestamps que no puedan convertirse de forma inequívoca se muestran como "No
+informada". Operaciones cerradas
 consulta ciclos reconstruidos por período y Magic; sus métricas `position-cycle-v1`
 solo incluyen ciclos elegibles. Registro MT5 combina ejecuciones, órdenes y el
 snapshot en curso para diagnóstico, sin alimentar métricas. Actividad antepone una
 conclusión comprensible y mantiene en un diagnóstico desplegable la salud global
-del receptor, la actualización de la vista y sus contadores técnicos. La escala
-horaria informada por MT5 permanece pendiente de validación con el socio.
+del receptor, la actualización de la vista y sus contadores técnicos.
+
+Toda fecha operativa mostrará de forma compacta ambas referencias: `Broker` y
+`Local`. Cada una incluye fecha y hora porque una conversión puede cambiar el día.
+En escritorio pueden compartir una celda y en móvil se apilan dentro del mismo
+bloque, sin tarjetas ni columnas adicionales. El formato base será, por ejemplo,
+`Broker 27/10 23:45` y `Local 28/10 00:45`; el detalle podrá informar zona u
+offset. La hora local proviene del navegador y la del broker de una referencia
+explícita de la fuente, nunca de una suposición por máquina.
+
+Esta decisión resuelve la presentación, no el comienzo del día para DDD u otras
+métricas: cada contrato deberá declarar su zona de corte.
 
 Cuando el total informado por MT5 supera el detalle incluido por el collector,
 Operaciones muestra la cantidad recibida sobre el total y advierte que los
@@ -192,7 +207,14 @@ Las actualizaciones incrementales comparan instantes ISO normalizados, incluida
 su fracción de segundo y zona horaria. Un cursor `since` inválido se rechaza y no
 se interpreta mediante orden alfabético ni como una lectura completa.
 
-Apache ECharts queda seleccionado como candidato para la etapa que incluya histogramas de VaR, matrices de covarianza y gráficos combinados. Se incorporará como dependencia fijada y local solo cuando esas visualizaciones estén aprobadas.
+La performance primaria de un EA se consulta por cuenta y Magic propietario. Los
+agregados futuros por cuenta y entre cuentas son contratos separados: deben
+declarar período, moneda base, conversión y tratamiento de transferencias antes de
+sumar resultados.
+
+Apache ECharts es la dependencia local fijada para las curvas analíticas actuales.
+Las visualizaciones futuras, como histogramas de VaR o matrices de covarianza,
+reutilizarán la misma biblioteca una vez aprobadas sus métricas.
 
 ## Seguridad y límites
 

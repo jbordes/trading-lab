@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-14
 
-**Estado:** collector MT5 adoptado; promoción operativa pendiente
+**Estado:** piloto MT5 operativo; validación de exactitud con reporte en curso
 
 **Arquitectura:** [Dashboard local de riesgo](../architecture/live-risk-dashboard.md)
 
@@ -96,8 +96,9 @@ cuenta ni funciones de trading; valida las simulaciones, no el piloto real.
 ADR-0004 adopta este collector como fuente operativa primaria. La comparación
 amplia contra Python deja de ser un gate: queda pendiente una validación acotada
 de apertura/cierre, costes, Magic Number, completitud y timestamps para comprobar
-el contrato. También se medirá la ventana necesaria y se validará la zona horaria
-del servidor antes de agregar paginación o persistencia.
+el contrato. El reporte MT5 de la cuenta demo será la referencia para ese
+contraste. La UI mostrará fecha y hora del broker y local; los futuros cortes
+diarios declararán por separado su zona contractual.
 
 ## Incremento 0D — Telemetría push visible
 
@@ -120,7 +121,8 @@ Implementado en el primer corte:
 Pendiente para cerrar el incremento:
 
 1. validar campos y operaciones reales contra MT5 o una captura Python aislada;
-2. validar la zona horaria del servidor antes de mostrar timestamps y deals;
+2. implementar la presentación compacta de fecha y hora `Broker` / `Local` usando
+   una referencia explícita del broker, sin inferirla desde la VPS;
 3. medir frescura y estabilidad durante una prueba prolongada.
 
 Ya se comprobó en la terminal demo aislada el recorrido collector-receptor-
@@ -139,13 +141,12 @@ Implementado:
 3. El receptor conserva y entrega el último snapshot por `source_id`; el cliente
    solicita una fuente concreta y vuelve a verificarla. Pruebas con mensajes
    intercalados demuestran que un collector no desplaza los datos de otro.
+4. El procedimiento manual de instalación, configuración, actualización y retiro
+   se ejecutó en la terminal demo Juampi. Incluyó una recuperación controlada del
+   cursor de actividad sin modificar los EAs de trading.
 
 Pendiente:
 
-4. Validar en una segunda terminal el procedimiento manual reproducible ya
-   documentado para compilar, instalar, configurar, verificar, actualizar y
-   retirar un collector con aprobación humana. Automatizar solo después de
-   conocer sus excepciones reales.
 5. Diseñar cómo presentar y alternar varias fuentes en una misma interfaz sin
    asumir todavía una base, cola o despliegue remoto. Nota: la interfaz ya
    presenta una fuente con su `source_id`, versión del colector y salud del
@@ -155,10 +156,11 @@ Pendiente:
 ## Prioridad inmediata — Historial y comparación por EA
 
 La comparación con MT5 del 2026-10-25 detectó historial incompleto en la base
-piloto. Antes de considerar representativos los resultados por bot, ejecutar el
-[plan de recuperación histórica](history-recovery-plan.md): separar estado vivo
-y actividad, recuperar deals y órdenes históricas y exponer cobertura por período.
-El primer paso fija responsabilidades; la integración operativa sigue pendiente.
+piloto. El [plan de recuperación histórica](history-recovery-plan.md) ya separó
+estado vivo y actividad, recuperó deals y órdenes y reconstruyó ciclos cerrados.
+La prioridad actual es contrastar esos ciclos y sus importes contra un reporte
+MT5 generado en la misma cuenta demo, y luego hacer visible la cobertura por
+período.
 
 Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 [ADR-0012](../adr/0012-durable-operation-history.md).
@@ -166,19 +168,22 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 1. **Implementado:** exponer desde la SQLite actual una consulta de deals
    históricos paginada y de solo lectura, con filtros por cuenta, periodo y
    Magic Number. La cuenta se resuelve mediante la fuente autorizada.
-2. **Primer corte implementado:** vista de historial de deals con períodos de 1,
-   7 y 30 días, Magic Number opcional y paginación manual. Órdenes históricas,
-   posiciones y trades reconstruidos siguen pendientes y no se mezclan con deals.
-3. Mostrar cobertura, truncamiento y periodos sin datos junto al resultado.
+2. **Implementado:** `Trading` separa actividad en curso, ciclos cerrados y el
+   registro MT5 auditable. El registro integra deals y órdenes históricas sin
+   confundirlos con operaciones completas ni con las métricas.
+3. **Pendiente visual:** mostrar cobertura, truncamiento y periodos sin datos
+   junto a los filtros mediante una señal compacta. Debe indicar `Datos
+   completos`, `Datos parciales` o el intervalo faltante; una métrica calculada
+   sobre cobertura incompleta nunca se presenta como definitiva.
 4. **Primer corte implementado:** calcular y visualizar por período y Magic Number
    las fórmulas `partner-workbook-v1` observadas en el Excel del socio. Se incluyen
    tarjetas y las cuatro curvas de referencia con ECharts local. Cada cierre MT5
    fue inicialmente una fila. Este corte se conserva como referencia de contraste;
    la interfaz vigente aplica las mismas fórmulas bajo el contrato separado
    `position-cycle-v1`, únicamente a operaciones completas elegibles.
-   También queda pendiente acordar si la interfaz debe presentar la hora del
-   broker/MT5, la hora local del usuario o ambas; hasta entonces no se usará esa
-   escala temporal para calcular cortes diarios.
+   La interfaz presentará hora y fecha del broker/MT5 junto con hora y fecha
+   local del usuario. Esta decisión de presentación no define todavía qué zona
+   usarán los futuros cortes diarios de las métricas.
 5. Crear tablas derivadas durables e índices mediante una migración explícita
    cuando la consulta real o una prueba sintética representativa demuestre esa
    necesidad. No conservar el historial creciente en memoria.
@@ -196,54 +201,72 @@ La dirección se rige por
 2. Exponer las órdenes históricas ya admitidas por telemetría v2 y su cobertura;
    conservar canceladas y vencidas para analizar comportamiento, no rendimiento.
    **API autenticada e integración visual implementadas.**
-3. Proyectar durablemente ciclos por `account_id + position_id`, mediante una
-   migración explícita y sin reconstruir el historial creciente completo en
-   memoria. **Implementado en código; despliegue piloto pendiente.**
-4. Registrar Magic propietario, Magic observados, completitud y motivo de
-   exclusión. Detectar intervención y colisión netting mediante evidencia
-   relacionada, no mediante un único campo.
-5. Crear un contrato versionado de métricas por ciclo completamente cerrado.
-   Excluir ciclos abiertos, incompletos, intervenidos o con atribución ambigua.
-6. Separar `Rendimiento` de `Estado del sistema`: los gráficos analíticos consumen
-   solo ciclos elegibles; frescura, cobertura y errores siguen siendo visibles
-   como contexto y diagnóstico.
+3. **Implementado y desplegado en el piloto:** proyectar durablemente ciclos por
+   `account_id + position_id`, mediante una migración explícita y sin reconstruir
+   el historial creciente completo en memoria.
+4. **Implementado:** registrar Magic propietario, Magic observados, completitud y
+   motivo de exclusión. La detección usa evidencia relacionada, no un único
+   campo.
+5. **Primer contrato implementado:** `position-cycle-v1` calcula exclusivamente
+   sobre ciclos cerrados y elegibles. Las fórmulas continúan versionadas porque
+   el socio las ajustará durante la evolución del producto.
+6. **Implementado:** `Operaciones cerradas` separa rendimiento de la actividad y
+   del diagnóstico del sistema. Falta hacer visible la cobertura del período.
 
 La organización final de estas vistas y el contrato `position-cycle-v1` se rigen
 por [ADR-0015](../adr/0015-closed-operations-and-mt5-registry.md), que reemplaza
 parcialmente la navegación inicialmente descrita por ADR-0014.
 
-Antes de implementar la reconstrucción, preparar fixtures de entrada múltiple,
-cierre parcial, Stop Loss/Take Profit, intervención manual, Magic mixto, reversa
-netting, orden sin ejecución y ventana histórica incompleta.
+Mantener y ampliar fixtures de entrada múltiple, cierre parcial, Stop Loss/Take
+Profit, intervención manual, Magic mixto, reversa netting, orden sin ejecución y
+ventana histórica incompleta antes de modificar las reglas de elegibilidad.
 
-**Primer corte de dominio implementado:** un reconstructor puro agrupa deals
+**Dominio desplegado en el piloto:** un reconstructor puro agrupa deals
 comerciales por cuenta y posición, suma volumen y resultado neto, conserva tickets
 y Magic observados y clasifica ciclos cerrados, abiertos, incompletos o
 inconsistentes. Solo devuelve resultado definitivo cuando el llamador confirma la
-cobertura y no existen acciones sin atribución ni Magic mixtos. Todavía no alimenta
-las métricas ni la UI.
+cobertura y no existen acciones sin atribución ni Magic mixtos. Sus ciclos cerrados
+alimentan las métricas y la UI.
 
 **Evidencia por ciclo implementada en código:** el collector de actividad detecta
 posiciones candidatas al observar salidas o reversas y usa
 `HistorySelectByPosition` antes de avanzar el cursor confirmado. Si puede probar
 una posición cerrada completa, emite deals y órdenes como `position_reconcile`;
 el receptor los valida y persiste sin confundir esa selección con cobertura global
-de la cuenta. El collector compilado ya envía `activity-0.2.0` en Juampi; falta
-observar un cierre real. La proyección durable está desplegada en la base piloto
-con esquema 4 y copia previa verificada; todavía no se expone a métricas o UI.
+de la cuenta. El collector `activity-0.2.0` se validó en Juampi mediante una
+recuperación controlada: produjo 19 ciclos cerrados distintos y elegibles para los
+Magic Numbers `11121` a `11125`. La proyección durable usa el esquema 4 y se
+expone a métricas y UI.
 
 **Consulta autenticada implementada en código:** el receptor expone ciclos
 paginados en loopback con la credencial de lectura v2, filtro por Magic propietario
 y validación estricta en el cliente del dashboard. La sesión humana puede
 consultarlos mediante `/api/position-cycles` sin recibir esa credencial interna.
-Las métricas por ciclo y su presentación continúan pendientes de validar evidencia
-real y acordar el contrato de producto; las métricas provisionales por deals no
-cambian silenciosamente.
+Las métricas `position-cycle-v1` y su presentación fueron validadas manualmente
+con la base piloto real. La exactitud de importes y campos se contrastará ahora
+contra un reporte MT5 de esa misma cuenta. La comparación con el workbook del
+socio se posterga hasta desplegar TradingLab en su entorno real, porque sus EAs y
+datos no existen en este piloto.
 
-Criterio del primer corte alcanzado en código: se puede abrir el historial
+Criterio del primer corte alcanzado y validado manualmente: se puede abrir el historial
 persistido, paginarlo y filtrar un EA por Magic Number sin cargar todos los
-mensajes en memoria ni depender de v2. Falta la validación visual manual contra la
-base piloto real.
+mensajes en memoria. La actividad durable y los ciclos provienen de v2; el estado
+vivo continúa aislado en v1.
+
+### Alcance de métricas acordado
+
+1. El alcance principal para evaluar un bot es `account_id + owner_magic`: el
+   mismo Magic se analiza dentro de una cuenta concreta, nunca mezclado
+   implícitamente entre cuentas.
+2. Las fórmulas actuales no son definitivas. Cada revisión aprobada creará una
+   versión de contrato o una evolución explícita; no se reescribirán resultados
+   históricos con una fórmula nueva sin identificarla.
+3. En una etapa posterior se agregarán agregados por cuenta: PnL y otras métricas
+   generales de todos los bots pertenecientes a la cuenta seleccionada.
+4. Cuando existan varias cuentas podrá incorporarse una vista global. Antes se
+   definirán moneda base, conversión, período, cuentas incluidas y tratamiento de
+   transferencias; sumar importes de monedas distintas no será una operación
+   implícita.
 
 ## Incremento 1 — Contrato de control operativo
 
@@ -256,7 +279,8 @@ Resolver con el socio:
 3. referencia de balance/equity y tratamiento del flotante;
 4. límites fijos o trailing;
 5. depósitos, retiros y resets;
-6. scope por cuenta, bot o portfolio.
+6. fórmulas y reglas de agregación para cuenta y portfolio; el scope primario de
+   performance de EA ya se fijó como bot dentro de una cuenta concreta.
 
 Luego implementar DDD y Max DD como cálculos versionados con fixtures y casos límite.
 
@@ -298,16 +322,17 @@ credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia
 estricta y recuperación histórica fuera de orden. No están conectados al receptor
 v1. La [persistencia y composición v2](telemetry-v2-persistence.md) agregan una
 base opt-in separada, recuperación durable y una vista de referencia. Migración,
-proyecciones incrementales, receptor v2, collectors y despliegue siguen pendientes.
-Estos trabajos mejoran la captura futura, pero no bloquean la prioridad de historial
-sobre los datos v1 ya persistidos.
+proyecciones, receptor v2, collector de actividad y despliegue piloto ya están
+operativos; faltan el contraste formal contra el reporte MT5, la cobertura visible
+y la promoción fuera de la cuenta demo. V1 conserva el estado vivo; v2 es la
+fuente durable de actividad y ciclos.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):
 dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
-terminal actual. Contrato, identidades, admisión, persistencia y composición de
-referencia ya tienen fixtures y regresiones. El próximo incremento define
-provisión/migración y proyecciones durables antes de conectar un receptor v2.
+terminal actual. Contrato, identidades, admisión, persistencia, migración,
+receptor v2 y composición ya tienen fixtures y regresiones. El próximo incremento
+contrasta el piloto contra el reporte MT5 y expone la cobertura al usuario.
 No se adoptará una proyección histórica acumulativa en memoria. La frecuencia de
 un segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
 

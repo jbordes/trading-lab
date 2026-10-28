@@ -21,6 +21,8 @@
           <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
             <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-controls="overview-view" aria-selected="true" data-view="overview"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#overview"></use></svg><span class="nav-label">Resumen</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-trading" aria-controls="trading-view" aria-selected="false" tabindex="-1" data-view="trading"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#operations"></use></svg><span class="nav-label">Trading</span><span class="nav-count" id="operations-badge">—</span></button>
+            <button class="view-tab" type="button" role="tab" id="tab-financial" aria-controls="trading-view" aria-selected="false" tabindex="-1" data-view="financial"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#overview"></use></svg><span class="nav-label">Performance financiera</span></button>
+            <button class="view-tab" type="button" role="tab" id="tab-execution" aria-controls="trading-view" aria-selected="false" tabindex="-1" data-view="execution"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Performance de ejecución</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-activity" aria-controls="activity-view" aria-selected="false" tabindex="-1" data-view="activity"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Actividad</span><span class="nav-count" id="activity-badge" hidden>—</span></button>
           </nav>
           <form class="logout-form" action="/logout" method="post"><button class="logout-button" type="submit">Cerrar sesión</button></form>
@@ -49,15 +51,15 @@
       </div>
 
       <section id="overview-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-overview" tabindex="0">
-      <section class="metrics" aria-label="Estado de cuenta">
+      <section class="metrics overview-summary" aria-label="Estado de cuenta">
         <article class="metric-card metric-hero" id="equity-card">
-          <span>Equity · Valor actual</span><strong id="equity">—</strong><small id="profit-line" class="profit-line">—</small>
+          <span>Equity · Valor actual</span><strong id="equity">—</strong>
+          <div class="account-secondary"><span>Balance <b id="balance">—</b></span><small id="profit-line" class="profit-line">PnL flotante —</small></div>
         </article>
-        <article class="metric-card">
-          <span>Balance</span><strong id="balance">—</strong><small>Capital realizado</small>
-        </article>
-        <article class="metric-card">
-          <span>Margen libre</span><strong id="margin-free">—</strong><small>Disponible para operar</small>
+        <article class="ea-ranking" aria-labelledby="ea-ranking-title">
+          <div class="ranking-heading"><h2 id="ea-ranking-title">Top 3 · PnL neto</h2><label class="sr-only" for="ranking-period">Período del ranking</label><select id="ranking-period"><option value="7">7 días</option><option value="30" selected>30 días</option></select></div>
+          <p id="ranking-status" class="operations-copy" role="status">Consultando operaciones cerradas…</p>
+          <ol id="ea-ranking-list"></ol>
         </article>
       </section>
 
@@ -73,11 +75,17 @@
       <section class="content-grid">
         <article class="panel chart-panel">
           <div class="panel-heading">
-            <div><h2>Balance y equity</h2><p class="chart-context">Evolución reciente · no es un historial completo</p></div>
+            <div><h2>Balance y equity</h2><p id="account-chart-status" class="chart-context" role="status">Evolución reciente</p></div>
             <div class="panel-heading-right">
               <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
               <span id="chart-span" class="chart-span"></span>
             </div>
+          </div>
+          <div class="account-history-controls">
+            <label for="account-history-period">Período</label>
+            <select id="account-history-period"><option value="live">En vivo</option><option value="7">7 días</option><option value="30">30 días</option><option value="90">3 meses</option><option value="180">6 meses</option><option value="365">12 meses</option></select>
+            <label for="account-history-end">Hasta (UTC)</label><input id="account-history-end" type="date">
+            <button id="account-history-apply" type="button" class="secondary-action">Ver</button>
           </div>
           <div class="chart-wrap">
             <div id="chart" class="account-chart" role="img" aria-label="Evolución reciente de balance y equity"></div>
@@ -91,6 +99,7 @@
             <div class="activity-row"><span>Posiciones abiertas</span><strong id="positions">—</strong></div>
             <div class="activity-row"><span>Órdenes activas</span><strong id="orders">—</strong></div>
             <div class="activity-row"><span>Margen usado</span><strong id="margin">—</strong></div>
+            <div class="activity-row"><span>Margen libre</span><strong id="margin-free">—</strong></div>
             <div class="activity-row"><span>Nivel de margen</span><strong id="margin-level">—</strong></div>
             <div class="activity-row"><span>Última lectura</span><strong id="last-reading">—</strong></div>
           </article>
@@ -98,16 +107,11 @@
       </section>
       <details class="risk-note">
         <summary>Límites de riesgo operativo · Pendientes de definición</summary>
-        <p>El límite diario y el límite general de pérdida de la cuenta todavía requieren fórmulas y referencias acordadas. Son controles operativos distintos del Max Drawdown histórico por EA que aparece en Historial. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
+        <p>El límite diario y el límite general de pérdida de la cuenta todavía requieren fórmulas y referencias acordadas. Son controles operativos distintos del Max Drawdown histórico por EA que aparece en Performance financiera. <a href="https://github.com/jbordes/trading-lab/blob/main/docs/development/guia-metricas-para-el-socio.md">Ver definiciones pendientes</a></p>
       </details>
       </section>
 
       <section id="trading-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-trading" tabindex="0" hidden>
-        <nav class="trading-scopes" aria-label="Alcance de la actividad de trading">
-          <button class="trading-scope active" type="button" aria-pressed="true" data-trading-scope="current">En curso</button>
-          <button class="trading-scope" type="button" aria-pressed="false" data-trading-scope="closed">Operaciones cerradas</button>
-          <button class="trading-scope" type="button" aria-pressed="false" data-trading-scope="registry">Registro MT5</button>
-        </nav>
 
         <article id="trading-current-panel" class="panel operations-panel">
           <div class="operations-heading">
@@ -139,33 +143,42 @@
           </div>
 
           <div class="operations-table-wrap">
-            <table class="operations-table" role="table">
+            <table class="operations-table history-table closed-trades-table current-trades-table" role="table">
               <caption class="sr-only">Operaciones abiertas informadas por la fuente</caption>
               <thead>
                 <tr>
-                  <th scope="col">Operación</th>
-                  <th scope="col">Instrumento</th>
+                  <th scope="col">Magic</th>
+                  <th scope="col">Tipo</th>
+                  <th scope="col">Símbolo</th>
                   <th scope="col" class="numeric">Volumen</th>
-                  <th scope="col" class="numeric">Resultado abierto</th>
-                  <th scope="col">Hora</th>
-                  <th scope="col"><span class="sr-only">Detalle</span></th>
+                  <th scope="col" class="numeric">Open</th>
+                  <th scope="col" class="numeric">Actual</th>
+                  <th scope="col">TP / SL</th>
+                  <th scope="col" class="numeric">PnL flotante</th>
                 </tr>
               </thead>
               <tbody id="operations-body"></tbody>
             </table>
             <p id="operations-empty" class="operations-empty">Esperando operaciones…</p>
           </div>
-          <p class="operations-note" id="operations-note" role="status" hidden>La hora de cada operación todavía no está validada. El indicador de actualización corresponde a la captura de la cuenta.</p>
+          <p class="operations-note" id="operations-note" role="status" hidden>La hora operativa muestra el reloj del broker y su conversión al horario local del dispositivo.</p>
         </article>
 
         <article id="trading-history-panel" class="panel operations-panel history-panel" hidden>
-          <div class="operations-heading">
+          <div id="history-heading" class="operations-heading">
             <div>
               <h2 id="history-title">Historial de ejecuciones</h2>
               <p id="history-copy" class="operations-copy">Deals informados por MT5 y conservados en SQLite. Cada fila es una ejecución, no necesariamente un trade completo.</p>
             </div>
           </div>
 
+          <div id="financial-toolbar" class="financial-toolbar" hidden>
+            <h2>Rendimiento observado</h2>
+            <div class="financial-modes" role="group" aria-label="Modo de análisis">
+              <button type="button" data-financial-mode="summary" aria-pressed="true">Sumarizar</button>
+              <button type="button" data-financial-mode="compare" aria-pressed="false">Comparar EAs</button>
+            </div>
+          </div>
           <form id="history-filters" class="history-controls">
             <label id="history-entity-field" class="filter-field" for="history-entity" hidden>
               <span>Entidad</span>
@@ -181,24 +194,50 @@
               <select id="history-period">
                 <option value="1">Últimas 24 horas</option>
                 <option value="7" selected>Últimos 7 días</option>
-                <option value="30">Últimos 30 días</option>
+                <option value="30">30 días</option>
+                <option value="90">3 meses</option>
+                <option value="180">6 meses</option>
+                <option value="365">12 meses</option>
               </select>
+            </label>
+            <label class="filter-field" for="history-end-date">
+              <span>Hasta (broker)</span>
+              <input id="history-end-date" type="date" aria-label="Último día del período, hora del broker">
             </label>
             <label class="filter-field" for="history-magic">
               <span>Bot (Magic)</span>
               <input id="history-magic" type="text" inputmode="numeric" autocomplete="off" placeholder="Todos los bots" maxlength="20">
             </label>
+            <details id="ea-selector" class="ea-selector" hidden>
+              <summary id="ea-selector-label">Todos los EAs</summary>
+              <div class="ea-selector-menu">
+                <button id="ea-select-all" type="button" class="clear-filter">Todos los EAs</button>
+                <div id="ea-selector-options">Consultando EAs…</div>
+                <small id="ea-selector-status" role="status">Hasta 12 EAs · aplicá los filtros para actualizar.</small>
+              </div>
+            </details>
             <button class="primary-action" type="submit">Aplicar filtros</button>
             <button id="history-reset" class="clear-filter" type="button">Restablecer</button>
           </form>
+          <p id="history-coverage" class="coverage-indicator neutral" role="status">
+            <span class="coverage-dot" aria-hidden="true"></span>
+            <span>Sin consultar cobertura</span>
+          </p>
 
-          <section id="history-metrics" class="history-metrics" aria-labelledby="history-metrics-title">
-            <div class="metrics-heading">
-              <h3 id="history-metrics-title">Rendimiento observado</h3>
-              <p id="metrics-status" class="metrics-status" role="status">Aplicá los filtros para calcular.</p>
-            </div>
-            <div class="metrics-grid">
-              <article><span>Resultado neto</span><strong id="metric-net">—</strong></article>
+          <section id="history-metrics" class="history-metrics" aria-label="Resultados financieros">
+            <div class="financial-layout">
+              <aside id="comparison-sidebar" class="comparison-sidebar" hidden aria-label="EAs para comparar">
+                <label for="comparison-search">Buscar EA</label>
+                <input id="comparison-search" type="search" placeholder="Magic Number" autocomplete="off">
+                <div class="comparison-selection-bar"><span id="comparison-count">0 / 5</span><button id="comparison-clear" type="button">Limpiar</button></div>
+                <div id="comparison-options" role="group" aria-label="Seleccionar hasta 5 EAs"></div>
+                <p id="comparison-feedback" role="status" class="operations-copy"></p>
+                <button id="comparison-apply" type="button" class="secondary-action">Aplicar selección</button>
+              </aside>
+              <div class="financial-main">
+            <p id="metrics-status" class="metrics-status" role="status">Aplicá los filtros para calcular.</p>
+            <div id="summary-metrics" class="metrics-grid">
+              <article><span>PnL neto</span><strong id="metric-net">—</strong></article>
               <article><span>Operaciones</span><strong id="metric-count">—</strong></article>
               <article><span>Profit Factor</span><strong id="metric-pf">—</strong></article>
               <article><span>Ganadoras</span><strong id="metric-win">—</strong></article>
@@ -211,16 +250,26 @@
               <article><span>Expectancy neta (R)</span><strong id="metric-expectancy">—</strong></article>
               <article><span>Desviación estándar</span><strong id="metric-standard-deviation">—</strong></article>
             </div>
-            <div class="metrics-charts">
-              <article class="metric-chart-card"><h4>Ganancia acumulada</h4><div id="chart-cumulative" class="metric-chart" role="img" aria-label="Gráfico de ganancia acumulada"></div></article>
-              <article class="metric-chart-card"><h4>Drawdown</h4><div id="chart-drawdown" class="metric-chart" role="img" aria-label="Gráfico de drawdown"></div></article>
-              <article class="metric-chart-card"><h4>Resultado por operación</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de resultado por operación"></div></article>
-              <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 operaciones"></div></article>
+            <div class="metrics-charts metrics-primary">
+              <article class="metric-chart-card metric-chart-card-primary"><h4>PnL neto acumulado</h4><div id="chart-cumulative" class="metric-chart metric-chart-primary" role="img" aria-label="Gráfico de PnL neto acumulado"></div></article>
+              <article class="metric-chart-card metric-chart-card-primary"><h4>Drawdown</h4><div id="chart-drawdown" class="metric-chart metric-chart-primary" role="img" aria-label="Gráfico de drawdown"></div></article>
             </div>
-            <p class="operations-note">Fórmulas basadas en el Excel del socio y aplicadas a ciclos completos <code>position-cycle-v1</code>. Las operaciones excluidas permanecen visibles debajo. Trades/mes espera una fecha de activación válida para cada EA.</p>
+            <details id="secondary-metrics" class="secondary-metrics">
+              <summary>Más gráficos</summary>
+              <div class="metrics-charts metrics-secondary">
+                <article class="metric-chart-card"><h4>PnL neto por operación</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de PnL neto por operación"></div></article>
+                <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 operaciones"></div></article>
+              </div>
+            </details>
+            <section id="ea-comparison" class="ea-comparison" aria-label="Métricas por EA" hidden>
+              <div id="ea-comparison-table"></div>
+              <p id="ea-comparison-note" class="sr-only" role="status"></p>
+            </section>
+              </div>
+            </div>
           </section>
 
-          <p id="history-note" class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
+          <p id="history-note" class="operations-note history-note">Las horas operativas muestran el reloj del broker y la conversión local del dispositivo. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
           <div class="operation-stats" role="status" aria-live="polite">
             <span><strong id="history-count">0</strong> <span id="history-count-label">ejecuciones cargadas</span></span>
             <span id="history-scope">Últimos 7 días · todos los bots</span>
@@ -231,7 +280,7 @@
               <caption id="history-caption" class="sr-only">Deals históricos informados por MT5</caption>
               <thead id="history-head">
                 <tr>
-                  <th scope="col">Hora MT5</th>
+                  <th scope="col">Broker / Local</th>
                   <th scope="col">Ejecución</th>
                   <th scope="col">Instrumento</th>
                   <th scope="col">Magic</th>
@@ -247,6 +296,13 @@
           <div class="history-actions">
             <button id="history-more" class="secondary-action" type="button" hidden>Cargar más</button>
           </div>
+          <details id="financial-help" class="financial-help" hidden>
+            <summary>Ayuda y referencias</summary>
+            <p>Las operaciones cerradas se reconstruyen de principio a fin. Las métricas usan únicamente operaciones completas, atribuibles a un único EA y sin intervención externa.</p>
+            <p>Sumarizar calcula el resultado conjunto de la selección. Comparar calcula cada EA por separado. El gráfico de drawdown muestra las caídas bajo cero; las cifras expresan su magnitud positiva.</p>
+            <p>Fórmulas basadas en el Excel del socio, versión position-cycle-v1. Los porcentajes usan el capital de referencia y el riesgo configurados; Trades/mes espera una fecha de activación por EA.</p>
+            <p>La cobertura indica qué parte del período está confirmada. La lista carga páginas de operaciones; las métricas consultan el período dentro del límite de cálculo. El zoom cambia la ventana visible, no recalcula las tarjetas.</p>
+          </details>
         </article>
       </section>
 

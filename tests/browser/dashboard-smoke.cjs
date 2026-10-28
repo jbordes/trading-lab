@@ -93,7 +93,7 @@ async function main() {
       });
       for (const width of [1440, 768, 390, 320]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
-        for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#history", "/dashboard#activity"]) {
+        for (const route of ["/", "/dashboard#overview", "/dashboard#operations", "/dashboard#history", "/dashboard#financial", "/dashboard#execution", "/dashboard#activity"]) {
           await navigate(route);
           await evaluate(`(() => {
             const current = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -103,7 +103,7 @@ async function main() {
             width: document.documentElement.clientWidth,
             scroll: document.documentElement.scrollWidth,
             footer: document.querySelector('footer').getBoundingClientRect().top,
-            tableBottom: document.querySelector('#operations-view:not([hidden]) .operations-table')?.getBoundingClientRect().bottom || 0,
+            tableBottom: document.querySelector('#trading-current-panel:not([hidden]) .operations-table')?.getBoundingClientRect().bottom || 0,
             chartTop: document.querySelector('#overview-view:not([hidden]) .chart-panel')?.getBoundingClientRect().top || 0,
             navPosition: document.querySelector('.site-nav-links') ? getComputedStyle(document.querySelector('.site-nav-links')).position : null,
             logo: getComputedStyle(document.querySelector('.brand-mark')).backgroundImage,
@@ -121,13 +121,13 @@ async function main() {
           assert.ok(layout.footer >= layout.tableBottom, `${name}: footer overlaps operations`);
           assert.equal(layout.navPosition, route === "/" ? null : width < 1000 ? "fixed" : "static", `${name}: navigation position`);
           assert.equal(layout.publicHeader, route === "/", `${name}: public and workspace shells are separate`);
-          assert.equal(layout.viewCount, route === "/" ? 0 : 4, `${name}: dashboard has its four work views`);
+          assert.equal(layout.viewCount, route === "/" ? 0 : 5, `${name}: dashboard has its five work views`);
           assert.equal(layout.homeLinks, 0, `${name}: no cross-section links from presentation page`);
           assert.ok(layout.logo.includes(`tradinglab-apple-touch-icon-${theme === "light" ? "black" : "white"}.png`), `${name}: logo theme`);
           assert.equal(layout.iconTheme, layout.browserTheme, `${name}: favicon follows browser preference`);
           assert.ok(layout.squareIcon, `${name}: favicon keeps logo aspect on a square canvas`);
           if (route.includes("#")) {
-            const expected = { overview: "Resumen", operations: "Operaciones", history: "Historial", activity: "Actividad" }[route.split("#")[1]];
+            const expected = { overview: "Resumen", operations: "Trading", history: "Performance de ejecución", financial: "Performance financiera", execution: "Performance de ejecución", activity: "Actividad" }[route.split("#")[1]];
             assert.equal(layout.title, expected, `${name}: page title`);
           }
           await screenshot(name);
@@ -140,13 +140,13 @@ async function main() {
       const state = await (await fetch('/api/state')).json();
       window.fetch = async () => ({ ok: true, json: async () => state });
       renderState(state);
-      document.querySelector('#tab-operations').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      document.querySelector('#tab-trading').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
       const endWorks = document.activeElement.id === 'tab-activity' && activeView === 'activity';
       document.querySelector('#tab-activity').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
       const keyboard = endWorks && document.activeElement.id === 'tab-overview' && activeView === 'overview';
-      document.querySelector('#tab-operations').click();
+      document.querySelector('#tab-trading').click();
       magicFilter.value = ''; kindFilter.value = 'all'; renderOperations();
-      const button = document.querySelector('.detail-toggle');
+      const button = document.querySelector('#operations-body .closed-trade-row');
       button.click(); button.focus();
       const originalRow = button.closest('tr');
       latestOperations = latestOperations.map((item, index) => index ? item : { ...item, floating_profit: 123.45 });
@@ -191,7 +191,7 @@ async function main() {
       latestOperations = Array.from({ length: 35 }, (_, i) => ({ ...state.latest.operations[0], ticket: String(i + 1),
         magic_number: bigMagic, symbol: 'SYMBOL_WITH_A_LONG_SUFFIX', comment: 'Long '.repeat(80) }));
       updateMagicOptions(bigMagic); renderOperations();
-      document.querySelector('.detail-toggle').click();
+      document.querySelector('#operations-body .closed-trade-row').click();
       const overflow = document.documentElement.scrollWidth > document.documentElement.clientWidth;
       const footerClear = document.querySelector('footer').getBoundingClientRect().top >= operationsBody.getBoundingClientRect().bottom;
       return { keyboard, isolated, networkFailure, networkRecovery, stable, toggleWorks, exact, persisted, missing, empty, loading, offlineFirst, stale, recovered,

@@ -38,6 +38,7 @@ const historyBody = document.getElementById("history-body");
 const historyEmpty = document.getElementById("history-empty");
 const historyCount = document.getElementById("history-count");
 const historyScope = document.getElementById("history-scope");
+const historyCoverage = document.getElementById("history-coverage");
 const historyMore = document.getElementById("history-more");
 const historyMetricsPanel = document.getElementById("history-metrics");
 const historyTitle = document.getElementById("history-title");
@@ -88,10 +89,27 @@ let tradingScope = "current";
 let historyRequest = 0;
 let metricsRequest = 0;
 let historyMetrics = null;
+let historyCoverageByEntity = {};
+let brokerUtcOffsetMinutes = null;
 let accountChart = null;
 const metricCharts = new Map();
+const METRIC_CHART_GROUP = "financial-performance";
+let metricChartWindowKey = null;
 const operationNodes = new Map();
 const expandedOperationTickets = new Set();
+const expandedClosedPositions = new Set();
+const selectedEaMagics = new Set();
+const comparedEaMagics = new Set();
+let availableEaMagics = [];
+let financialMode = "summary";
+const MAX_COMPARISON_EAS = 5;
+let accountHistoryWindow = null;
+let accountHistoryData = null;
+let accountHistoryRequest = 0;
+let accountChartWindowKey = null;
+let rankingRequest = 0;
+let rankingKey = "";
+let rankingCheckedAt = 0;
 
 const activityElements = {
   badge: document.getElementById("activity-badge"),
@@ -220,6 +238,19 @@ const timeFormatter = new Intl.DateTimeFormat(LOCALE, {
 const dateTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
   dateStyle: "short", timeStyle: "medium", hour12: false,
 });
+const brokerDateTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
+  dateStyle: "short", timeStyle: "medium", hour12: false, timeZone: "UTC",
+});
+const brokerRowTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
+  dateStyle: "short", timeStyle: "short", hour12: false, timeZone: "UTC",
+});
+const compactLocalFormatter = new Intl.DateTimeFormat(LOCALE, {
+  day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+});
+const compactBrokerFormatter = new Intl.DateTimeFormat(LOCALE, {
+  day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+  timeZone: "UTC",
+});
 const moneyFormatters = new Map();
 
 function money(value, currency, signed = false) {
@@ -246,6 +277,39 @@ function money(value, currency, signed = false) {
 
 function number(value) {
   return Number.isFinite(value) ? numberFormatter.format(value) : "—";
+}
+
+function operationalTime(rawMsc) {
+  if (rawMsc === null || rawMsc === undefined || rawMsc === "") return null;
+  const numeric = typeof rawMsc === "string" ? Date.parse(rawMsc) : Number(rawMsc);
+  if (!Number.isFinite(numeric)) return null;
+  const broker = new Date(numeric);
+  if (Number.isNaN(broker.getTime())) return null;
+  const local = Number.isInteger(brokerUtcOffsetMinutes)
+    ? new Date(numeric - brokerUtcOffsetMinutes * 60 * 1000)
+    : null;
+  return {
+    broker: brokerDateTimeFormatter.format(broker),
+    local: local ? dateTimeFormatter.format(local) : "Offset no configurado",
+  };
+}
+
+function operationalTimeCell(rawMsc, label) {
+  const value = operationalTime(rawMsc);
+  return value
+    ? detailCell(`Broker ${value.broker}`, `Local ${value.local}`, "dual-time", label)
+    : textCell("—", "", label);
+}
+
+function operationalChartLabel(rawMsc) {
+  const numeric = Number(rawMsc);
+  if (!Number.isFinite(numeric)) return "—";
+  const broker = new Date(numeric);
+  if (Number.isNaN(broker.getTime())) return "—";
+  const brokerLabel = compactBrokerFormatter.format(broker);
+  if (!Number.isInteger(brokerUtcOffsetMinutes)) return `B ${brokerLabel}`;
+  const local = new Date(numeric - brokerUtcOffsetMinutes * 60 * 1000);
+  return `B ${brokerLabel}\nL ${compactLocalFormatter.format(local)}`;
 }
 
 const statusLabels = {
@@ -323,7 +387,7 @@ function renderState(state) {
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
   if (value.observed_at === lastObservedAt) {
-    if (currencyChanged && activeView === "trading" && tradingScope !== "current") renderHistory();
+    if (currencyChanged && ["financial", "execution"].includes(activeView)) renderHistory();
     if (currencyChanged && activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
     return;
   }
@@ -335,8 +399,7 @@ function renderState(state) {
     : "Cuenta sin identificar";
   elements.balance.textContent = money(value.balance, currency);
   elements.equity.textContent = money(value.equity, currency);
-  const profitWord = value.floating_profit > 0 ? "ganancia" : value.floating_profit < 0 ? "pérdida" : "sin resultado";
-  setText(elements["profit-line"], `Resultado abierto: ${money(value.floating_profit || 0, currency, true)} (${profitWord})`);
+  setText(elements["profit-line"], `PnL flotante ${money(value.floating_profit, currency, true)}`);
   elements["profit-line"].className = value.floating_profit > 0
     ? "profit-line positive-text"
     : value.floating_profit < 0 ? "profit-line negative-text" : "profit-line";
@@ -350,6 +413,7 @@ function renderState(state) {
   setText(elements["last-reading"], observedAt ? timeFormatter.format(observedAt) : "—");
   setText(sourceDescription, sourceLabel(value.source));
   latestOperations = Array.isArray(value.operations) ? value.operations : [];
+  if (activeView === "overview") refreshEaRanking();
   latestOperationsTotal = Math.max(
     latestOperations.length,
     Number(value.open_positions || 0) + Number(value.active_orders || 0),
@@ -358,7 +422,7 @@ function renderState(state) {
   operationsBadge.textContent = number(latestOperationsTotal);
   if (activeView === "trading" && tradingScope === "current") renderOperations();
   if (
-    activeView === "trading" && tradingScope === "registry"
+    activeView === "execution"
     && ["all", "current"].includes(historyEntity.value)
   ) {
     historyRecords = [
@@ -535,7 +599,7 @@ function buildActivityContent(events) {
   caption.textContent = "Actividad reciente informada por la fuente";
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
-  ["Hora", "Evento", "Instrumento", "Magic", "Resultado"].forEach((label, index) => {
+  ["Broker / Local", "Evento", "Instrumento", "Magic", "Resultado"].forEach((label, index) => {
     const th = document.createElement("th");
     th.setAttribute("scope", "col");
     if (index === 4) th.className = "numeric";
@@ -546,8 +610,7 @@ function buildActivityContent(events) {
   const tbody = document.createElement("tbody");
   events.forEach((activity) => {
     const row = document.createElement("tr");
-    const occurredAt = toDate(activity.occurred_at);
-    row.appendChild(textCell(occurredAt ? dateTimeFormatter.format(occurredAt) : "—", "", "Hora"));
+    row.appendChild(operationalTimeCell(activity.occurred_at, "Broker / Local"));
     const eventName = activityTypes[activity.event_type] || activity.event_type.replaceAll("_", " ");
     const stateName = activity.event_state ? activityStates[activity.event_state] || activity.event_state : "";
     row.appendChild(textCell(stateName ? `${eventName} · ${stateName}` : eventName, "", "Evento"));
@@ -598,27 +661,115 @@ function setHistoryLoading(loading) {
     historyEmpty.hidden = false;
     historyEmpty.textContent = "Consultando el historial guardado…";
   }
+  renderHistoryCoverage();
+}
+
+function coverageState(coverage, query) {
+  if (!coverage || !query || !Array.isArray(coverage.complete_ranges)
+      || !Number.isInteger(coverage.incomplete_batches)) return null;
+  const ranges = coverage.complete_ranges
+    .map((item) => [Number(item?.from_msc), Number(item?.to_msc)])
+    .filter(([start, end]) => Number.isSafeInteger(start) && Number.isSafeInteger(end) && start <= end)
+    .sort((left, right) => left[0] - right[0]);
+  let coveredUntil = query.fromMsc - 1;
+  for (const [start, end] of ranges) {
+    if (start > coveredUntil + 1) break;
+    coveredUntil = Math.max(coveredUntil, end);
+  }
+  return {
+    complete: coverage.incomplete_batches === 0 && coveredUntil >= query.toMsc - 1,
+    coveredUntil,
+    incompleteBatches: coverage.incomplete_batches,
+  };
+}
+
+function renderHistoryCoverage() {
+  let label = "Sin consultar cobertura";
+  let tone = "neutral";
+  let title = "La cobertura indica si SQLite conserva evidencia completa para el período filtrado.";
+  if (historyLoading) {
+    label = "Comprobando cobertura…";
+  } else if (tradingScope === "registry" && historyEntity.value === "current") {
+    label = "Instantánea actual";
+    title = "La actividad en curso es una instantánea y no un rango histórico.";
+  } else if (historyQuery) {
+    const required = tradingScope === "closed" ? [historyCoverageByEntity.deals]
+      : historyEntity.value === "all"
+        ? [historyCoverageByEntity.deals, historyCoverageByEntity.orders]
+        : [historyCoverageByEntity[historyEntity.value]];
+    const states = required.map((value) => coverageState(value, historyQuery));
+    if (states.every(Boolean)) {
+      const complete = states.every((state) => state.complete);
+      label = complete ? "Datos completos" : "Datos parciales";
+      tone = complete ? "complete" : "partial";
+      const incomplete = states.reduce((total, state) => total + state.incompleteBatches, 0);
+      const earliestGap = Math.min(...states.map((state) => state.coveredUntil));
+      title = complete
+        ? "SQLite confirma cobertura completa para todo el período filtrado."
+        : `La evidencia no cubre todo el período${incomplete ? `; ${incomplete} lote(s) incompleto(s)` : ""}.`
+          + (earliestGap >= historyQuery.fromMsc
+            ? ` Cobertura continua hasta Broker ${operationalTime(earliestGap)?.broker || "desconocido"}.`
+            : "");
+    }
+  }
+  historyCoverage.className = `coverage-indicator ${tone}`;
+  historyCoverage.lastElementChild.textContent = label;
+  historyCoverage.title = title;
+}
+
+function selectedTimeWindow(days, endDate = "", broker = false, now = Date.now()) {
+  if (![1, 7, 30, 90, 180, 365].includes(days)) throw new Error("Período inválido.");
+  const current = now + (broker ? (brokerUtcOffsetMinutes ?? 0) * 60000 : 0);
+  let toMsc = current;
+  if (endDate) {
+    const date = new Date(`${endDate}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate) || !Number.isFinite(date.getTime())
+      || date.toISOString().slice(0, 10) !== endDate || date.getTime() > current) {
+      throw new Error("Elegí una fecha válida, hasta hoy.");
+    }
+    toMsc = Math.min(current, date.getTime() + 86400000);
+  }
+  let fromMsc = toMsc - days * 86400000;
+  if (days === 365) {
+    const previousYear = new Date(toMsc);
+    const month = previousYear.getUTCMonth();
+    previousYear.setUTCFullYear(previousYear.getUTCFullYear() - 1);
+    if (previousYear.getUTCMonth() !== month) previousYear.setUTCDate(0);
+    fromMsc = previousYear.getTime();
+  }
+  return { fromMsc, toMsc };
 }
 
 async function loadTradingHistory({ append = false } = {}) {
   if (historyLoading) return;
-  const magic = historyMagicValue();
-  if (historyMagic.validationMessage) {
+  const magic = tradingScope === "closed" ? null : historyMagicValue();
+  if (tradingScope !== "closed" && historyMagic.validationMessage) {
     historyMagic.reportValidity();
     return;
   }
   if (!append) {
+    expandedRegistryRecords.clear();
     const days = Number(historyPeriod.value);
-    const toMsc = Date.now();
+    let period;
+    try {
+      period = selectedTimeWindow(days, document.getElementById("history-end-date").value, true);
+    } catch (error) {
+      metricsStatus.textContent = error.message;
+      return;
+    }
+    const toMsc = period.toMsc;
     historyQuery = {
-      fromMsc: toMsc - days * 24 * 60 * 60 * 1000,
+      fromMsc: period.fromMsc,
       toMsc,
       magic,
+      magics: tradingScope === "closed" ? [...(financialMode === "compare" ? comparedEaMagics : selectedEaMagics)] : [],
       days,
+      endDate: document.getElementById("history-end-date").value,
     };
     historyRecords = [];
     historyNextCursor = null;
     historyNextCursors = { deals: null, orders: null };
+    historyCoverageByEntity = {};
     historyInitialized = true;
     renderHistory();
   }
@@ -712,6 +863,7 @@ async function loadMt5Registry({ append }) {
         return {
           entity,
           nextCursor: payload.next_cursor,
+          coverage: payload.coverage,
           records: values.map((item) => ({
             ...item,
             _entity: entity === "deals" ? "deal" : "order",
@@ -720,7 +872,10 @@ async function loadMt5Registry({ append }) {
       });
     const results = await Promise.all(requests);
     if (requestNumber !== historyRequest) return;
-    results.forEach((result) => { historyNextCursors[result.entity] = result.nextCursor; });
+    results.forEach((result) => {
+      historyNextCursors[result.entity] = result.nextCursor;
+      if (result.coverage) historyCoverageByEntity[result.entity] = result.coverage;
+    });
     const incoming = results.flatMap((result) => result.records);
     const known = new Set(historyRecords.map(historyRecordKey));
     historyRecords = [
@@ -778,6 +933,7 @@ async function loadHistoryMetrics(query, requestNumber) {
     to_msc: String(query.toMsc),
   });
   if (query.magic !== null) parameters.set("magic_number", query.magic);
+  if (query.magics?.length) parameters.set("magic_numbers", query.magics.join(","));
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
@@ -795,7 +951,10 @@ async function loadHistoryMetrics(query, requestNumber) {
       throw new Error("El servicio devolvió métricas en un formato desconocido.");
     }
     historyMetrics = payload;
+    renderEaSelector(payload.available_magics || payload.by_ea.map((ea) => ea.magic_number));
+    historyCoverageByEntity.deals = payload.coverage;
     renderHistoryMetrics();
+    renderHistoryCoverage();
   } catch (error) {
     if (requestNumber !== metricsRequest) return;
     metricsStatus.textContent = error.name === "AbortError"
@@ -829,13 +988,225 @@ function renderHistoryMetrics() {
     ? money(value.standard_deviation, latestCurrency) : "—";
   if (!value) {
     metricCharts.forEach((chartInstance) => chartInstance.clear());
+    document.getElementById("ea-comparison-table").replaceChildren();
+    document.getElementById("ea-comparison-note").textContent = "";
     return;
   }
   metricsStatus.textContent = value.trade_count
-    ? `${value.trade_count} operaciones · ${value.formula_version}`
+    ? `${value.trade_count} operaciones · ${financialMode === "compare" ? "Comparación por EA" : historyQuery?.magics?.length ? "Selección combinada" : "Todos los EAs"}`
+      + (coverageState(value.coverage, historyQuery)?.complete ? "" : " · cobertura parcial")
     : "Sin operaciones elegibles para los filtros elegidos.";
-  renderMetricCharts(Array.isArray(value.series) ? value.series : []);
+  metricsStatus.classList.toggle(
+    "warn-text",
+    !coverageState(value.coverage, historyQuery)?.complete,
+  );
+  updateFinancialLayout();
+  renderMetricCharts();
 }
+
+function eaColor(magic) {
+  let hash = 0;
+  for (const char of String(magic)) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  return `hsl(${((hash >>> 0) * 137.508) % 360}, 52%, 56%)`;
+}
+
+function rankedEas(items) {
+  return [...items].sort((a, b) => b.net_profit - a.net_profit
+    || String(a.magic_number).localeCompare(String(b.magic_number)));
+}
+
+function renderEaComparison(items) {
+  const table = document.createElement("table");
+  table.className = "ea-metrics-table";
+  const head = document.createElement("thead");
+  const header = document.createElement("tr");
+  const metricTitle = document.createElement("th");
+  metricTitle.scope = "col"; metricTitle.textContent = "Métrica"; header.appendChild(metricTitle);
+  items.forEach((ea) => {
+    const cell = document.createElement("th");
+    cell.scope = "col"; cell.textContent = `Magic ${ea.magic_number}`;
+    cell.style.borderTop = `3px solid ${eaColor(ea.magic_number)}`;
+    header.appendChild(cell);
+  });
+  head.appendChild(header);
+  const body = document.createElement("tbody");
+  const percent = (value) => Number.isFinite(value) ? `${decimal(value * 100)} %` : "—";
+  const cash = (value) => money(value, latestCurrency, true);
+  const definitions = [
+    ["PnL neto", "net_profit", cash], ["Operaciones", "trade_count", number],
+    ["Profit Factor", "profit_factor", decimal], ["Ganadoras", "winning_percentage", percent],
+    ["Promedio", "average_trade", cash], ["Max Drawdown", "maximum_drawdown", cash],
+    ["Max Drawdown %", "maximum_drawdown_percentage", percent],
+    ["Drawdown actual", "current_drawdown", cash], ["Drawdown actual %", "current_drawdown_percentage", percent],
+    ["Return / DD", "return_drawdown_ratio", decimal],
+    ["Expectancy neta (R)", "expectancy_r", (value) => Number.isFinite(value) ? `${decimal(value)} R` : "—"],
+    ["Desviación estándar", "standard_deviation", cash],
+  ];
+  definitions.forEach(([label, field, format]) => {
+    const row = document.createElement("tr");
+    const heading = document.createElement("th"); heading.scope = "row"; heading.textContent = label;
+    row.appendChild(heading);
+    items.forEach((ea) => row.appendChild(textCell(format(ea[field]), "numeric", `Magic ${ea.magic_number}`)));
+    body.appendChild(row);
+  });
+  table.append(head, body);
+  document.getElementById("ea-comparison-table").replaceChildren(...(items.length ? [table] : []));
+  document.getElementById("ea-comparison-note").textContent = items.length ? "" : "Seleccioná hasta 5 EAs para comparar.";
+}
+
+function updateFinancialLayout() {
+  const comparing = financialMode === "compare";
+  document.getElementById("summary-metrics").hidden = comparing;
+  document.getElementById("ea-comparison").hidden = !comparing;
+  document.getElementById("comparison-sidebar").hidden = !comparing;
+  document.querySelector(".financial-layout").classList.toggle("is-comparing", comparing);
+  document.getElementById("ea-selector").hidden = tradingScope !== "closed" || comparing;
+  document.querySelectorAll("[data-financial-mode]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.financialMode === financialMode));
+  });
+}
+
+function applyFinancialFilters() {
+  // Obsolete requests may finish, but cannot replace the newly selected view.
+  historyRequest += 1;
+  metricsRequest += 1;
+  setHistoryLoading(false);
+  loadTradingHistory();
+}
+
+document.querySelectorAll("[data-financial-mode]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (financialMode === button.dataset.financialMode) return;
+    financialMode = button.dataset.financialMode;
+    updateFinancialLayout();
+    renderComparisonOptions();
+    applyFinancialFilters();
+    window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
+  });
+});
+
+function renderComparisonOptions() {
+  const list = document.getElementById("comparison-options");
+  const search = document.getElementById("comparison-search").value.trim().toLowerCase();
+  const magics = [...new Set([...availableEaMagics, ...comparedEaMagics])].sort()
+    .filter((magic) => magic.toLowerCase().includes(search));
+  list.replaceChildren();
+  magics.forEach((magic) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox"; input.value = magic; input.checked = comparedEaMagics.has(magic);
+    input.disabled = !input.checked && comparedEaMagics.size >= MAX_COMPARISON_EAS;
+    const swatch = document.createElement("span");
+    swatch.className = "ea-color-dot"; swatch.style.backgroundColor = eaColor(magic); swatch.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span"); name.textContent = magic;
+    input.addEventListener("change", () => {
+      if (input.checked && comparedEaMagics.size < MAX_COMPARISON_EAS) comparedEaMagics.add(magic);
+      else comparedEaMagics.delete(magic);
+      document.querySelectorAll("#comparison-options input").forEach((option) => {
+        option.disabled = !option.checked && comparedEaMagics.size >= MAX_COMPARISON_EAS;
+      });
+      updateComparisonCount();
+    });
+    label.addEventListener("pointerenter", () => focusMetricEa(magic));
+    label.addEventListener("pointerleave", () => focusMetricEa(null));
+    label.append(input, swatch, name); list.appendChild(label);
+  });
+  if (!magics.length) list.textContent = search ? "Sin coincidencias." : "Sin EAs disponibles para este período.";
+  updateComparisonCount();
+}
+
+function updateComparisonCount() {
+  document.getElementById("comparison-count").textContent = `${comparedEaMagics.size} / ${MAX_COMPARISON_EAS}`;
+  document.getElementById("comparison-feedback").textContent =
+    comparedEaMagics.size >= MAX_COMPARISON_EAS ? "Máximo 5 EAs." : "";
+}
+document.getElementById("comparison-search").addEventListener("input", renderComparisonOptions);
+document.getElementById("comparison-clear").addEventListener("click", () => {
+  comparedEaMagics.clear(); renderComparisonOptions();
+});
+document.getElementById("comparison-apply").addEventListener("click", applyFinancialFilters);
+
+function renderEaSelector(magics) {
+  availableEaMagics = magics;
+  renderComparisonOptions();
+  const options = document.getElementById("ea-selector-options");
+  options.replaceChildren();
+  const available = [...new Set([...magics, ...selectedEaMagics])].sort();
+  available.forEach((magic) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = magic;
+    checkbox.checked = selectedEaMagics.has(magic);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked && selectedEaMagics.size >= 12) {
+        checkbox.checked = false;
+        document.getElementById("ea-selector-status").textContent = "Máximo 12 EAs por selección.";
+        return;
+      }
+      if (checkbox.checked) selectedEaMagics.add(magic);
+      else selectedEaMagics.delete(magic);
+      updateEaSelectionLabel();
+    });
+    const text = document.createElement("span");
+    text.textContent = `Magic ${magic}`;
+    label.append(checkbox, text); options.appendChild(label);
+  });
+  if (!available.length) options.textContent = "No hay EAs elegibles en este período.";
+  updateEaSelectionLabel();
+}
+
+function updateEaSelectionLabel() {
+  document.getElementById("ea-selector-label").textContent = selectedEaMagics.size
+    ? `${selectedEaMagics.size} EA(s) seleccionados` : "Todos los EAs";
+  document.getElementById("ea-selector-status").textContent = "Hasta 12 EAs · aplicá los filtros para actualizar.";
+}
+
+document.getElementById("ea-select-all").addEventListener("click", () => {
+  selectedEaMagics.clear();
+  document.querySelectorAll("#ea-selector-options input").forEach((input) => { input.checked = false; });
+  updateEaSelectionLabel();
+});
+
+async function refreshEaRanking(force = false) {
+  if (!latestObservedDate) return;
+  const days = Number(document.getElementById("ranking-period").value);
+  const key = `${currentFilterScope}:${elements["account-identity"].textContent}:${days}`;
+  if (!force && key === rankingKey && Date.now() - rankingCheckedAt < 60000) return;
+  rankingKey = key; rankingCheckedAt = Date.now();
+  const request = ++rankingRequest;
+  const status = document.getElementById("ranking-status");
+  const list = document.getElementById("ea-ranking-list");
+  list.replaceChildren(); status.textContent = "Consultando operaciones cerradas…";
+  const toMsc = Date.now() + (brokerUtcOffsetMinutes ?? 0) * 60000;
+  const query = { fromMsc: toMsc - days * 86400000, toMsc };
+  const parameters = new URLSearchParams({ from_msc: String(query.fromMsc), to_msc: String(toMsc) });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const payload = await authenticatedHistoryFetch(`/api/cycle-metrics?${parameters}`, controller.signal);
+    if (request !== rankingRequest) return;
+    if (!Array.isArray(payload.by_ea)) throw new Error("Comparativa no disponible; reiniciá el servidor actualizado.");
+    const top = rankedEas(payload.by_ea).slice(0, 3);
+    status.textContent = top.length ? `Últimos ${days} días · ${coverageState(payload.coverage, query).complete ? "cobertura completa" : "cobertura parcial"}`
+      : `Sin operaciones elegibles en los últimos ${days} días.`;
+    top.forEach((ea) => {
+      const item = document.createElement("li");
+      const identity = document.createElement("span");
+      identity.textContent = `Magic ${ea.magic_number} · ${ea.trade_count} ops.`;
+      identity.style.borderLeft = `3px solid ${eaColor(ea.magic_number)}`;
+      const pnl = document.createElement("strong");
+      pnl.textContent = money(ea.net_profit, latestCurrency, true);
+      pnl.className = ea.net_profit > 0 ? "positive-text" : ea.net_profit < 0 ? "negative-text" : "";
+      item.append(identity, pnl); list.appendChild(item);
+    });
+  } catch (error) {
+    if (request !== rankingRequest) return;
+    status.textContent = error.name === "AbortError" ? "La consulta tardó demasiado. Probá 7 días." : error.message;
+  } finally { window.clearTimeout(timeout); }
+}
+
+document.getElementById("ranking-period").addEventListener("change", () => refreshEaRanking(true));
 
 function resolvedChartTheme() {
   const style = getComputedStyle(document.documentElement);
@@ -850,57 +1221,116 @@ function resolvedChartTheme() {
   };
 }
 
-function renderMetricCharts(series) {
+function focusMetricEa(magic) {
+  metricCharts.forEach((chartInstance) => {
+    chartInstance.dispatchAction({ type: "downplay" });
+    if (magic !== null) chartInstance.dispatchAction({ type: "highlight", seriesName: `Magic ${magic}` });
+  });
+}
+
+function eaChartSeries(items, field, fromMsc, comparing = false) {
+  return items.map((ea) => ({
+    name: `Magic ${ea.magic_number}`,
+    type: field === "net_profit" ? "bar" : "line",
+    smooth: false,
+    showSymbol: false,
+    symbolSize: 4,
+    barMaxWidth: field === "net_profit" ? 16 : undefined,
+    barMinHeight: field === "net_profit" ? 1 : undefined,
+    barGap: field === "net_profit" && comparing ? "20%" : undefined,
+    itemStyle: { color: eaColor(ea.magic_number) },
+    lineStyle: { color: eaColor(ea.magic_number), width: 2 },
+    label: field === "net_profit" ? {
+      show: true,
+      distance: 3,
+      fontSize: 9,
+      formatter: (item) => {
+        const value = Number(item.value[1]);
+        return Number.isFinite(value) ? `${value > 0 ? "+" : ""}${decimal(value)}` : "";
+      },
+    } : undefined,
+    data: [
+      ...(["cumulative_profit", "drawdown"].includes(field) ? [[fromMsc, 0]] : []),
+      ...ea.series.map((point) => {
+        const result = field === "drawdown" ? -Math.abs(point[field]) : point[field];
+        return field === "net_profit"
+          ? { value: [point.time_msc, result], label: { position: result < 0 ? "bottom" : "top" } }
+          : [point.time_msc, result];
+      }),
+    ],
+    emphasis: { focus: "series", blurScope: "coordinateSystem", scale: true },
+  }));
+}
+
+function renderMetricCharts() {
   if (!window.echarts) {
     metricsStatus.textContent = "La librería de gráficos no pudo cargarse.";
     return;
   }
+  const value = historyMetrics;
+  if (!value) return;
+  const comparing = financialMode === "compare";
+  const items = historyQuery?.magics?.length ? (value.by_ea || []) : [];
+  const plotted = comparing ? items.slice(0, MAX_COMPARISON_EAS)
+    : [{ magic_number: "summary", series: value.series }];
+  if (comparing && !historyQuery?.magics?.length) metricsStatus.textContent = "Seleccioná hasta 5 EAs y aplicá la selección.";
+  else if (comparing && !items.length) metricsStatus.textContent = "Sin operaciones elegibles para la selección.";
   const { ink, grid: border, axis, surface, accent, profit, loss } = resolvedChartTheme();
-  const labels = series.map((point) => dateTimeFormatter.format(new Date(point.time_msc)));
+  const chartWindowKey = `${value.from_msc}:${value.to_msc}:${financialMode}`;
+  const previous = metricChartWindowKey === chartWindowKey
+    ? metricCharts.values().next().value?.getOption?.().dataZoom?.[0] : null;
+  const zoom = previous ? { start: previous.start, end: previous.end } : { start: 0, end: 100 };
+  metricChartWindowKey = chartWindowKey;
   const common = {
-    animationDuration: 250,
-    aria: { enabled: true },
-    grid: { left: 12, right: 10, top: 16, bottom: 22, containLabel: true },
+    animationDuration: 250, aria: { enabled: true },
+    legend: { show: false },
+    grid: { left: 8, right: 10, top: 12, bottom: 30, containLabel: true },
     textStyle: { color: ink },
     tooltip: {
-      trigger: "axis",
-      backgroundColor: surface,
-      borderColor: axis,
+      trigger: "axis", order: "seriesAsc", renderMode: "richText", backgroundColor: surface, borderColor: axis,
       textStyle: { color: ink },
       axisPointer: { type: "line", lineStyle: { color: axis, type: "dashed", width: 1 } },
-      valueFormatter: (value) => money(value, latestCurrency, true),
+      valueFormatter: (point) => money(Array.isArray(point) ? point[1] : point, latestCurrency, true),
     },
-    xAxis: { type: "category", data: labels, axisLabel: { color: ink, hideOverlap: true }, axisLine: { lineStyle: { color: axis } }, axisTick: { lineStyle: { color: axis } } },
-    yAxis: { type: "value", axisLabel: { color: ink }, splitLine: { lineStyle: { color: border } } },
+    xAxis: { type: "time", min: value.from_msc, max: value.to_msc,
+      axisLabel: { color: ink, hideOverlap: true, formatter: operationalChartLabel },
+      axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } },
+    yAxis: { type: "value", splitNumber: 4, axisLabel: { color: ink }, axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: border, type: "dashed", opacity: 0.72 } } },
   };
-  const definitions = [
-    ["chart-cumulative", "cumulative_profit", "line", accent],
-    ["chart-drawdown", "drawdown", "line", loss],
-    ["chart-profit", "net_profit", "bar", null],
-    ["chart-rolling", "rolling_average_20", "line", accent],
-  ];
-  definitions.forEach(([id, field, type, color]) => {
-    const node = document.getElementById(id);
-    const instance = metricCharts.get(id) || window.echarts.init(node);
+  [["chart-cumulative", "cumulative_profit"], ["chart-drawdown", "drawdown"],
+    ["chart-profit", "net_profit"], ["chart-rolling", "rolling_average_20"]].forEach(([id, field]) => {
+    const instance = metricCharts.get(id) || window.echarts.init(document.getElementById(id));
     metricCharts.set(id, instance);
-    const data = id === "chart-profit"
-      ? series.map((point) => ({
-        value: point[field],
-        itemStyle: { color: point[field] >= 0 ? profit : loss },
-      }))
-      : series.map((point) => point[field]);
+    instance.group = METRIC_CHART_GROUP;
+    const isDrawdown = field === "drawdown";
+    const showTimeline = field !== "cumulative_profit";
+    const series = eaChartSeries(plotted, field, value.from_msc, comparing).map((item) => {
+      const labeled = { ...item, label: item.label ? { ...item.label, color: ink } : undefined };
+      return comparing ? labeled : {
+        ...labeled, name: "Conjunto seleccionado",
+        itemStyle: field === "net_profit" ? { color: (point) => point.value[1] >= 0 ? profit : loss } : { color: accent },
+        lineStyle: { color: isDrawdown ? loss : accent, width: 2 },
+        areaStyle: ["cumulative_profit", "drawdown"].includes(field)
+          ? { color: isDrawdown ? loss : accent, opacity: 0.08 } : undefined,
+      };
+    });
     instance.setOption({
       ...common,
-      series: [{
-        type,
-        data,
-        itemStyle: { color },
-        lineStyle: { color, width: 2 },
-        showSymbol: false,
-        emphasis: { disabled: true },
-      }],
+      tooltip: { ...common.tooltip, trigger: "axis" },
+      grid: { ...common.grid, bottom: isDrawdown ? 46 : showTimeline ? 30 : 10 },
+      xAxis: { ...common.xAxis, axisLabel: { ...common.xAxis.axisLabel, show: showTimeline } },
+      yAxis: { ...common.yAxis, ...(isDrawdown ? { max: 0 } : {}), ...(field === "net_profit" ? {
+        min: ({ min }) => min < 0 ? min * 1.14 : 0,
+        max: ({ max }) => max > 0 ? max * 1.14 : 0,
+      } : {}) },
+      dataZoom: [{ type: "inside", ...zoom }, ...(isDrawdown ? [{ type: "slider", height: 16, bottom: 4, ...zoom }] : [])],
+      series,
     }, true);
   });
+  window.echarts.connect(METRIC_CHART_GROUP);
+  renderEaComparison(items);
+
 }
 
 function renderHistory() {
@@ -917,103 +1347,200 @@ function renderHistory() {
     ? "Operaciones cerradas reconstruidas por posición"
     : "Registro de entidades informadas por MT5";
   historyMetricsPanel.hidden = !showingClosed;
+  document.getElementById("history-heading").hidden = showingClosed;
+  document.getElementById("financial-toolbar").hidden = !showingClosed;
+  document.getElementById("financial-help").hidden = !showingClosed;
+  historyNote.hidden = showingClosed;
   historyEntityField.hidden = showingClosed;
+  historyMagic.closest("label").hidden = showingClosed;
+  historyMagic.disabled = showingClosed;
+  updateFinancialLayout();
+  historyBody.closest("table").classList.add("closed-trades-table");
+  historyBody.closest("table").classList.toggle("registry-table", !showingClosed);
   renderHistoryHeader(showingClosed);
-  historyBody.replaceChildren(...historyRecords.map(showingClosed ? positionCycleRow : registryRow));
-  historyCount.textContent = number(historyRecords.length);
-  const period = historyQuery ? `${historyQuery.days === 1 ? "Últimas 24 horas" : `Últimos ${historyQuery.days} días`}` : "—";
+  const visibleRecords = showingClosed && historyQuery?.magics?.length
+    ? historyRecords.filter((item) => historyQuery.magics.includes(item.cycle.owner_magic)) : historyRecords;
+  historyBody.replaceChildren(...visibleRecords.map(showingClosed ? positionCycleRow : registryRow));
+  historyCount.textContent = number(visibleRecords.length);
+  const period = historyQuery ? (historyQuery.endDate
+    ? `${historyQuery.days === 365 ? "12 meses" : `${historyQuery.days} días`} hasta ${historyQuery.endDate}`
+    : `${historyQuery.days === 1 ? "Últimas 24 horas" : `Últimos ${historyQuery.days} días`}`) : "—";
   const bot = historyQuery?.magic ? `Magic ${historyQuery.magic}` : "todos los bots";
-  historyScope.textContent = `${period} · ${bot}`;
-  historyEmpty.hidden = historyRecords.length > 0;
+  historyScope.textContent = `${period} · ${showingClosed && historyQuery?.magics?.length ? "Magic " + historyQuery.magics.join(", ") : bot}`
+    + (showingClosed ? ` · ${historyRecords.length} registros consultados${historyRecords.length >= HISTORY_CLIENT_LIMIT ? " (límite de consulta alcanzado)" : ""}` : "");
+  historyEmpty.hidden = visibleRecords.length > 0;
   if (!historyLoading) {
     historyEmpty.textContent = historyInitialized
       ? `No hay ${showingClosed ? "operaciones cerradas" : "eventos"} guardados para los filtros elegidos.`
       : "Abrí esta sección para consultar el historial.";
+    if (showingClosed && !visibleRecords.length && (historyNextCursor || historyRecords.length >= HISTORY_CLIENT_LIMIT)) {
+      historyEmpty.textContent = "Sin coincidencias entre los registros cargados. Cargá más o acotá el período si alcanzaste el límite de consulta.";
+    }
   }
   historyMore.hidden = !historyNextCursor;
   historyMore.textContent = "Cargar 50 más";
+  renderHistoryCoverage();
 }
 
 function renderHistoryHeader(showingClosed) {
   const labels = showingClosed
-    ? ["Cierre MT5", "Operación", "Magic", "Resultado", "Deals", "Métricas", "Observaciones"]
-    : ["Hora MT5", "Entidad", "Instrumento", "Magic", "Volumen", "Estado / resultado", "Identificador"];
+    ? ["Magic", "Tipo", "Símbolo", "Volumen", "Open", "Close", "TP / SL", "PnL neto"]
+    : ["Magic", "Entidad", "Símbolo", "Volumen", "Hora broker", "Estado / resultado", "Ticket"];
   const row = document.createElement("tr");
   labels.forEach((label, index) => {
     const cell = document.createElement("th");
     cell.scope = "col";
-    if ((showingClosed && index === 3) || (!showingClosed && [4, 5].includes(index))) {
+    if ((showingClosed && [3, 4, 5, 7].includes(index)) || (!showingClosed && [3, 5].includes(index))) {
       cell.className = "numeric";
     }
     cell.textContent = label;
+    if (showingClosed && [4, 5].includes(index)) {
+      cell.title = "Precio medio y fecha/hora del broker.";
+    }
     row.appendChild(cell);
   });
   historyHead.replaceChildren(row);
 }
 
-const cycleExclusionLabels = {
-  incomplete_evidence: "Evidencia incompleta",
-  open_position: "Posición abierta",
-  inconsistent_lifecycle: "Ciclo inconsistente",
-  unattributed_owner: "Sin EA propietario",
-  unattributed_action: "Intervención sin atribuir",
-  mixed_magic: "Magic mixtos",
-};
-
 function positionCycleRow(item) {
   const cycle = item.cycle;
+  const facts = item.details || {};
+  const key = `${cycle.account_id}:${cycle.position_id}`;
+  const fragment = document.createDocumentFragment();
   const row = document.createElement("tr");
-  const occurredAt = Number.isSafeInteger(cycle.last_event_at_msc)
-    ? new Date(cycle.last_event_at_msc) : null;
-  row.appendChild(textCell(
-    occurredAt && !Number.isNaN(occurredAt.getTime()) ? dateTimeFormatter.format(occurredAt) : "—",
-    "",
-    "Cierre MT5",
-  ));
-  row.appendChild(detailCell(
-    `Posición #${cycle.position_id}`,
-    `${dateTimeFormatter.format(new Date(cycle.started_at_msc))} → cierre`,
-    "",
-    "Operación",
-  ));
-  row.appendChild(textCell(cycle.owner_magic || "Sin atribuir", "", "Magic"));
+  row.className = "closed-trade-row";
   const netResult = Number(cycle.observed_net_result);
-  const result = textCell(money(netResult, latestCurrency, true), "numeric", "Resultado");
+  const tone = netResult > 0 ? "trade-profit" : netResult < 0 ? "trade-loss" : "";
+  if (tone) row.classList.add(tone);
+  row.appendChild(textCell(cycle.owner_magic || "Sin atribuir", "trade-magic", "Magic"));
+  row.appendChild(detailCell(
+    facts.side === "long" ? "Long" : facts.side === "short" ? "Short" : "Mixta / sin determinar",
+    `#${cycle.position_id}`, "", "Tipo",
+  ));
+  row.appendChild(textCell(facts.symbol || "—", "", "Símbolo"));
+  row.appendChild(textCell(decimal(facts.volume), "numeric", "Volumen"));
+  row.appendChild(detailCell(price(facts.open_price), closedTradeBrokerTime(cycle.started_at_msc), "numeric trade-price", "Open"));
+  row.appendChild(detailCell(price(facts.close_price), closedTradeBrokerTime(cycle.last_event_at_msc), "numeric trade-price", "Close"));
+  row.appendChild(tradeLevelsCell(facts));
+  const result = textCell(money(netResult, latestCurrency, true), "numeric", "PnL neto");
   if (netResult > 0) result.classList.add("positive-text");
   else if (netResult < 0) result.classList.add("negative-text");
   row.appendChild(result);
-  row.appendChild(textCell(number(cycle.deal_tickets.length), "", "Deals"));
-  row.appendChild(textCell(
-    cycle.eligible_for_autonomous_metrics ? "Incluida" : "Excluida",
-    cycle.eligible_for_autonomous_metrics ? "positive-text" : "warn-text",
-    "Métricas",
-  ));
-  const exclusions = cycle.exclusions.map((reason) => cycleExclusionLabels[reason] || reason);
-  row.appendChild(textCell(exclusions.length ? exclusions.join(" · ") : "Operación autónoma", "", "Observaciones"));
-  return row;
+  const detailRow = document.createElement("tr");
+  detailRow.className = `closed-trade-detail ${tone}`;
+  detailRow.id = `closed-${cycle.account_id}-${cycle.position_id}`;
+  detailRow.hidden = !expandedClosedPositions.has(key);
+  const container = document.createElement("td");
+  container.className = "trade-detail-panel";
+  container.colSpan = 8;
+  const list = document.createElement("dl");
+  list.className = "trade-facts";
+  const add = (label, value, className = "") => {
+    const group = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    description.className = className;
+    group.append(term, description);
+    list.appendChild(group);
+  };
+  add("Deals", cycle.deal_tickets.join(" · "));
+  add("Swap", money(facts.swap, latestCurrency, true));
+  add("Comisión", money(facts.commission, latestCurrency, true));
+  add("PnL bruto", money(facts.gross_profit, latestCurrency, true));
+  add("Pips", "— · tamaño de pip pendiente para este símbolo");
+  add("Duración (horas)", decimal(facts.duration_hours));
+  container.appendChild(list);
+  detailRow.appendChild(container);
+  row.tabIndex = 0;
+  row.setAttribute("aria-controls", detailRow.id);
+  row.setAttribute("aria-expanded", String(!detailRow.hidden));
+  row.title = "Mostrar u ocultar detalle · clic, Enter o Espacio";
+  const toggleDetail = () => {
+    detailRow.hidden = !detailRow.hidden;
+    if (detailRow.hidden) expandedClosedPositions.delete(key);
+    else expandedClosedPositions.add(key);
+    row.setAttribute("aria-expanded", String(!detailRow.hidden));
+  };
+  row.addEventListener("click", () => {
+    const selection = window.getSelection();
+    if (selection?.toString() && row.contains(selection.anchorNode)) return;
+    toggleDetail();
+  });
+  row.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (!event.repeat) toggleDetail();
+  });
+  fragment.append(row, detailRow);
+  return fragment;
+}
+
+function tradeLevelsCell(facts) {
+  const cell = document.createElement("td");
+  cell.className = "trade-levels";
+  cell.setAttribute("data-label", "TP / SL");
+  const fields = facts.side === "short"
+    ? [["stop_loss", "SL"], ["take_profit", "TP"]]
+    : [["take_profit", "TP"], ["stop_loss", "SL"]];
+  fields.forEach(([field, label]) => {
+    const line = document.createElement("span");
+    line.className = field === "take_profit" ? "positive-text" : "negative-text";
+    const value = facts[field];
+    line.textContent = `${label} ${value === null || value === undefined || value === 0 ? "—" : price(value)}`;
+    cell.appendChild(line);
+  });
+  cell.title = facts.levels_basis === "current" ? "Niveles de la última captura"
+    : facts.levels_basis === "exit_order" ? "Niveles registrados al cierre"
+    : facts.levels_basis === "initial_order" ? "Niveles iniciales; cambios posteriores no confirmados"
+      : "Sin evidencia de TP/SL";
+  return cell;
+}
+
+function closedTradeBrokerTime(msc) {
+  if (!Number.isSafeInteger(msc)) return "—";
+  const date = new Date(msc);
+  return Number.isNaN(date.getTime()) ? "—" : brokerRowTimeFormatter.format(date);
 }
 
 function registryRow(record) {
   const row = document.createElement("tr");
-  const timeMsc = historyRecordTime(record);
-  const occurredAt = Number.isFinite(timeMsc) && timeMsc !== Number.MAX_SAFE_INTEGER
-    ? new Date(timeMsc) : null;
-  row.appendChild(textCell(
-    occurredAt && !Number.isNaN(occurredAt.getTime()) ? dateTimeFormatter.format(occurredAt) : "—",
-    "",
-    "Hora MT5",
-  ));
   if (record._entity === "deal") appendDealRegistryCells(row, record);
   else if (record._entity === "order") appendOrderRegistryCells(row, record);
   else appendCurrentRegistryCells(row, record);
-  return row;
+  const cells = [...row.children];
+  const timeMsc = historyRecordTime(record);
+  const validTime = Number.isFinite(timeMsc) && timeMsc !== Number.MAX_SAFE_INTEGER ? timeMsc : null;
+  row.replaceChildren(cells[2], cells[0], cells[1], cells[3],
+    textCell(closedTradeBrokerTime(validTime), "trade-price", "Hora broker"), cells[4], cells[5]);
+  cells[2].classList.add("trade-magic");
+  const fields = [["Hora local", operationalTime(validTime)?.local || "No informada"]];
+  if (record._entity === "deal") {
+    fields.push(["Precio", price(record.price)], ["PnL bruto", money(record.profit, latestCurrency, true)],
+      ["Swap", money(record.swap, latestCurrency, true)], ["Comisión", money(record.commission, latestCurrency, true)],
+      ["Otros cargos", money(record.fee, latestCurrency, true)]);
+  } else if (record._entity === "order") {
+    fields.push(["Precio solicitado", price(record.price_open)],
+      ["Volumen restante", decimal(record.volume_current)], ["SL", price(record.stop_loss)],
+      ["TP", price(record.take_profit)]);
+  } else {
+    fields.push(["Precio de apertura", price(record.price_open)], ["Precio actual", price(record.price_current)],
+      ["SL", price(record.stop_loss)], ["TP", price(record.take_profit)]);
+  }
+  if (record.comment) fields.push(["Comentario", record.comment]);
+  const key = `${currentFilterScope}:${record._entity}:${record.kind || ""}:${record.ticket}`;
+  const fragment = document.createDocumentFragment();
+  fragment.append(...expandableRecordRows(row, fields, `registry-${encodeURIComponent(key)}`,
+    expandedRegistryRecords, key));
+  return fragment;
 }
 
 function appendDealRegistryCells(row, deal) {
   const type = dealTypes[deal.deal_type] || `Tipo ${deal.deal_type}`;
   const entry = dealEntries[deal.entry] || `Entrada ${deal.entry}`;
   row.appendChild(detailCell("Ejecución", `${type} · ${entry}`, "", "Entidad"));
-  row.appendChild(detailCell(deal.symbol || "Cuenta", `Posición #${deal.position_id}`, "", "Instrumento"));
+  row.appendChild(detailCell(deal.symbol || "Cuenta", `Posición #${deal.position_id}`, "", "Símbolo"));
   row.appendChild(textCell(String(deal.magic_number), "", "Magic"));
   row.appendChild(textCell(decimal(deal.volume), "numeric", "Volumen"));
   const net = deal.profit + deal.commission + deal.swap + deal.fee;
@@ -1028,8 +1555,8 @@ function appendOrderRegistryCells(row, order) {
   const type = historicalOrderTypes[order.order_type] || `Tipo ${order.order_type}`;
   row.appendChild(detailCell("Orden", type, "", "Entidad"));
   const position = order.position_id && order.position_id !== "0"
-    ? `Posición #${order.position_id}` : order.comment || "Sin posición asociada";
-  row.appendChild(detailCell(order.symbol || "Cuenta", position, "", "Instrumento"));
+    ? `Posición #${order.position_id}` : "Sin posición asociada";
+  row.appendChild(detailCell(order.symbol || "Cuenta", position, "", "Símbolo"));
   row.appendChild(textCell(String(order.magic_number), "", "Magic"));
   row.appendChild(textCell(decimal(order.volume_initial), "numeric", "Volumen"));
   const state = historicalOrderStates[order.state] || `Estado ${order.state}`;
@@ -1043,7 +1570,7 @@ function appendCurrentRegistryCells(row, operation) {
   const kind = operation.kind === "position" ? "Posición en curso" : "Orden pendiente";
   const type = operationTypes[operation.operation_type] || operation.operation_type;
   row.appendChild(detailCell(kind, type, "", "Entidad"));
-  row.appendChild(textCell(operation.symbol, "", "Instrumento"));
+  row.appendChild(textCell(operation.symbol, "", "Símbolo"));
   row.appendChild(textCell(String(operation.magic_number), "", "Magic"));
   row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
   const value = operation.kind === "position" && Number.isFinite(operation.floating_profit)
@@ -1197,97 +1724,80 @@ function reconcileOperations(operations) {
 }
 
 function operationRow(operation) {
-  const ticket = String(operation.ticket);
-  const operationKey = `${operation.kind}-${ticket}`;
+  const key = `${operation.kind}-${operation.ticket}`;
   const row = document.createElement("tr");
-  row.setAttribute("role", "row");
-  const kind = operation.kind === "position" ? "Posición" : "Orden";
-  const kindCell = document.createElement("td");
-  kindCell.setAttribute("data-label", "Operación");
-  const badge = document.createElement("span");
-  badge.className = `operation-kind ${operation.kind}`;
-  badge.textContent = kind;
-  kindCell.appendChild(badge);
-  const typeText = document.createElement("small");
-  typeText.className = "cell-detail-text";
-  typeText.textContent = operationTypes[operation.operation_type] || operation.operation_type;
-  kindCell.appendChild(typeText);
-  row.appendChild(kindCell);
-  const operationContext = `Magic ${operation.magic_number}`;
-  row.appendChild(detailCell(operation.symbol, operationContext, "", "Instrumento"));
+  row.appendChild(textCell(String(operation.magic_number), "trade-magic", "Magic"));
+  const kind = operation.kind === "position" ? "Posición" : "Orden pendiente";
+  const type = operationTypes[operation.operation_type] || operation.operation_type;
+  row.appendChild(detailCell(type, kind, "", "Tipo"));
+  row.appendChild(textCell(operation.symbol, "", "Símbolo"));
   row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
+  const opened = operationalTime(operation.opened_at);
+  const openedMsc = typeof operation.opened_at === "string" ? Date.parse(operation.opened_at) : operation.opened_at;
+  row.appendChild(detailCell(price(operation.price_open), closedTradeBrokerTime(openedMsc), "numeric trade-price", "Open"));
+  row.appendChild(textCell(price(operation.price_current), "numeric", "Actual"));
+  row.appendChild(tradeLevelsCell({
+    ...operation, side: String(operation.operation_type).startsWith("sell") ? "short" : "long",
+    levels_basis: "current",
+  }));
+  const profit = operation.kind === "position" ? operation.floating_profit : null;
+  row.appendChild(textCell(operation.kind === "order" ? "No aplica" : money(profit, latestCurrency, true),
+    `numeric ${profit > 0 ? "positive-text" : profit < 0 ? "negative-text" : ""}`, "PnL flotante"));
+  return expandableRecordRows(row, [
+    ["Ticket", String(operation.ticket)],
+    ["Hora local", opened?.local || "No informada"],
+    ["Comentario", operation.comment || "Sin comentario"],
+  ], `operation-detail-${key}`, expandedOperationTickets, key);
+}
 
-  const openedAt = operation.opened_at ? toDate(operation.opened_at) : null;
-  const profit = document.createElement("td");
-  profit.className = "numeric operation-profit";
-  profit.setAttribute("data-label", "Resultado abierto");
-  if (operation.kind === "position" && Number.isFinite(operation.floating_profit)) {
-    profit.textContent = money(operation.floating_profit, latestCurrency, true);
-    if (operation.floating_profit > 0) profit.classList.add("positive");
-    else if (operation.floating_profit < 0) profit.classList.add("negative");
-  } else if (operation.kind === "order") {
-    profit.textContent = "No aplica";
-    profit.classList.add("na");
-  } else {
-    profit.textContent = "—";
-  }
-  row.appendChild(profit);
-  row.appendChild(textCell(
-    openedAt ? dateTimeFormatter.format(openedAt) : "No informada",
-    "",
-    "Hora",
-  ));
+const expandedRegistryRecords = new Set();
 
-  const detailRow = document.createElement("tr");
-  detailRow.className = "detail-row";
-  detailRow.id = `operation-detail-${operationKey}`;
-  detailRow.hidden = !expandedOperationTickets.has(operationKey);
-  const detailCellEl = document.createElement("td");
-  detailCellEl.colSpan = 6;
+function expandableRecordRows(row, fields, id, expanded, key) {
+  row.classList.add("closed-trade-row");
+  row.tabIndex = 0;
+  row.setAttribute("aria-controls", id);
+  row.setAttribute("aria-expanded", String(expanded.has(key)));
+  row.title = "Mostrar u ocultar detalle · clic, Enter o Espacio";
+  const detail = document.createElement("tr");
+  detail.className = "closed-trade-detail";
+  detail.id = id;
+  detail.hidden = !expanded.has(key);
+  const cell = document.createElement("td");
+  cell.className = "trade-detail-panel";
+  cell.colSpan = row.children.length;
   const list = document.createElement("dl");
-  const addDetail = (term, value) => {
-    const dt = document.createElement("dt");
-    dt.textContent = term;
-    const dd = document.createElement("dd");
-    dd.textContent = value;
-    list.append(dt, dd);
-  };
-  addDetail("Ticket", `#${operation.ticket}`);
-  addDetail("Magic", String(operation.magic_number));
-  addDetail("Precio de apertura", price(operation.price_open));
-  addDetail("Precio actual", price(operation.price_current));
-  addDetail("Stop loss", price(operation.stop_loss));
-  addDetail("Take profit", price(operation.take_profit));
-  addDetail("Comentario", operation.comment || "Sin comentario");
-  addDetail("Hora", openedAt
-    ? dateTimeFormatter.format(openedAt)
-    : "La fuente todavía no expone una hora validada.");
-  detailCellEl.appendChild(list);
-  detailRow.appendChild(detailCellEl);
-
-  const buttonCell = document.createElement("td");
-  buttonCell.setAttribute("data-label", "");
-  const button = document.createElement("button");
-  button.className = "detail-toggle";
-  button.type = "button";
-  button.dataset.operationTicket = operationKey;
-  button.setAttribute("aria-label", `Detalle de ${operation.symbol}, ${kind.toLowerCase()} ${ticket}`);
-  button.setAttribute("aria-controls", detailRow.id);
-  button.setAttribute("aria-expanded", String(!detailRow.hidden));
-  button.textContent = detailRow.hidden ? "Ver detalle" : "Ocultar detalle";
-  button.addEventListener("click", () => {
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    button.setAttribute("aria-expanded", String(!expanded));
-    button.textContent = expanded ? "Ver detalle" : "Ocultar detalle";
-    detailRow.hidden = expanded;
-    if (expanded) expandedOperationTickets.delete(operationKey);
-    else expandedOperationTickets.add(operationKey);
+  list.className = "trade-facts";
+  fields.forEach(([label, value]) => {
+    const group = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    group.append(term, description);
+    list.appendChild(group);
   });
-  buttonCell.appendChild(button);
-  row.appendChild(buttonCell);
-  detailRow.setAttribute("role", "row");
-  [...row.children, ...detailRow.children].forEach((cell) => cell.setAttribute("role", "cell"));
-  return [row, detailRow];
+  cell.appendChild(list);
+  detail.appendChild(cell);
+  // Resolve the live sibling: current rows are reconciled in place on every capture.
+  const toggle = () => {
+    const liveDetail = document.getElementById(id);
+    if (!liveDetail) return;
+    if (expanded.has(key)) expanded.delete(key);
+    else expanded.add(key);
+    row.setAttribute("aria-expanded", String(expanded.has(key)));
+    liveDetail.hidden = !expanded.has(key);
+  };
+  row.addEventListener("click", () => {
+    const selection = window.getSelection();
+    if (selection?.toString() && row.contains(selection.anchorNode)) return;
+    toggle();
+  });
+  row.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    if (!event.repeat) toggle();
+  });
+  return [row, detail];
 }
 
 function textCell(value, className = "", dataLabel = "") {
@@ -1319,13 +1829,16 @@ function price(value) {
   return Number.isFinite(value) ? priceFormatter.format(value) : "—";
 }
 
-function accountChartSeries(timeline, key, gapThreshold) {
+function accountChartSeries(timeline, key, gapThreshold, bucketWindow = null) {
   const data = [];
   let gaps = 0;
   timeline.forEach((item, index) => {
     const timestamp = item.at.getTime();
     const previous = index > 0 ? timeline[index - 1].at.getTime() : null;
-    if (previous !== null && timestamp - previous > gapThreshold) {
+    const missingBucket = bucketWindow && previous !== null
+      && Math.floor((timestamp - bucketWindow.fromMsc) / bucketWindow.bucketMsc)
+        - Math.floor((previous - bucketWindow.fromMsc) / bucketWindow.bucketMsc) > 1;
+    if (previous !== null && (missingBucket || timestamp - previous > gapThreshold)) {
       data.push([Math.max(previous + 1, timestamp - 1), null]);
       gaps += 1;
     }
@@ -1334,14 +1847,58 @@ function accountChartSeries(timeline, key, gapThreshold) {
   return { data, gaps };
 }
 
+async function loadAccountHistory() {
+  const request = ++accountHistoryRequest;
+  const value = document.getElementById("account-history-period").value;
+  const status = document.getElementById("account-chart-status");
+  if (value === "live") {
+    accountHistoryWindow = null; accountHistoryData = null;
+    status.textContent = "Evolución reciente";
+    renderChart(lastHistory, latestIntervalSeconds);
+    return;
+  }
+  try {
+    accountHistoryWindow = selectedTimeWindow(Number(value), document.getElementById("account-history-end").value);
+  } catch (error) { status.textContent = error.message; return; }
+  accountHistoryData = null;
+  accountChart?.clear();
+  status.textContent = "Consultando historial…";
+  chartEmpty.hidden = false; chartEmpty.textContent = "Consultando historial…";
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const parameters = new URLSearchParams({ from_msc: String(accountHistoryWindow.fromMsc), to_msc: String(accountHistoryWindow.toMsc) });
+    const response = await fetch(`/api/account-history?${parameters}`, { cache: "no-store", signal: controller.signal });
+    if (response.status === 401) { window.location.assign("/login"); return; }
+    if (!response.ok) throw new Error("Historial no disponible. Comprobá que el servidor y el receptor estén actualizados.");
+    const payload = await response.json();
+    if (request !== accountHistoryRequest) return;
+    if (!Array.isArray(payload.points) || !Number.isFinite(payload.bucket_msc)) throw new Error("Respuesta histórica inválida.");
+    accountHistoryData = payload;
+    status.textContent = payload.points.length ? `${payload.points.length} observaciones disponibles` : "Sin observaciones guardadas para este período";
+    status.title = "Muestras históricas conservadas, agrupadas por intervalo. No reconstruye equity entre capturas ni antes de comenzar a recopilar datos.";
+    renderChart(lastHistory, latestIntervalSeconds);
+  } catch (error) {
+    if (request !== accountHistoryRequest) return;
+    status.textContent = error.name === "AbortError" ? "La consulta tardó demasiado. Probá un período menor." : error.message;
+    chartEmpty.textContent = "No se pudo cargar el historial.";
+  } finally { window.clearTimeout(timeout); }
+}
+document.getElementById("account-history-apply").addEventListener("click", loadAccountHistory);
+
 function renderChart(history, intervalSeconds) {
+  if (accountHistoryWindow) {
+    if (!accountHistoryData) return;
+    history = accountHistoryData.points;
+    intervalSeconds = accountHistoryData.bucket_msc / 1000;
+  }
   const timeline = history
     .map((item) => ({ ...item, at: toDate(item.observed_at) }))
     .filter((item) => item.at && Number.isFinite(item.balance) && Number.isFinite(item.equity))
     .sort((left, right) => left.at - right.at);
-  if (timeline.length < 2) {
+  if (timeline.length < (accountHistoryWindow ? 1 : 2)) {
     chartEmpty.hidden = false;
-    chartEmpty.textContent = "Recolectando observaciones…";
+    chartEmpty.textContent = accountHistoryWindow ? "Sin observaciones guardadas en este período." : "Recolectando observaciones…";
     if (accountChart) accountChart.clear();
     chart.setAttribute("aria-label", "Evolución reciente de balance y equity");
     chartSpan.textContent = "";
@@ -1366,8 +1923,9 @@ function renderChart(history, intervalSeconds) {
   const endAt = timeline[timeline.length - 1].at;
   const timeRange = Math.max(1, endAt.getTime() - startAt.getTime());
   const gapThreshold = intervalSeconds * 2.5 * 1000;
-  const balance = accountChartSeries(timeline, "balance", gapThreshold);
-  const equity = accountChartSeries(timeline, "equity", gapThreshold);
+  const bucketWindow = accountHistoryWindow ? { ...accountHistoryWindow, bucketMsc: accountHistoryData.bucket_msc } : null;
+  const balance = accountChartSeries(timeline, "balance", gapThreshold, bucketWindow);
+  const equity = accountChartSeries(timeline, "equity", gapThreshold, bucketWindow);
   const gaps = balance.gaps;
   const spanSeconds = Math.max(0, timeRange / 1000);
   const span = elapsed(spanSeconds);
@@ -1381,13 +1939,18 @@ function renderChart(history, intervalSeconds) {
   );
   const { ink, grid: gridColor, axis, surface, accent } = resolvedChartTheme();
   accountChart ||= window.echarts.init(chart);
+  const windowKey = accountHistoryWindow ? JSON.stringify(accountHistoryWindow) : "live";
+  const previousZoom = accountChartWindowKey === windowKey ? accountChart.getOption().dataZoom?.[0] : null;
+  const zoom = previousZoom ? { start: previousZoom.start, end: previousZoom.end } : { start: 0, end: 100 };
+  accountChartWindowKey = windowKey;
   const seriesTooltip = {
     valueFormatter: (value) => money(Array.isArray(value) ? value[1] : value, latestCurrency),
   };
   accountChart.setOption({
     animationDuration: 250,
     aria: { enabled: true },
-    grid: { left: 12, right: 12, top: 14, bottom: 16, containLabel: true },
+    grid: { left: 12, right: 12, top: 14, bottom: 42, containLabel: true },
+    dataZoom: [{ type: "inside", ...zoom }, { type: "slider", height: 16, bottom: 4, ...zoom }],
     textStyle: { color: ink },
     tooltip: {
       trigger: "axis",
@@ -1398,9 +1961,11 @@ function renderChart(history, intervalSeconds) {
     },
     xAxis: {
       type: "time",
-      min: startAt.getTime(),
-      max: endAt.getTime(),
-      axisLabel: { color: ink, hideOverlap: true, formatter: (value) => timeFormatter.format(new Date(value)) },
+      min: accountHistoryWindow?.fromMsc ?? startAt.getTime(),
+      max: accountHistoryWindow?.toMsc ?? endAt.getTime(),
+      axisLabel: { color: ink, hideOverlap: true, formatter: (value) => accountHistoryWindow
+        ? new Intl.DateTimeFormat(LOCALE, { day: "2-digit", month: "2-digit" }).format(new Date(value))
+        : timeFormatter.format(new Date(value)) },
       axisLine: { lineStyle: { color: axis } },
       axisTick: { lineStyle: { color: axis } },
       splitLine: { show: false },
@@ -1418,7 +1983,7 @@ function renderChart(history, intervalSeconds) {
         type: "line",
         data: balance.data,
         connectNulls: false,
-        showSymbol: false,
+        showSymbol: timeline.length === 1,
         itemStyle: { color: ink },
         lineStyle: { color: ink, width: 2, type: "dashed" },
         emphasis: { disabled: true },
@@ -1436,7 +2001,7 @@ function renderChart(history, intervalSeconds) {
         type: "line",
         data: equity.data,
         connectNulls: false,
-        showSymbol: false,
+        showSymbol: timeline.length === 1,
         itemStyle: { color: accent },
         lineStyle: { color: accent, width: 2 },
         emphasis: { disabled: true },
@@ -1447,6 +2012,23 @@ function renderChart(history, intervalSeconds) {
 }
 
 let retryMultiplier = 1;
+
+async function loadRuntimeConfig() {
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (response.status === 401) {
+      window.location.assign("/login");
+      return;
+    }
+    if (!response.ok) return;
+    const config = await response.json();
+    if (Number.isInteger(config.broker_utc_offset_minutes)) {
+      brokerUtcOffsetMinutes = config.broker_utc_offset_minutes;
+    }
+  } catch (_) {
+    brokerUtcOffsetMinutes = null;
+  }
+}
 
 async function performRefresh() {
   const controller = new AbortController();
@@ -1503,17 +2085,8 @@ function activateTradingScope(scope) {
   if (!["current", "closed", "registry"].includes(scope)) return;
   const scopeChanged = tradingScope !== scope;
   tradingScope = scope;
-  document.querySelectorAll(".trading-scope").forEach((button) => {
-    const active = button.dataset.tradingScope === scope;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
   tradingCurrentPanel.hidden = scope !== "current";
   tradingHistoryPanel.hidden = scope === "current";
-  if (scope === "current") {
-    renderOperations();
-    return;
-  }
   if (scopeChanged) {
     historyRecords = [];
     historyNextCursor = null;
@@ -1524,6 +2097,10 @@ function activateTradingScope(scope) {
     metricsRequest += 1;
     setHistoryLoading(false);
   }
+  if (scope === "current") {
+    renderOperations();
+    return;
+  }
   renderHistory();
   if (!historyInitialized) loadTradingHistory();
   if (scope === "closed") {
@@ -1533,7 +2110,8 @@ function activateTradingScope(scope) {
 
 function activateView(view) {
   const titles = {
-    overview: "Resumen", trading: "Trading", activity: "Actividad",
+    overview: "Resumen", trading: "Trading", financial: "Performance financiera",
+    execution: "Performance de ejecución", activity: "Actividad",
   };
   setText(document.getElementById("page-title"), titles[view]);
   document.querySelectorAll(".view-tab").forEach((tab) => {
@@ -1543,13 +2121,18 @@ function activateView(view) {
     tab.tabIndex = active ? 0 : -1;
   });
   document.querySelectorAll(".dashboard-view").forEach((panel) => {
-    panel.hidden = panel.id !== `${view}-view`;
+    const panelView = ["financial", "execution"].includes(view) ? "trading" : view;
+    panel.hidden = panel.id !== `${panelView}-view`;
+    if (!panel.hidden) panel.setAttribute("aria-labelledby", `tab-${view}`);
   });
   activeView = view;
-  if (activeView === "trading") activateTradingScope(tradingScope);
+  if (["trading", "financial", "execution"].includes(view)) {
+    activateTradingScope({ trading: "current", financial: "closed", execution: "registry" }[view]);
+  }
   else if (activeView === "activity") renderActivity();
   else {
     renderChart(lastHistory, latestIntervalSeconds);
+    refreshEaRanking();
     window.requestAnimationFrame(() => accountChart?.resize());
   }
 }
@@ -1572,26 +2155,16 @@ document.querySelectorAll(".view-tab").forEach((button) => {
   });
 });
 
-document.querySelectorAll(".trading-scope").forEach((button) => {
-  button.addEventListener("click", () => {
-    activateTradingScope(button.dataset.tradingScope);
-    history.replaceState(null, "", `#trading/${button.dataset.tradingScope}`);
-  });
-});
+function viewFromRoute(route) {
+  const aliases = {
+    operations: "trading", history: "execution",
+    "trading/current": "trading", "trading/closed": "financial", "trading/registry": "execution",
+  };
+  const view = aliases[route] || route;
+  return ["overview", "trading", "financial", "execution", "activity"].includes(view) ? view : "overview";
+}
 
-window.addEventListener("hashchange", () => {
-  const route = location.hash.slice(1);
-  if (route === "operations") {
-    activateTradingScope("current");
-    activateView("trading");
-  } else if (route === "history") {
-    activateTradingScope("registry");
-    activateView("trading");
-  } else if (route.startsWith("trading/")) {
-    activateTradingScope(route.split("/")[1]);
-    activateView("trading");
-  } else if (["overview", "trading", "activity"].includes(route)) activateView(route);
-});
+window.addEventListener("hashchange", () => activateView(viewFromRoute(location.hash.slice(1))));
 
 let chartResizeFrame = null;
 window.addEventListener("resize", () => {
@@ -1601,6 +2174,10 @@ window.addEventListener("resize", () => {
     if (accountChart && activeView === "overview") accountChart.resize();
     chartResizeFrame = null;
   });
+});
+
+document.getElementById("secondary-metrics").addEventListener("toggle", (event) => {
+  if (event.currentTarget.open) window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
 });
 
 new MutationObserver(() => {
@@ -1617,7 +2194,16 @@ const FILTER_STORE = "tradinglab-dashboard-filters";
 
 function loadStoredFilters(scope) {
   currentFilterScope = scope;
+  accountHistoryRequest += 1;
+  accountHistoryWindow = null;
+  accountHistoryData = null;
+  accountChartWindowKey = null;
+  document.getElementById("account-history-period").value = "live";
+  document.getElementById("account-chart-status").textContent = "Evolución reciente";
   expandedOperationTickets.clear();
+  expandedRegistryRecords.clear();
+  selectedEaMagics.clear();
+  comparedEaMagics.clear();
   lastObservedAt = null;
   try {
     const stored = JSON.parse(localStorage.getItem(FILTER_STORE) || "{}");
@@ -1655,18 +2241,25 @@ clearFilter.addEventListener("click", () => {
 });
 historyFilters.addEventListener("submit", (event) => {
   event.preventDefault();
+  document.getElementById("ea-selector").open = false;
   loadTradingHistory();
 });
 historyReset.addEventListener("click", () => {
   historyPeriod.value = "7";
   historyMagic.value = "";
   historyMagic.setCustomValidity("");
+  selectedEaMagics.clear();
+  comparedEaMagics.clear();
+  document.getElementById("history-end-date").value = "";
+  renderComparisonOptions();
+  updateEaSelectionLabel();
   loadTradingHistory();
 });
 historyEntity.addEventListener("change", () => {
   historyRecords = [];
   historyNextCursor = null;
   historyNextCursors = { deals: null, orders: null };
+  historyCoverageByEntity = {};
   historyInitialized = false;
   historyQuery = null;
   historyRequest += 1;
@@ -1680,13 +2273,8 @@ function scheduleRefresh() {
   }, latestIntervalSeconds * 1000 * retryMultiplier);
 }
 
-const initialView = location.hash.slice(1);
-if (initialView === "operations" || initialView === "history" || initialView.startsWith("trading/")) {
-  const initialScope = initialView === "history" ? "registry"
-    : initialView === "operations" ? "current" : initialView.split("/")[1];
-  activateTradingScope(initialScope);
-  activateView("trading");
-} else if (["overview", "trading", "activity"].includes(initialView)) {
-  activateView(initialView);
+function initializeDashboard() {
+  activateView(viewFromRoute(location.hash.slice(1)));
+  refresh().finally(scheduleRefresh);
 }
-refresh().finally(scheduleRefresh);
+loadRuntimeConfig().finally(initializeDashboard);

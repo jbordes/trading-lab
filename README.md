@@ -4,7 +4,7 @@ Laboratorio para investigar, preparar, validar e incubar estrategias de trading 
 
 ## Estado
 
-El proyecto se encuentra en fase de fundación y validación de arquitectura. La versión vigente es la Arquitectura 2.4 y el entorno de desarrollo utiliza el Harness 0.1.
+El proyecto se encuentra en fase de fundación y validación de arquitectura. La versión vigente es la Arquitectura 2.4 y el entorno de desarrollo utiliza el Harness 0.2.
 
 ## Documentación principal
 
@@ -14,7 +14,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Guía de decisiones de arquitectura](docs/architecture/architecture-decisions-guide.md)
 - [Pipeline SQX → MT5 → Incubación](docs/architecture/sqx-mt5-incubation-pipeline.md)
 - [Workflow de TradingLab MT5 Runner](docs/architecture/tradinglab-mt5-runner-workflow.md)
-- [Análisis y diseño del Harness 0.1](docs/architecture/development-harness-0.1.md)
+- [Análisis y diseño del Harness 0.2](docs/architecture/development-harness-0.2.md)
 - [Dashboard local de riesgo](docs/architecture/live-risk-dashboard.md)
 - [Entorno de desarrollo](docs/development/environment.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
@@ -91,3 +91,8 @@ Con [uv](https://docs.astral.sh/uv/) instalado:
 uv sync --locked
 uv run python scripts/check.py full
 ```
+
+`full` es el gate que GitHub Actions ejecuta en cada pull request. Durante el
+trabajo local se usa `scripts/check.py docs` o `scripts/check.py fast` más los
+tests afectados; la suite completa local se reserva para cambios transversales o
+diagnósticos concretos.

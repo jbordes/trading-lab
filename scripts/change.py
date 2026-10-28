@@ -54,15 +54,19 @@ def recommend(paths: list[str]) -> dict[str, object]:
     elif "sin clasificar" in groups:
         advice = (
             "Revisar las rutas no clasificadas antes de elegir pruebas. "
-            "Si persiste la incertidumbre, usar check.py full al cerrar el cambio."
+            "Usar check.py fast y pruebas dirigidas cuando se determine el alcance; "
+            "reservar full local para impacto transversal o una incertidumbre concreta."
         )
     else:
         advice = (
             "Durante el trabajo: check.py fast y tests dirigidos al comportamiento cambiado. "
-            "Antes del PR: check.py full, salvo resultado vigente para el mismo cambio."
+            "El PR ejecuta check.py full en CI; no repetirlo localmente por rutina."
         )
         if "harness" in groups:
-            advice += " Revisar impacto en portabilidad; tests dirigidos en tests/harness."
+            advice += (
+                " Revisar impacto en portabilidad y ejecutar tests dirigidos en tests/harness; "
+                "usar full local si cambia el pipeline de validación o el alcance es transversal."
+            )
     return {
         "tipo": groups[0] if len(groups) == 1 else "mixto",
         "grupos": groups,

@@ -1,10 +1,36 @@
-# TradingLab 2.0 — Análisis y diseño del Harness 0.1
+# TradingLab 2.0 — Análisis y diseño del Harness 0.2
 
-**Fecha:** 12 de octubre de 2026
+**Fecha inicial:** 12 de octubre de 2026
 
-**Estado:** Vigente desde Harness 0.1
+**Versión 0.2 vigente desde:** 25 de octubre de 2026
+
+**Estado:** Vigente
 
 **Alcance:** entorno de desarrollo y controles básicos del repositorio
+
+## Evolución de 0.1 a 0.2
+
+Harness 0.1 estableció el núcleo portable en Python, las fronteras entre Git y
+storage, la bitácora diaria, los ADR, Ruff, CI multiplataforma y el flujo de ramas
+cortas con merge humano.
+
+Harness 0.2 fue introducido materialmente por los cambios del 25 de octubre,
+aunque el identificador visible no se actualizó en ese momento. Incorpora:
+
+- modo `docs` para validar cambios exclusivamente documentales sin ejecutar
+  tests de producto;
+- alcance de CI basado en el tipo de cambio, conservando `full` como gate para
+  cambios de código;
+- `scripts/change.py` como inspección de solo lectura que recomienda validaciones
+  proporcionales sin ejecutarlas ni entrar en bucles;
+- agentes de costo acotado para paquetes Git mecánicos y documentación ya
+  decidida, bajo revisión del agente principal;
+- política local eficiente: `fast` más tests afectados como camino habitual y
+  `full` local solo para cambios transversales o diagnósticos concretos;
+- suite completa en GitHub Actions como condición previa al merge humano.
+
+La corrección tardía del identificador no crea una nueva versión: hace coincidir
+README, documentación y salida del harness con capacidades que ya eran 0.2.
 
 ## 1. Contexto
 
@@ -27,15 +53,15 @@ Por estas razones se adopta un harness pequeño, portable y evolutivo. Se evita 
 
 - Reglas de simplicidad, aislamiento entre proyectos y seguridad de Git.
 - Prohibición de secretos y artefactos operativos dentro del repositorio.
-- Validación proporcional durante el desarrollo y suite completa sobre el diff
-  final antes del pull request.
+- Validación proporcional durante el desarrollo y suite completa en CI antes del
+  merge.
 - Pull requests con revisión y merge humano.
 - Automatización determinista en scripts testeables.
 - Skills únicamente después de estabilizar el procedimiento manual.
 
 No se reutilizan configuraciones de modelos, sonidos, permisos de una máquina, comandos npm, agentes de Fenix ni instrucciones para desactivar el sandbox.
 
-## 4. Decisiones del Harness 0.1
+## 4. Decisiones del Harness
 
 ### Núcleo portable
 
@@ -49,8 +75,9 @@ Se fija Python 3.14 porque es una rama estable con mantenimiento activo en la fe
   omite Ruff y tests de producto.
 - `fast`: controles baratos adecuados para el ciclo habitual.
 - tests dirigidos: durante la implementación, solo para el comportamiento tocado.
-- `full`: controles rápidos más todos los tests; una vez sobre el diff final antes
-  del pull request y nuevamente solo si cambios posteriores afectan su validez.
+- `full`: controles rápidos más todos los tests; GitHub Actions lo ejecuta como
+  gate del pull request. Localmente se reserva para cambios transversales,
+  modificaciones del pipeline o diagnósticos concretos.
 - validación futura de artefactos: ejecución explícita, nunca automática al abrir cada sesión.
 
 No se recorren `_storage/` ni grandes colecciones de resultados en los checks habituales. Un inventario podrá utilizar caché como optimización, pero toda ingestión o frontera de confianza deberá recalcular SHA-256.
@@ -76,6 +103,9 @@ roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 - `AGENTS.md`: política operativa neutral respecto del agente utilizado.
 - `.python-version`, `pyproject.toml` y `uv.lock`: toolchain portable y reproducible.
 - `scripts/check.py`: entrada única para validaciones.
+- `scripts/change.py`: inspección de cambios y recomendación proporcional de
+  validaciones, sin ejecutar acciones.
+- `scripts/ci_scope.py`: selección conservadora del alcance de CI.
 - `tests/harness/`: tests de las reglas críticas del harness.
 - `.github/workflows/quality.yml`: CI multiplataforma y de solo lectura.
 - `.github/pull_request_template.md`: checklist de revisión.
@@ -86,10 +116,11 @@ roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 - `.env.example`: contrato seguro de configuración, actualmente sin variables requeridas.
 - `docs/development/coding-standards.md`: contrato pragmático de estructura, seguridad y pruebas del código.
 - Ruff: formato y lint portable integrado en los checks habituales.
+- `.codex/agents/`: roles acotados para Git y registro documental mecánico.
 
 ## 6. Cobertura de requisitos de la arquitectura
 
-| Requisito arquitectónico | Mecanismo del Harness 0.1 | Estado |
+| Requisito arquitectónico | Mecanismo del Harness 0.2 | Estado |
 |---|---|---|
 | Fuentes de verdad separadas | Reglas en `AGENTS.md` y fronteras verificadas de Git/storage | Cubierto |
 | Historia de trabajo en bitácora | `daily-v1`, generador, validación, fecha Madrid e inmutabilidad histórica | Cubierto |
@@ -98,7 +129,7 @@ roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 | Secretos fuera de Git | `.gitignore`, `.env.example` y detección de patrones evidentes | Cubierto como primera barrera; requiere revisión humana |
 | Portabilidad | Python + uv y CI Windows/macOS/Linux | Cubierto |
 | Calidad de código | Estándar versionado, Ruff y checklist de revisión | Cubierto como base incremental |
-| Criterio de finalización | Check completo, documentación y ADR; bitácora diaria por flujo independiente | Cubierto |
+| Criterio de finalización | Validación local proporcional, gate completo de CI, documentación y ADR; bitácora diaria por flujo independiente | Cubierto |
 | Schemas y fixtures de dominio | Requiere contratos y archivos reales del piloto | Postergado con disparador explícito |
 | Hashes, manifests y lineage | Requiere seleccionar el expediente piloto | Postergado con disparador explícito |
 | Backup y restauración | Requiere decidir catálogo y storage autoritativos | Postergado con disparador explícito |
@@ -117,7 +148,7 @@ roles usan handoffs breves y se evaluarán antes de ampliar su alcance.
 
 ## 8. Criterios de aceptación
 
-El Harness 0.1 queda aceptado cuando:
+El Harness 0.2 queda aceptado cuando:
 
 1. puede prepararse con uv sin una instalación previa de Python;
 2. el mismo check completo pasa en Windows, macOS y Linux;
@@ -126,3 +157,24 @@ El Harness 0.1 queda aceptado cuando:
 5. sus reglas críticas tienen tests;
 6. existe un pull request revisable y el merge queda bajo control humano.
 7. las features no modifican bitácoras diarias, solo las entradas de hoy pueden publicarse directamente en `main` y las decisiones durables quedan enlazadas mediante ADR.
+
+## 9. Política de versionado
+
+La versión identifica capacidades operativas del harness, no cada edición de sus
+textos. Debe incrementarse cuando un cambio introduce o retira comandos, roles,
+gates o flujos que modifican materialmente el trabajo diario. Correcciones,
+refinamientos compatibles y documentación de una capacidad ya aceptada permanecen
+en la misma versión.
+
+Todo cambio de versión actualiza en un mismo PR:
+
+1. este documento y su nombre;
+2. la versión vigente y el enlace del `README.md`;
+3. la salida de `scripts/check.py`;
+4. la documentación operativa afectada;
+5. una prueba o check que impida referencias vigentes inconsistentes.
+
+Los ADR y bitácoras históricos conservan la versión que describían. Harness 0.3
+solo se propondrá ante otra evolución material, por ejemplo nuevos comandos o
+roles estables, selección automática de tests por dependencias, o un cambio
+incompatible en el flujo de CI y revisión.

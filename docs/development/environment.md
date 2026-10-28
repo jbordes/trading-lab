@@ -42,13 +42,13 @@ Validación rápida durante el trabajo:
 uv run python scripts/check.py fast
 ```
 
-Validación completa antes de solicitar revisión:
+Validación completa manual, solo cuando el alcance o un diagnóstico la justifique:
 
 ```text
 uv run python scripts/check.py full
 ```
 
-La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos, enlaces Markdown, formato y lint de Python con Ruff. Durante la implementación se ejecutan aparte solo los tests relacionados con el cambio. La validación completa agrega todos los tests del harness y del producto y se ejecuta una vez sobre el diff final antes del pull request; solo se repite si el diff cambia de forma que pueda invalidarla.
+La validación rápida comprueba estructura, fronteras de Git/storage, archivos prohibidos, tamaño, UTF-8, conflictos, patrones evidentes de secretos, enlaces Markdown, formato y lint de Python con Ruff. Durante la implementación se ejecutan aparte solo los tests relacionados con el cambio. GitHub Actions agrega todos los tests del harness y del producto mediante `full` y actúa como gate obligatorio del pull request. No se repite localmente por rutina: se reserva para cambios transversales, modificaciones del pipeline, impacto sobre la mayoría de la suite o diagnóstico concreto de CI.
 
 Las reglas para estructurar, probar y proteger código nuevo se encuentran en [Estándares de desarrollo de código](coding-standards.md).
 
@@ -74,9 +74,9 @@ Las decisiones durables o con alternativas relevantes se registran en `docs/adr/
 2. Crear una rama corta `feature/*`, `fix/*`, `docs/*` o `chore/*`.
 3. Implementar y ejecutar `docs`, `fast` y tests dirigidos según el alcance.
 4. Actualizar los ADR que correspondan; la bitácora diaria se mantiene por el flujo separado de `main`.
-5. Revisar el diff final y ejecutar una vez la validación completa.
+5. Revisar el diff final y confirmar las validaciones locales proporcionales. Ejecutar `full` local solo si el alcance o un diagnóstico concreto lo requiere.
 6. Publicar la rama y abrir un pull request.
-7. Esperar que CI pase en Windows, macOS y Linux.
+7. Esperar que CI ejecute la validación completa y pase en Windows, macOS y Linux.
 8. Realizar el merge manualmente después de la revisión humana.
 
 El workflow de CI tiene permisos de solo lectura y no ejecuta auto-merge. La ruleset de GitHub deberá exigir pull request y el check `Quality` para cambios normales, bloquear force-push y contemplar únicamente la excepción estrecha de bitácoras diarias descrita arriba.

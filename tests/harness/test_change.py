@@ -24,6 +24,14 @@ class ChangeInspectionTest(unittest.TestCase):
             with self.subTest(paths=paths):
                 self.assertEqual(change.recommend(paths)["tipo"], expected)
 
+    def test_code_recommendation_delegates_full_suite_to_ci(self) -> None:
+        recommendation = str(change.recommend(["src/tradinglab/app.py"])["recomendación"])
+
+        self.assertIn("check.py fast", recommendation)
+        self.assertIn("tests dirigidos", recommendation)
+        self.assertIn("check.py full en CI", recommendation)
+        self.assertNotIn("Antes del PR: check.py full", recommendation)
+
     def test_git_includes_staged_unstaged_deleted_and_untracked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -78,6 +78,26 @@ Respuestas principales: `200`, `400 invalid_metrics_query`, `401
 authentication_required`, `404 metrics_unavailable`, `503
 metrics_unavailable`.
 
+### `GET /api/position-cycles`
+
+Devuelve una página de ciclos de posición reconciliados a través de la sesión del
+dashboard, sin entregar al navegador la credencial interna del receptor v2.
+
+Parámetros opcionales:
+
+- `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `limit`: tamaño de página `1..100`; valor predeterminado `50`.
+- `cursor`: cursor opaco recibido como `next_cursor`.
+
+La respuesta contiene `account_id`, `source_id`, `owner_magic`, `cycles` y
+`next_cursor`. Los importes decimales se conservan como texto para no perder
+precisión. La ruta prepara el consumo autenticado, pero no implica que un ciclo
+alimente métricas ni que exista evidencia real validada en el piloto.
+
+Respuestas principales: `200`, `400 invalid_position_cycles_query`, `401
+authentication_required`, `404 position_cycles_unavailable`, `503
+position_cycles_unavailable`.
+
 ### `GET /health`
 
 Devuelve únicamente `{"status": ...}`. No requiere sesión y no expone datos de

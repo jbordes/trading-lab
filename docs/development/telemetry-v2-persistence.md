@@ -117,10 +117,10 @@ No calcula métricas ni devuelve posiciones inferidas desde rangos incompletos.
 
 El adaptador `LoopbackV2HistoryClient` valida estrictamente ambas respuestas antes
 de convertir deals o ciclos a modelos del dashboard. Los deals continúan
-alimentando `/api/deals` y `/api/metrics`; los ciclos quedan preparados para el
-contrato de métricas definitivo, pero todavía no alteran esas fórmulas. Por lo tanto,
-el navegador solo accede mediante la sesión autenticada del dashboard; nunca recibe
-la credencial interna de lectura ni las de los collectors.
+alimentando `/api/deals` y `/api/metrics`; los ciclos se exponen de manera acotada
+por `/api/position-cycles`, pero todavía no alteran esas fórmulas ni tienen una
+vista visual. El navegador solo accede mediante la sesión autenticada del
+dashboard; nunca recibe la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros
 
@@ -134,8 +134,9 @@ la credencial interna de lectura ni las de los collectors.
    dashboard ya están implementados de forma opt-in.
 4. Validar observaciones `position_reconcile` reales en demo y contrastarlas con
    MT5 antes de consumir ciclos en métricas.
-5. La consulta interna de ciclos y su cliente validado están implementados. Falta
-   aprobar el contrato de métricas/vista antes de exponerlos al navegador.
+5. La consulta interna de ciclos, su cliente validado y el proxy autenticado del
+   dashboard están implementados. Falta validar evidencia real y aprobar el
+   contrato de métricas/vista antes de presentarlos o calcular rendimiento.
 
 ## Operación piloto
 

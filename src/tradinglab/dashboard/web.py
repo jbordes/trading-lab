@@ -70,6 +70,20 @@ class DealHistoryProvider(Protocol):
     ) -> TelemetryPerformance: ...
 
 
+class PositionCyclePage(Protocol):
+    def as_dict(self) -> dict[str, object]: ...
+
+
+class PositionCycleProvider(Protocol):
+    def position_cycles(
+        self,
+        *,
+        owner_magic: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> PositionCyclePage: ...
+
+
 def _read_static(filename: str) -> tuple[bytes, str]:
     """Read a static file from disk, caching bytes and a size+mtime ETag."""
     path = STATIC_ROOT / filename
@@ -89,6 +103,7 @@ def create_server(
     port: int,
     dashboard_token: str,
     history_provider: DealHistoryProvider | None = None,
+    position_cycle_provider: PositionCycleProvider | None = None,
     max_connections: int = 16,
     request_timeout: float = 5.0,
 ) -> BoundedHTTPServer:
@@ -205,6 +220,34 @@ def create_server(
                     )
                     return
                 self._send_json(result.as_dict())
+                return
+            if path == "/api/position-cycles":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if position_cycle_provider is None:
+                    self._send_json(
+                        {"error": "position_cycles_unavailable"}, status=HTTPStatus.NOT_FOUND
+                    )
+                    return
+                try:
+                    cycle_query = self._position_cycle_query(raw_query)
+                    page = position_cycle_provider.position_cycles(**cycle_query)
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_position_cycles_query"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "position_cycles_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json(page.as_dict())
                 return
             if path == "/health":
                 state = service.state()
@@ -421,6 +464,43 @@ def create_server(
                 "magic_number": values.get("magic_number", [None])[0],
                 "limit": limit,
                 "cursor": values.get("cursor", [None])[0],
+            }
+
+        @staticmethod
+        def _position_cycle_query(raw_query: str) -> dict[str, Any]:
+            values = parse_qs(
+                raw_query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=3,
+            )
+            if not set(values) <= {"owner_magic", "limit", "cursor"}:
+                raise ValueError("Parámetros de ciclos inválidos")
+            if any(len(items) != 1 for items in values.values()):
+                raise ValueError("Parámetros de ciclos repetidos")
+            limit_text = values.get("limit", ["50"])[0]
+            if (
+                not limit_text.isascii()
+                or not limit_text.isdecimal()
+                or str(int(limit_text)) != limit_text
+                or not 1 <= int(limit_text) <= 100
+            ):
+                raise ValueError("Límite de ciclos inválido")
+            owner_magic = values.get("owner_magic", [None])[0]
+            if owner_magic is not None:
+                try:
+                    parsed_magic = int(owner_magic)
+                except ValueError as exc:
+                    raise ValueError("Magic propietario inválido") from exc
+                if str(parsed_magic) != owner_magic or not -(2**63) <= parsed_magic < 2**63:
+                    raise ValueError("Magic propietario inválido")
+            cursor = values.get("cursor", [None])[0]
+            if cursor == "":
+                raise ValueError("Cursor de ciclos inválido")
+            return {
+                "owner_magic": owner_magic,
+                "limit": int(limit_text),
+                "cursor": cursor,
             }
 
         def _send_not_modified(self, etag: str) -> None:

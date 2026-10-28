@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from collections import namedtuple
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,8 +33,16 @@ from tradinglab.dashboard.telemetry import (  # noqa: E402
     TelemetryDealPage,
     TelemetryPerformance,
 )
+from tradinglab.dashboard.telemetry_v2 import (  # noqa: E402
+    TelemetryPositionCycle,
+    TelemetryPositionCyclePage,
+)
 from tradinglab.dashboard.web import create_server  # noqa: E402
 from tradinglab.metrics import calculate_closed_deal_metrics  # noqa: E402
+from tradinglab.metrics.position_cycles import (  # noqa: E402
+    CycleLifecycle,
+    PositionCycle,
+)
 
 Account = namedtuple(
     "Account",
@@ -96,6 +105,7 @@ class FakeDealHistoryProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
         self.performance_calls: list[dict[str, object]] = []
+        self.position_cycle_calls: list[dict[str, object]] = []
 
     def deal_history(self, **query: object) -> TelemetryDealPage:
         self.calls.append(query)
@@ -139,6 +149,35 @@ class FakeDealHistoryProvider:
             to_msc=page.to_msc,
             magic_number=page.magic_number,
             selection=calculate_closed_deal_metrics(page.deals),
+        )
+
+    def position_cycles(self, **query: object) -> TelemetryPositionCyclePage:
+        self.position_cycle_calls.append(query)
+        cycle = PositionCycle(
+            account_id="account-demo",
+            position_id="42",
+            owner_magic="11122",
+            observed_magics=("11122",),
+            started_at_msc=999001,
+            last_event_at_msc=999002,
+            lifecycle=CycleLifecycle.CLOSED,
+            remaining_signed_volume=Decimal("0.0"),
+            observed_net_result=Decimal("0.69"),
+            deal_tickets=("1", "2"),
+            exclusions=(),
+        )
+        return TelemetryPositionCyclePage(
+            account_id="account-demo",
+            source_id="demo-terminal-01",
+            owner_magic=query["owner_magic"],
+            cycles=(
+                TelemetryPositionCycle(
+                    message_id=3,
+                    captured_at="2026-10-20T12:00:00.000000Z",
+                    cycle=cycle,
+                ),
+            ),
+            next_cursor=None,
         )
 
 
@@ -679,16 +718,22 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             port=0,
             dashboard_token=ACCESS,
             history_provider=provider,
+            position_cycle_provider=provider,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}"
         route = f"{base_url}/api/deals?from_msc=999000&to_msc=1000000&magic_number=11122"
+        cycles_route = f"{base_url}/api/position-cycles?owner_magic=11122&limit=25"
         try:
             with self.assertRaises(urllib.error.HTTPError) as unauthorized:
                 urllib.request.urlopen(route, timeout=2)
             self.assertEqual(unauthorized.exception.code, 401)
             unauthorized.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as unauthorized_cycles:
+                urllib.request.urlopen(cycles_route, timeout=2)
+            self.assertEqual(unauthorized_cycles.exception.code, 401)
+            unauthorized_cycles.exception.close()
 
             opener = authenticated_opener(base_url)
             with opener.open(route, timeout=2) as response:
@@ -705,6 +750,17 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             self.assertEqual(metrics["trade_count"], 1)
             self.assertAlmostEqual(metrics["net_profit"], 0.69)
             self.assertEqual(provider.performance_calls[0]["magic_number"], "11122")
+            with opener.open(cycles_route, timeout=2) as response:
+                cycles = json.loads(response.read())
+            self.assertEqual(cycles["cycles"][0]["cycle"]["position_id"], "42")
+            self.assertEqual(cycles["cycles"][0]["cycle"]["observed_net_result"], "0.69")
+            self.assertTrue(cycles["cycles"][0]["cycle"]["eligible_for_autonomous_metrics"])
+            self.assertEqual(provider.position_cycle_calls[0]["owner_magic"], "11122")
+            self.assertEqual(provider.position_cycle_calls[0]["limit"], 25)
+            with self.assertRaises(urllib.error.HTTPError) as invalid_cycles:
+                opener.open(f"{base_url}/api/position-cycles?owner_magic=01", timeout=2)
+            self.assertEqual(invalid_cycles.exception.code, 400)
+            invalid_cycles.exception.close()
             with self.assertRaises(urllib.error.HTTPError) as invalid:
                 opener.open(f"{base_url}/api/deals?from_msc=1&to_msc=1", timeout=2)
             self.assertEqual(invalid.exception.code, 400)

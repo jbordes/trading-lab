@@ -87,6 +87,26 @@ class TelemetryPositionCycle:
     captured_at: str
     cycle: PositionCycle
 
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "message_id": self.message_id,
+            "captured_at": self.captured_at,
+            "cycle": {
+                "account_id": self.cycle.account_id,
+                "position_id": self.cycle.position_id,
+                "owner_magic": self.cycle.owner_magic,
+                "observed_magics": self.cycle.observed_magics,
+                "started_at_msc": self.cycle.started_at_msc,
+                "last_event_at_msc": self.cycle.last_event_at_msc,
+                "lifecycle": self.cycle.lifecycle.value,
+                "remaining_signed_volume": str(self.cycle.remaining_signed_volume),
+                "observed_net_result": str(self.cycle.observed_net_result),
+                "deal_tickets": self.cycle.deal_tickets,
+                "exclusions": tuple(reason.value for reason in self.cycle.exclusions),
+                "eligible_for_autonomous_metrics": (self.cycle.eligible_for_autonomous_metrics),
+            },
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class TelemetryPositionCyclePage:
@@ -95,6 +115,15 @@ class TelemetryPositionCyclePage:
     owner_magic: str | None
     cycles: tuple[TelemetryPositionCycle, ...]
     next_cursor: str | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "account_id": self.account_id,
+            "source_id": self.source_id,
+            "owner_magic": self.owner_magic,
+            "cycles": [cycle.as_dict() for cycle in self.cycles],
+            "next_cursor": self.next_cursor,
+        }
 
 
 class LoopbackV2HistoryClient:

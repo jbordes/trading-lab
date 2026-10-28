@@ -65,6 +65,10 @@ class V2PilotRuntimeTest(unittest.TestCase):
             self.assertIn("telemetry_receiver_v2.py", commands[1][1])
             self.assertIn("live_dashboard.py", commands[2][1])
             self.assertIn("--history-v2", commands[2])
+            self.assertEqual(
+                commands[2][commands[2].index("--broker-utc-offset-minutes") + 1],
+                "120",
+            )
             for credential in TEST_ENV.values():
                 self.assertNotIn(credential, str(commands))
             self.assertNotIn("TRADINGLAB_DASHBOARD_TOKEN", spawn.call_args_list[0].kwargs["env"])

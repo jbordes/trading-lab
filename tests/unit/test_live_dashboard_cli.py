@@ -35,16 +35,34 @@ class LiveDashboardCliTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             CLI.parse_args(["--telemetry"])
 
-        args = CLI.parse_args(["--telemetry", "--telemetry-source", "terminal-demo-01"])
+        args = CLI.parse_args(
+            [
+                "--telemetry",
+                "--telemetry-source",
+                "terminal-demo-01",
+                "--broker-utc-offset-minutes",
+                "120",
+            ]
+        )
         self.assertTrue(args.telemetry)
         self.assertEqual(args.telemetry_source, "terminal-demo-01")
+        self.assertEqual(args.broker_utc_offset_minutes, 120)
+
+        legacy = CLI.parse_args(["--telemetry", "--telemetry-source", "terminal-demo-01"])
+        self.assertIsNone(legacy.broker_utc_offset_minutes)
 
     def test_demo_rejects_telemetry_identity(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             CLI.parse_args(["--demo", "--telemetry-source", "terminal-demo-01"])
 
     def test_v2_history_is_explicit_and_uses_an_activity_source(self) -> None:
-        base = ["--telemetry", "--telemetry-source", "terminal-demo-01"]
+        base = [
+            "--telemetry",
+            "--telemetry-source",
+            "terminal-demo-01",
+            "--broker-utc-offset-minutes",
+            "120",
+        ]
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             CLI.parse_args(base + ["--history-v2"])
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

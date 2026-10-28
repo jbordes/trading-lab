@@ -52,7 +52,7 @@ _ITEM_FIELDS = {
     "conflict_at",
 }
 _CYCLE_RESPONSE_FIELDS = {"account_id", "owner_magic", "items", "next_cursor"}
-_CYCLE_ITEM_FIELDS = {"message_id", "source_id", "captured_at", "cycle"}
+_CYCLE_ITEM_FIELDS = {"message_id", "source_id", "captured_at", "cycle", "details"}
 _CYCLE_FIELDS = {
     "account_id",
     "position_id",
@@ -88,11 +88,13 @@ class TelemetryPositionCycle:
     message_id: int
     captured_at: str
     cycle: PositionCycle
+    details: dict[str, object] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
             "message_id": self.message_id,
             "captured_at": self.captured_at,
+            "details": self.details,
             "cycle": {
                 "account_id": self.cycle.account_id,
                 "position_id": self.cycle.position_id,
@@ -138,8 +140,12 @@ class TelemetryCyclePerformance:
     to_msc: int
     owner_magic: str | None
     cycles: tuple[TelemetryPositionCycle, ...]
+    coverage: dict[str, object]
 
-    def as_dict(self) -> dict[str, object]:
+    def as_dict(self, *, selected_magics: tuple[str, ...] = ()) -> dict[str, object]:
+        available_magics = sorted(
+            {item.cycle.owner_magic for item in self.cycles if item.cycle.owner_magic is not None}
+        )
         ordered = tuple(
             sorted(
                 (
@@ -147,6 +153,7 @@ class TelemetryCyclePerformance:
                     for item in self.cycles
                     if item.cycle.eligible_for_autonomous_metrics
                     and item.cycle.lifecycle is CycleLifecycle.CLOSED
+                    and (not selected_magics or item.cycle.owner_magic in selected_magics)
                 ),
                 key=lambda item: item.cycle.last_event_at_msc,
             )
@@ -161,6 +168,7 @@ class TelemetryCyclePerformance:
             "to_msc": self.to_msc,
             "magic_number": self.owner_magic,
             "formula_version": "position-cycle-v1",
+            "coverage": self.coverage,
             "reference_capital": float(metrics.reference_capital),
             "risk_amount": float(metrics.risk_amount),
             "trade_count": metrics.trade_count,
@@ -175,6 +183,9 @@ class TelemetryCyclePerformance:
             "return_drawdown_ratio": _optional_decimal(metrics.return_drawdown_ratio),
             "expectancy_r": _optional_decimal(metrics.expectancy_r),
             "standard_deviation": _optional_decimal(metrics.standard_deviation),
+            "by_ea": _compare_eas(ordered),
+            "available_magics": available_magics,
+            "selected_magics": list(selected_magics),
             "series": [
                 {
                     "ticket": item.cycle.position_id,
@@ -187,6 +198,49 @@ class TelemetryCyclePerformance:
                 for index, item in enumerate(ordered)
             ],
         }
+
+
+def _compare_eas(cycles: tuple[TelemetryPositionCycle, ...]) -> list[dict[str, object]]:
+    """Reuse the approved formulas independently for each account and owner Magic."""
+    groups: dict[tuple[str, str], list[TelemetryPositionCycle]] = {}
+    for item in cycles:
+        magic = item.cycle.owner_magic
+        if magic is not None:
+            groups.setdefault((item.cycle.account_id, magic), []).append(item)
+    result: list[dict[str, object]] = []
+    for (account, magic), items in sorted(groups.items()):
+        metrics = calculate_workbook_metrics(
+            tuple(item.cycle.observed_net_result for item in items)
+        )
+        result.append(
+            {
+                "account_id": account,
+                "magic_number": magic,
+                "trade_count": metrics.trade_count,
+                "net_profit": float(metrics.net_profit),
+                "profit_factor": _optional_decimal(metrics.profit_factor),
+                "winning_percentage": _optional_decimal(metrics.winning_percentage),
+                "maximum_drawdown": float(metrics.maximum_drawdown),
+                "maximum_drawdown_percentage": float(metrics.maximum_drawdown_percentage),
+                "current_drawdown": float(metrics.current_drawdown),
+                "current_drawdown_percentage": float(metrics.current_drawdown_percentage),
+                "return_drawdown_ratio": _optional_decimal(metrics.return_drawdown_ratio),
+                "expectancy_r": _optional_decimal(metrics.expectancy_r),
+                "standard_deviation": _optional_decimal(metrics.standard_deviation),
+                "average_trade": _optional_decimal(metrics.average_trade),
+                "series": [
+                    {
+                        "time_msc": item.cycle.last_event_at_msc,
+                        "cumulative_profit": float(metrics.cumulative_profit[index]),
+                        "net_profit": float(item.cycle.observed_net_result),
+                        "drawdown": float(metrics.drawdown_curve[index]),
+                        "rolling_average_20": float(metrics.rolling_average_20[index]),
+                    }
+                    for index, item in enumerate(items)
+                ],
+            }
+        )
+    return result
 
 
 def _optional_decimal(value: Decimal | None) -> float | None:
@@ -760,7 +814,47 @@ class LoopbackV2HistoryClient:
             or set(cycle.observed_magics) != {cycle.owner_magic}
         ):
             raise ValueError("Ciclo elegible v2 inconsistente")
-        return TelemetryPositionCycle(item["message_id"], item["captured_at"], cycle)
+        details = self._trade_details(item["details"])
+        return TelemetryPositionCycle(item["message_id"], item["captured_at"], cycle, details)
+
+    def _trade_details(self, value: object) -> dict[str, object]:
+        numeric = {
+            "volume",
+            "open_price",
+            "close_price",
+            "gross_profit",
+            "swap",
+            "commission",
+            "fee",
+            "take_profit",
+            "stop_loss",
+            "pips",
+            "duration_hours",
+        }
+        if not isinstance(value, dict) or set(value) != numeric | {
+            "side",
+            "symbol",
+            "opening_tickets",
+            "levels_basis",
+        }:
+            raise ValueError("Detalle de operación inválido")
+        if value["side"] not in (None, "long", "short") or value["levels_basis"] not in (
+            "exit_order",
+            "initial_order",
+            "unknown",
+        ):
+            raise ValueError("Dirección o procedencia de niveles inválida")
+        if value["symbol"] is not None:
+            self._bounded_text(value["symbol"], 128, allow_empty=False)
+        tickets = value["opening_tickets"]
+        if not isinstance(tickets, list) or len(tickets) > 500:
+            raise ValueError("Tickets de apertura inválidos")
+        for ticket in tickets:
+            self._unsigned_text(ticket, allow_zero=False)
+        for name in numeric:
+            if value[name] is not None:
+                self._finite_number(value[name])
+        return value
 
     @staticmethod
     def _unsigned_text(value: object, *, allow_zero: bool) -> str:
@@ -978,6 +1072,14 @@ class V2HistoryProvider:
         to_msc: int,
         owner_magic: str | None = None,
     ) -> TelemetryCyclePerformance:
+        evidence = self._client.deal_history(
+            from_msc=from_msc,
+            to_msc=to_msc,
+            magic_number=owner_magic,
+            limit=1,
+        )
+        if evidence.coverage is None:
+            raise DashboardReadError("El receptor no informó cobertura de deals")
         cycles: list[TelemetryPositionCycle] = []
         cursor: str | None = None
         account_id: str | None = None
@@ -1012,6 +1114,7 @@ class V2HistoryProvider:
             to_msc,
             owner_magic,
             tuple(cycles),
+            evidence.coverage,
         )
 
     def order_history(

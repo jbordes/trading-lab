@@ -103,6 +103,35 @@ class PersistentHttpTest(unittest.TestCase):
             100000.0,
         )
 
+    def test_account_history_preserves_observed_balances_and_is_authenticated(self) -> None:
+        from tradinglab.dashboard.telemetry import LoopbackTelemetryClient
+
+        for sequence, minute, balance in [(1, 0, 100000), (2, 1, 100010), (3, 4, 99990)]:
+            message = snapshot_message(sequence=sequence)
+            message["captured_at"] = f"2026-10-20T10:{minute:02d}:00Z"
+            message["payload"]["account"].update(balance=balance, equity=balance - 50)
+            self.assertEqual(self.request("/v1/telemetry", message=message)[0], 202)
+        start = int(datetime(2026, 10, 20, 10, tzinfo=UTC).timestamp() * 1000)
+        route = f"/v1/account-history?source_id={SOURCE}&from_msc={start}&to_msc={start + 3600000}"
+        status, result = self.request(route)
+        self.assertEqual(status, 200)
+        self.assertEqual([p["balance"] for p in result["points"]], [100000, 100010, 99990])
+        self.assertEqual(result["bucket_msc"], 60000)
+        self.assertEqual(self.request(route, token="wrong")[0], 401)
+        self.assertEqual(self.request(route.replace(SOURCE, "another-source"))[0], 404)
+        self.assertEqual(self.request(route + "&from_msc=1")[0], 400)
+        self.assertEqual(
+            self.request(route.replace(str(start + 3600000), str(start + 367 * 86400000)))[0], 400
+        )
+        client = LoopbackTelemetryClient(
+            token=TOKEN, source_id=SOURCE, port=self.server.server_port
+        )
+        self.assertEqual(client.account_history(from_msc=start, to_msc=start + 3600000), result)
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM telemetry_messages").fetchone()[0], 3
+            )
+
     def test_concurrent_requests_insert_once_and_stale_is_rejected(self) -> None:
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(

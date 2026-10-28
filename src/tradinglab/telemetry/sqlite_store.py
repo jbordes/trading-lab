@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -424,6 +425,67 @@ class TelemetryRegistry:
         if row is None:
             raise MessageAdmissionError("Fuente no registrada")
         return str(row[0])
+
+    def account_history(self, source_id: str, *, from_msc: int, to_msc: int) -> dict[str, Any]:
+        """Return at most 480 verified end-of-bucket snapshots using indexed seeks.
+
+        Reads existing evidence only; empty buckets stay empty and no equity is
+        reconstructed from deals. Memory and query duration remain bounded.
+        """
+        if (
+            type(from_msc) is not int
+            or type(to_msc) is not int
+            or not 0 <= from_msc < to_msc < 253402300799000
+            or to_msc - from_msc > 366 * 86400000
+        ):
+            raise ValueError("La ventana debe abarcar hasta 12 meses")
+        account_id = self.account_for_source(source_id)
+        bucket_msc = max(60000, (to_msc - from_msc + 479) // 480)
+        points: list[dict[str, object]] = []
+        deadline = time.monotonic() + 2.0
+        try:
+            for start in range(from_msc, to_msc, bucket_msc):
+                if time.monotonic() > deadline:
+                    raise TelemetryStorageError("La consulta histórica superó el plazo seguro")
+                end = min(to_msc, start + bucket_msc)
+                row = self._connection.execute(
+                    """SELECT message_id, session_id, sequence, captured_at_utc,
+                              received_at_utc, schema_version, collector_version,
+                              payload_json, content_sha256
+                       FROM telemetry_messages
+                       WHERE source_id = ? AND captured_at_utc >= ? AND captured_at_utc < ?
+                         AND json_extract(payload_json, '$.kind') = 'account_snapshot'
+                       ORDER BY captured_at_utc DESC, message_id DESC LIMIT 1""",
+                    (
+                        source_id,
+                        _timestamp(datetime.fromtimestamp(start / 1000, UTC)),
+                        _timestamp(datetime.fromtimestamp(end / 1000, UTC)),
+                    ),
+                ).fetchone()
+                if row is None:
+                    continue
+                restored = self._restore_snapshot_row(row, source_id=source_id)
+                if not _capture_is_plausible(restored):
+                    continue
+                account = restored.envelope.payload["account"]
+                points.append(
+                    {
+                        "observed_at": restored.envelope.captured_at,
+                        "balance": account["balance"],
+                        "equity": account["equity"],
+                    }
+                )
+        except (sqlite3.Error, ValueError, TypeError, KeyError) as exc:
+            raise TelemetryStorageError("No se pudo consultar balance/equity histórico") from exc
+        return {
+            "account_id": account_id,
+            "source_id": source_id,
+            "from_msc": from_msc,
+            "to_msc": to_msc,
+            "bucket_msc": bucket_msc,
+            "sampling": "last_observation_per_bucket",
+            "points": points,
+        }
 
     def deal_history(
         self,

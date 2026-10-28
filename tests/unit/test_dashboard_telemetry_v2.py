@@ -4,10 +4,13 @@ import json
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from tradinglab.dashboard.telemetry_v2 import LoopbackV2HistoryClient, V2HistoryProvider
+from tradinglab.metrics.position_cycles import CycleExclusion
 from tradinglab.telemetry.admission_v2 import ProducerIdentity
 from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
@@ -126,6 +129,25 @@ class DashboardTelemetryV2Test(unittest.TestCase):
         self.assertEqual(cycle.position_id, "600000000000000001")
         self.assertEqual(str(cycle.observed_net_result), "9.8")
         self.assertTrue(cycle.eligible_for_autonomous_metrics)
+        self.assertEqual(page.cycles[0].details["side"], "long")
+        self.assertEqual(page.cycles[0].details["open_price"], 4200)
+        self.assertEqual(page.cycles[0].as_dict()["details"]["gross_profit"], 10)
+
+    def test_rejects_invalid_trade_details(self) -> None:
+        self.backend.accept(
+            (FIXTURES / "activity-position-reconcile.json").read_bytes(),
+            f"Bearer {ACTIVITY_AUTHORIZATION}",
+        )
+        client = self.client()
+        details = client.position_cycles().cycles[0].details
+        for changes in (
+            {"gross_profit": float("nan")},
+            {"opening_tickets": ["not-a-ticket"]},
+            {"side": "invented"},
+            {"symbol": "\x00"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                client._trade_details(details | changes)
 
     def test_closed_cycle_metrics_use_reconciled_operations(self) -> None:
         body = (FIXTURES / "activity-position-reconcile.json").read_bytes()
@@ -148,6 +170,63 @@ class DashboardTelemetryV2Test(unittest.TestCase):
         self.assertEqual(performance["formula_version"], "position-cycle-v1")
         self.assertEqual(performance["trade_count"], 1)
         self.assertAlmostEqual(performance["net_profit"], 9.8)
+        self.assertEqual(performance["coverage"]["incomplete_batches"], 1)
+        self.assertEqual(len(performance["by_ea"]), 1)
+        self.assertEqual(performance["by_ea"][0]["magic_number"], "11122")
+        self.assertEqual(performance["by_ea"][0]["net_profit"], 9.8)
+
+    def test_ea_comparison_separates_results_and_excludes_interventions(self) -> None:
+        body = (FIXTURES / "activity-position-reconcile.json").read_bytes()
+        self.backend.accept(body, f"Bearer {ACTIVITY_AUTHORIZATION}")
+        performance = V2HistoryProvider(self.client()).cycle_performance_metrics(
+            from_msc=1792656000000, to_msc=1792656060001
+        )
+        first = performance.cycles[0]
+
+        def variation(magic: str, pnl: str, position: str):
+            return replace(
+                first,
+                cycle=replace(
+                    first.cycle,
+                    position_id=position,
+                    owner_magic=magic,
+                    observed_net_result=Decimal(pnl),
+                    last_event_at_msc=first.cycle.last_event_at_msc + int(position),
+                ),
+            )
+
+        loss = variation("11122", "-5", "1")
+        other = variation("22222", "20", "2")
+        excluded = variation("11122", "1000", "3")
+        excluded = replace(
+            excluded, cycle=replace(excluded.cycle, exclusions=(CycleExclusion.MIXED_MAGIC,))
+        )
+        result = replace(performance, cycles=(other, excluded, loss, first)).as_dict()
+        groups = {item["magic_number"]: item for item in result["by_ea"]}
+        self.assertEqual(set(groups), {"11122", "22222"})
+        self.assertEqual(groups["11122"]["trade_count"], 2)
+        self.assertEqual(groups["11122"]["net_profit"], 4.8)
+        self.assertEqual(groups["11122"]["maximum_drawdown"], 5)
+        self.assertEqual(groups["11122"]["series"][-1]["cumulative_profit"], 4.8)
+        self.assertEqual(groups["11122"]["series"][-1]["net_profit"], -5)
+        self.assertEqual(groups["11122"]["series"][-1]["drawdown"], 5)
+        self.assertEqual(groups["11122"]["series"][-1]["rolling_average_20"], 2.4)
+        self.assertEqual(groups["22222"]["net_profit"], 20)
+        self.assertEqual(groups["22222"]["maximum_drawdown"], 0)
+        self.assertAlmostEqual(
+            sum(item["net_profit"] for item in groups.values()), result["net_profit"]
+        )
+        self.assertEqual(replace(performance, cycles=()).as_dict()["by_ea"], [])
+        subset = replace(performance, cycles=(other, excluded, loss, first)).as_dict(
+            selected_magics=("11122",)
+        )
+        self.assertEqual(subset["trade_count"], 2)
+        self.assertEqual(subset["net_profit"], 4.8)
+        self.assertEqual(subset["profit_factor"], 1.96)
+        self.assertEqual(subset["available_magics"], ["11122", "22222"])
+        self.assertEqual(subset["selected_magics"], ["11122"])
+        self.assertEqual(len(subset["by_ea"]), 1)
+        self.assertEqual(performance.as_dict(selected_magics=("999",))["trade_count"], 0)
 
 
 if __name__ == "__main__":

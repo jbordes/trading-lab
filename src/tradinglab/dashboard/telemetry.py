@@ -163,6 +163,8 @@ class TelemetrySnapshotClient(Protocol):
 
     def health(self) -> ReceiverHealth: ...
 
+    def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
     def deal_history(
         self,
         *,
@@ -221,12 +223,71 @@ class LoopbackTelemetryClient:
         self._url = f"http://127.0.0.1:{port}/v1/snapshot?{query}"
         self._health_url = f"http://127.0.0.1:{port}/health"
         self._deals_url = f"http://127.0.0.1:{port}/v1/deals"
+        self._account_history_url = f"http://127.0.0.1:{port}/v1/account-history"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
         self._opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             _RejectRedirects(),
         )
+
+    def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        parameters = urllib.parse.urlencode(
+            {
+                "source_id": self._source_id,
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+            }
+        )
+        request = urllib.request.Request(
+            f"{self._account_history_url}?{parameters}",
+            headers={"Authorization": self._authorization, "Accept": "application/json"},
+        )
+        try:
+            with self._opener.open(
+                request, timeout=min(5.0, self._timeout_seconds + 1)
+            ) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise DashboardReadError(
+                "El receptor no pudo consultar el historial de cuenta"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise DashboardReadError("El historial de cuenta no está disponible") from exc
+        try:
+            if len(body) > MAX_BODY_BYTES:
+                raise ValueError("Respuesta demasiado grande")
+            result = json.loads(body)
+            if (
+                result["source_id"] != self._source_id
+                or result["from_msc"] != from_msc
+                or result["to_msc"] != to_msc
+                or not IDENTIFIER.fullmatch(result["account_id"])
+                or result["sampling"] != "last_observation_per_bucket"
+                or type(result["bucket_msc"]) is not int
+                or not 1 <= result["bucket_msc"] <= 366 * 86400000
+                or not isinstance(result["points"], list)
+                or len(result["points"]) > 480
+            ):
+                raise ValueError("Respuesta histórica inválida")
+            previous = from_msc - 1
+            for point in result["points"]:
+                instant = datetime.fromisoformat(point["observed_at"])
+                if instant.utcoffset() != timedelta(0):
+                    raise ValueError("Captura sin UTC")
+                msc = instant.timestamp() * 1000
+                if not from_msc <= msc < to_msc or msc <= previous:
+                    raise ValueError("Orden o período inválido")
+                previous = msc
+                for field in ("balance", "equity"):
+                    if type(point[field]) not in (int, float) or not math.isfinite(point[field]):
+                        raise ValueError("Valor histórico inválido")
+            return result
+        except (KeyError, ValueError, TypeError, OverflowError) as exc:
+            raise DashboardReadError(
+                "El receptor devolvió un historial de cuenta inválido"
+            ) from exc
 
     def latest(self) -> TelemetryEnvelope:
         request = urllib.request.Request(
@@ -610,6 +671,9 @@ class TelemetrySnapshotSource:
             error=None,
             receiver=receiver,
         )
+
+    def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        return self._client.account_history(from_msc=from_msc, to_msc=to_msc)
 
     def deal_history(
         self,

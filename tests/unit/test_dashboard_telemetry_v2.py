@@ -127,6 +127,28 @@ class DashboardTelemetryV2Test(unittest.TestCase):
         self.assertEqual(str(cycle.observed_net_result), "9.8")
         self.assertTrue(cycle.eligible_for_autonomous_metrics)
 
+    def test_closed_cycle_metrics_use_reconciled_operations(self) -> None:
+        body = (FIXTURES / "activity-position-reconcile.json").read_bytes()
+        self.backend.accept(body, f"Bearer {ACTIVITY_AUTHORIZATION}")
+        provider = V2HistoryProvider(self.client())
+
+        page = provider.position_cycles(
+            owner_magic="11122",
+            from_msc=1792656000000,
+            to_msc=1792656060001,
+            closed_only=True,
+        )
+        performance = provider.cycle_performance_metrics(
+            owner_magic="11122",
+            from_msc=1792656000000,
+            to_msc=1792656060001,
+        ).as_dict()
+
+        self.assertEqual(len(page.cycles), 1)
+        self.assertEqual(performance["formula_version"], "position-cycle-v1")
+        self.assertEqual(performance["trade_count"], 1)
+        self.assertAlmostEqual(performance["net_profit"], 9.8)
+
 
 if __name__ == "__main__":
     unittest.main()

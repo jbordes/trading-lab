@@ -20,6 +20,7 @@ from tradinglab.dashboard.telemetry import (
 )
 from tradinglab.metrics import calculate_closed_deal_metrics
 from tradinglab.metrics.position_cycles import CycleExclusion, CycleLifecycle, PositionCycle
+from tradinglab.metrics.workbook_v1 import calculate_workbook_metrics
 from tradinglab.telemetry.contract import (
     IDENTIFIER,
     MAX_BODY_BYTES,
@@ -125,6 +126,71 @@ class TelemetryPositionCyclePage:
             "cycles": [cycle.as_dict() for cycle in self.cycles],
             "next_cursor": self.next_cursor,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCyclePerformance:
+    """Metrics calculated only from complete, attributable position cycles."""
+
+    account_id: str
+    source_id: str
+    from_msc: int
+    to_msc: int
+    owner_magic: str | None
+    cycles: tuple[TelemetryPositionCycle, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        ordered = tuple(
+            sorted(
+                (
+                    item
+                    for item in self.cycles
+                    if item.cycle.eligible_for_autonomous_metrics
+                    and item.cycle.lifecycle is CycleLifecycle.CLOSED
+                ),
+                key=lambda item: item.cycle.last_event_at_msc,
+            )
+        )
+        metrics = calculate_workbook_metrics(
+            tuple(item.cycle.observed_net_result for item in ordered)
+        )
+        return {
+            "account_id": self.account_id,
+            "source_id": self.source_id,
+            "from_msc": self.from_msc,
+            "to_msc": self.to_msc,
+            "magic_number": self.owner_magic,
+            "formula_version": "position-cycle-v1",
+            "reference_capital": float(metrics.reference_capital),
+            "risk_amount": float(metrics.risk_amount),
+            "trade_count": metrics.trade_count,
+            "net_profit": float(metrics.net_profit),
+            "profit_factor": _optional_decimal(metrics.profit_factor),
+            "winning_percentage": _optional_decimal(metrics.winning_percentage),
+            "average_trade": _optional_decimal(metrics.average_trade),
+            "maximum_drawdown": float(metrics.maximum_drawdown),
+            "maximum_drawdown_percentage": float(metrics.maximum_drawdown_percentage),
+            "current_drawdown": float(metrics.current_drawdown),
+            "current_drawdown_percentage": float(metrics.current_drawdown_percentage),
+            "return_drawdown_ratio": _optional_decimal(metrics.return_drawdown_ratio),
+            "expectancy_r": _optional_decimal(metrics.expectancy_r),
+            "standard_deviation": _optional_decimal(metrics.standard_deviation),
+            "series": [
+                {
+                    "ticket": item.cycle.position_id,
+                    "time_msc": item.cycle.last_event_at_msc,
+                    "net_profit": float(item.cycle.observed_net_result),
+                    "cumulative_profit": float(metrics.cumulative_profit[index]),
+                    "drawdown": float(metrics.drawdown_curve[index]),
+                    "rolling_average_20": float(metrics.rolling_average_20[index]),
+                }
+                for index, item in enumerate(ordered)
+            ],
+        }
+
+
+def _optional_decimal(value: Decimal | None) -> float | None:
+    return None if value is None else float(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,13 +911,107 @@ class V2HistoryProvider:
         self,
         *,
         owner_magic: str | None = None,
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryPositionCyclePage:
-        return self._client.position_cycles(
-            owner_magic=owner_magic,
-            limit=limit,
-            cursor=cursor,
+        if (from_msc is None) != (to_msc is None):
+            raise ValueError("El período de ciclos debe estar completo")
+        if from_msc is None:
+            return self._client.position_cycles(
+                owner_magic=owner_magic,
+                limit=limit,
+                cursor=cursor,
+            )
+        if not 0 <= from_msc < to_msc < 2**63:
+            raise ValueError("Período de ciclos inválido")
+        matches: list[TelemetryPositionCycle] = []
+        next_cursor = cursor
+        account_id: str | None = None
+        source_id: str | None = None
+        reached_start = False
+        inspected = 0
+        while len(matches) < limit and not reached_start:
+            page = self._client.position_cycles(
+                owner_magic=owner_magic,
+                limit=min(100, limit - len(matches)),
+                cursor=next_cursor,
+            )
+            if account_id is not None and page.account_id != account_id:
+                raise DashboardReadError("La cuenta cambió durante la consulta de ciclos")
+            if source_id is not None and page.source_id != source_id:
+                raise DashboardReadError("La fuente cambió durante la consulta de ciclos")
+            account_id = page.account_id
+            source_id = page.source_id
+            inspected += len(page.cycles)
+            for item in page.cycles:
+                cycle = item.cycle
+                if cycle.last_event_at_msc < from_msc:
+                    reached_start = True
+                    break
+                if cycle.last_event_at_msc >= to_msc:
+                    continue
+                if closed_only and cycle.lifecycle is not CycleLifecycle.CLOSED:
+                    continue
+                matches.append(item)
+            next_cursor = page.next_cursor
+            if next_cursor is None or inspected >= 500:
+                break
+        if inspected >= 500 and next_cursor is not None and len(matches) < limit:
+            raise DashboardReadError("La consulta de ciclos supera el límite seguro de 500")
+        if account_id is None or source_id is None:
+            raise DashboardReadError("El receptor no informó ciclos")
+        return TelemetryPositionCyclePage(
+            account_id,
+            source_id,
+            owner_magic,
+            tuple(matches[:limit]),
+            None if reached_start else next_cursor,
+        )
+
+    def cycle_performance_metrics(
+        self,
+        *,
+        from_msc: int,
+        to_msc: int,
+        owner_magic: str | None = None,
+    ) -> TelemetryCyclePerformance:
+        cycles: list[TelemetryPositionCycle] = []
+        cursor: str | None = None
+        account_id: str | None = None
+        source_id: str | None = None
+        inspected = 0
+        while True:
+            page = self.position_cycles(
+                owner_magic=owner_magic,
+                from_msc=from_msc,
+                to_msc=to_msc,
+                closed_only=True,
+                limit=100,
+                cursor=cursor,
+            )
+            account_id = page.account_id
+            source_id = page.source_id
+            inspected += len(page.cycles)
+            cycles.extend(
+                item for item in page.cycles if item.cycle.eligible_for_autonomous_metrics
+            )
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+            if inspected >= 500:
+                raise DashboardReadError("El período supera el límite seguro de 500 operaciones")
+        if account_id is None or source_id is None:
+            raise DashboardReadError("El receptor no informó la cuenta")
+        return TelemetryCyclePerformance(
+            account_id,
+            source_id,
+            from_msc,
+            to_msc,
+            owner_magic,
+            tuple(cycles),
         )
 
     def order_history(

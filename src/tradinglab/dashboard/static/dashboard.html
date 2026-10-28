@@ -20,8 +20,7 @@
         <div class="site-nav-links">
           <nav class="view-tabs" role="tablist" aria-label="Secciones del dashboard">
             <button class="view-tab active" type="button" role="tab" id="tab-overview" aria-controls="overview-view" aria-selected="true" data-view="overview"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#overview"></use></svg><span class="nav-label">Resumen</span></button>
-            <button class="view-tab" type="button" role="tab" id="tab-operations" aria-controls="operations-view" aria-selected="false" tabindex="-1" data-view="operations"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#operations"></use></svg><span class="nav-label">Operaciones</span><span class="nav-count" id="operations-badge">—</span></button>
-            <button class="view-tab" type="button" role="tab" id="tab-history" aria-controls="history-view" aria-selected="false" tabindex="-1" data-view="history"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#history"></use></svg><span class="nav-label">Historial</span></button>
+            <button class="view-tab" type="button" role="tab" id="tab-trading" aria-controls="trading-view" aria-selected="false" tabindex="-1" data-view="trading"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#operations"></use></svg><span class="nav-label">Trading</span><span class="nav-count" id="operations-badge">—</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-activity" aria-controls="activity-view" aria-selected="false" tabindex="-1" data-view="activity"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Actividad</span><span class="nav-count" id="activity-badge" hidden>—</span></button>
           </nav>
           <form class="logout-form" action="/logout" method="post"><button class="logout-button" type="submit">Cerrar sesión</button></form>
@@ -103,8 +102,14 @@
       </details>
       </section>
 
-      <section id="operations-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-operations" tabindex="0" hidden>
-        <article class="panel operations-panel">
+      <section id="trading-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-trading" tabindex="0" hidden>
+        <nav class="trading-scopes" aria-label="Alcance de la actividad de trading">
+          <button class="trading-scope active" type="button" aria-pressed="true" data-trading-scope="current">En curso</button>
+          <button class="trading-scope" type="button" aria-pressed="false" data-trading-scope="closed">Operaciones cerradas</button>
+          <button class="trading-scope" type="button" aria-pressed="false" data-trading-scope="registry">Registro MT5</button>
+        </nav>
+
+        <article id="trading-current-panel" class="panel operations-panel">
           <div class="operations-heading">
             <div>
               <h2>Operaciones abiertas</h2>
@@ -152,18 +157,25 @@
           </div>
           <p class="operations-note" id="operations-note" role="status" hidden>La hora de cada operación todavía no está validada. El indicador de actualización corresponde a la captura de la cuenta.</p>
         </article>
-      </section>
 
-      <section id="history-view" class="dashboard-view" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
-        <article class="panel operations-panel history-panel">
+        <article id="trading-history-panel" class="panel operations-panel history-panel" hidden>
           <div class="operations-heading">
             <div>
-              <h2>Historial de ejecuciones</h2>
-              <p class="operations-copy">Deals informados por MT5 y conservados en SQLite. Cada fila es una ejecución, no necesariamente un trade completo.</p>
+              <h2 id="history-title">Historial de ejecuciones</h2>
+              <p id="history-copy" class="operations-copy">Deals informados por MT5 y conservados en SQLite. Cada fila es una ejecución, no necesariamente un trade completo.</p>
             </div>
           </div>
 
           <form id="history-filters" class="history-controls">
+            <label id="history-entity-field" class="filter-field" for="history-entity" hidden>
+              <span>Entidad</span>
+              <select id="history-entity">
+                <option value="all" selected>Todo el registro</option>
+                <option value="deals">Solo ejecuciones</option>
+                <option value="orders">Solo órdenes</option>
+                <option value="current">Solo en curso</option>
+              </select>
+            </label>
             <label class="filter-field" for="history-period">
               <span>Período</span>
               <select id="history-period">
@@ -187,7 +199,7 @@
             </div>
             <div class="metrics-grid">
               <article><span>Resultado neto</span><strong id="metric-net">—</strong></article>
-              <article><span>Cierres</span><strong id="metric-count">—</strong></article>
+              <article><span>Operaciones</span><strong id="metric-count">—</strong></article>
               <article><span>Profit Factor</span><strong id="metric-pf">—</strong></article>
               <article><span>Ganadoras</span><strong id="metric-win">—</strong></article>
               <article><span>Promedio</span><strong id="metric-average">—</strong></article>
@@ -202,22 +214,22 @@
             <div class="metrics-charts">
               <article class="metric-chart-card"><h4>Ganancia acumulada</h4><div id="chart-cumulative" class="metric-chart" role="img" aria-label="Gráfico de ganancia acumulada"></div></article>
               <article class="metric-chart-card"><h4>Drawdown</h4><div id="chart-drawdown" class="metric-chart" role="img" aria-label="Gráfico de drawdown"></div></article>
-              <article class="metric-chart-card"><h4>Resultado por cierre</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de resultado por cierre"></div></article>
-              <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 cierres"></div></article>
+              <article class="metric-chart-card"><h4>Resultado por operación</h4><div id="chart-profit" class="metric-chart" role="img" aria-label="Gráfico de resultado por operación"></div></article>
+              <article class="metric-chart-card"><h4>Media móvil de 20</h4><div id="chart-rolling" class="metric-chart" role="img" aria-label="Gráfico de media móvil de 20 operaciones"></div></article>
             </div>
-            <p class="operations-note">Fórmula provisional basada en el Excel del socio. Cada salida o cierre parcial es un resultado; no se afirma que sea un trade reconstruido. Trades/mes espera una fecha de activación válida para cada EA.</p>
+            <p class="operations-note">Fórmulas basadas en el Excel del socio y aplicadas a ciclos completos <code>position-cycle-v1</code>. Las operaciones excluidas permanecen visibles debajo. Trades/mes espera una fecha de activación válida para cada EA.</p>
           </section>
 
-          <p class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
+          <p id="history-note" class="operations-note history-note">La hora se presenta según el timestamp informado por MT5; la zona horaria del servidor aún debe validarse. Resultado y costos se muestran sin reconstruir ni calificar la estrategia.</p>
           <div class="operation-stats" role="status" aria-live="polite">
-            <span><strong id="history-count">0</strong> ejecuciones cargadas</span>
+            <span><strong id="history-count">0</strong> <span id="history-count-label">ejecuciones cargadas</span></span>
             <span id="history-scope">Últimos 7 días · todos los bots</span>
           </div>
 
           <div class="operations-table-wrap">
             <table class="operations-table history-table" role="table">
-              <caption class="sr-only">Deals históricos informados por MT5</caption>
-              <thead>
+              <caption id="history-caption" class="sr-only">Deals históricos informados por MT5</caption>
+              <thead id="history-head">
                 <tr>
                   <th scope="col">Hora MT5</th>
                   <th scope="col">Ejecución</th>

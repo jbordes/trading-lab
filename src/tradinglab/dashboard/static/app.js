@@ -31,12 +31,23 @@ const healthOverview = document.getElementById("health-overview");
 const historyFilters = document.getElementById("history-filters");
 const historyPeriod = document.getElementById("history-period");
 const historyMagic = document.getElementById("history-magic");
+const historyEntity = document.getElementById("history-entity");
+const historyEntityField = document.getElementById("history-entity-field");
 const historyReset = document.getElementById("history-reset");
 const historyBody = document.getElementById("history-body");
 const historyEmpty = document.getElementById("history-empty");
 const historyCount = document.getElementById("history-count");
 const historyScope = document.getElementById("history-scope");
 const historyMore = document.getElementById("history-more");
+const historyMetricsPanel = document.getElementById("history-metrics");
+const historyTitle = document.getElementById("history-title");
+const historyCopy = document.getElementById("history-copy");
+const historyNote = document.getElementById("history-note");
+const historyCountLabel = document.getElementById("history-count-label");
+const historyCaption = document.getElementById("history-caption");
+const historyHead = document.getElementById("history-head");
+const tradingCurrentPanel = document.getElementById("trading-current-panel");
+const tradingHistoryPanel = document.getElementById("trading-history-panel");
 const metricsStatus = document.getElementById("metrics-status");
 const metricElements = {
   net: document.getElementById("metric-net"), count: document.getElementById("metric-count"),
@@ -67,11 +78,13 @@ let latestStatus = "starting";
 let currentFilterScope = "uninitialized";
 let refreshInFlight = null;
 let latestHealthState = null;
-let historyDeals = [];
+let historyRecords = [];
 let historyNextCursor = null;
+let historyNextCursors = { deals: null, orders: null };
 let historyQuery = null;
 let historyInitialized = false;
 let historyLoading = false;
+let tradingScope = "current";
 let historyRequest = 0;
 let metricsRequest = 0;
 let historyMetrics = null;
@@ -177,6 +190,18 @@ const dealEntries = {
   0: "Entrada", 1: "Salida", 2: "Entrada y salida", 3: "Cierre por otra posición",
 };
 
+const historicalOrderTypes = {
+  0: "Compra", 1: "Venta", 2: "Compra limit", 3: "Venta limit",
+  4: "Compra stop", 5: "Venta stop", 6: "Compra stop limit",
+  7: "Venta stop limit", 8: "Cierre por otra",
+};
+
+const historicalOrderStates = {
+  0: "Iniciada", 1: "Colocada", 2: "Cancelada", 3: "Parcial",
+  4: "Completada", 5: "Rechazada", 6: "Expirada", 7: "Solicitud de alta",
+  8: "Solicitud de cambio", 9: "Solicitud de cancelación",
+};
+
 const LOCALE = "es-AR";
 const numberFormatter = new Intl.NumberFormat(LOCALE, { useGrouping: "always" });
 const decimalFormatter = new Intl.NumberFormat(LOCALE, {
@@ -279,7 +304,7 @@ function renderState(state) {
   renderSourceHealth(state);
   renderHealthOverview(state);
   if (!state.latest) {
-    if (activeView === "operations") renderOperations();
+    if (activeView === "trading" && tradingScope === "current") renderOperations();
     updateFreshness();
     return;
   }
@@ -298,7 +323,7 @@ function renderState(state) {
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
   if (value.observed_at === lastObservedAt) {
-    if (currencyChanged && activeView === "history") renderHistory();
+    if (currencyChanged && activeView === "trading" && tradingScope !== "current") renderHistory();
     if (currencyChanged && activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
     return;
   }
@@ -331,7 +356,17 @@ function renderState(state) {
   );
   latestOperationsTruncated = value.operations_truncated === true;
   operationsBadge.textContent = number(latestOperationsTotal);
-  if (activeView === "operations") renderOperations();
+  if (activeView === "trading" && tradingScope === "current") renderOperations();
+  if (
+    activeView === "trading" && tradingScope === "registry"
+    && ["all", "current"].includes(historyEntity.value)
+  ) {
+    historyRecords = [
+      ...historyRecords.filter((record) => record._entity !== "current"),
+      ...registryCurrentRecords(historyEntity.value, historyQuery?.magic ?? null),
+    ].sort((left, right) => historyRecordTime(right) - historyRecordTime(left));
+    renderHistory();
+  }
   const nextActivity = Array.isArray(value.recent_activity) ? value.recent_activity : [];
   latestActivity = nextActivity;
   activityElements.badge.textContent = number(latestActivity.length);
@@ -559,13 +594,13 @@ function setHistoryLoading(loading) {
   historyLoading = loading;
   historyFilters.querySelector('button[type="submit"]').disabled = loading;
   historyMore.disabled = loading;
-  if (loading && historyDeals.length === 0) {
+  if (loading && historyRecords.length === 0) {
     historyEmpty.hidden = false;
     historyEmpty.textContent = "Consultando el historial guardado…";
   }
 }
 
-async function loadDealHistory({ append = false } = {}) {
+async function loadTradingHistory({ append = false } = {}) {
   if (historyLoading) return;
   const magic = historyMagicValue();
   if (historyMagic.validationMessage) {
@@ -581,59 +616,157 @@ async function loadDealHistory({ append = false } = {}) {
       magic,
       days,
     };
-    historyDeals = [];
+    historyRecords = [];
     historyNextCursor = null;
+    historyNextCursors = { deals: null, orders: null };
     historyInitialized = true;
     renderHistory();
   }
-  if (!historyQuery || (append && !historyNextCursor)) return;
+  if (!historyQuery) return;
 
-  const requestNumber = ++historyRequest;
-  if (!append) void loadHistoryMetrics(historyQuery, ++metricsRequest);
+  if (tradingScope === "closed") {
+    await loadClosedOperations({ append });
+  } else {
+    await loadMt5Registry({ append });
+  }
+}
+
+function historyParameters(query, cursor = null) {
   const parameters = new URLSearchParams({
-    from_msc: String(historyQuery.fromMsc),
-    to_msc: String(historyQuery.toMsc),
+    from_msc: String(query.fromMsc),
+    to_msc: String(query.toMsc),
     limit: String(HISTORY_PAGE_SIZE),
   });
-  if (historyQuery.magic !== null) parameters.set("magic_number", historyQuery.magic);
-  if (append) parameters.set("cursor", historyNextCursor);
+  if (query.magic !== null) parameters.set("magic_number", query.magic);
+  if (cursor) parameters.set("cursor", cursor);
+  return parameters;
+}
+
+async function authenticatedHistoryFetch(url, signal) {
+  const response = await fetch(url, { cache: "no-store", signal });
+  if (response.status === 401) {
+    window.location.assign("/login");
+    throw new Error("La sesión expiró.");
+  }
+  if (response.status === 404) {
+    throw new Error("El historial durable requiere el receptor con almacenamiento SQLite.");
+  }
+  if (!response.ok) throw new Error("No se pudo consultar el historial guardado.");
+  return response.json();
+}
+
+async function loadClosedOperations({ append }) {
+  if (append && !historyNextCursor) return;
+  const requestNumber = ++historyRequest;
+  if (!append) void loadHistoryMetrics(historyQuery, ++metricsRequest);
+  const parameters = historyParameters(historyQuery, append ? historyNextCursor : null);
+  parameters.delete("magic_number");
+  if (historyQuery.magic !== null) parameters.set("owner_magic", historyQuery.magic);
+  parameters.set("closed", "true");
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   setHistoryLoading(true);
   try {
-    const response = await fetch(`/api/deals?${parameters}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (response.status === 401) {
-      window.location.assign("/login");
-      return;
-    }
-    if (response.status === 404) {
-      throw new Error("El historial durable requiere el receptor con almacenamiento SQLite.");
-    }
-    if (!response.ok) throw new Error("No se pudo consultar el historial guardado.");
-    const payload = await response.json();
+    const payload = await authenticatedHistoryFetch(
+      `/api/position-cycles?${parameters}`,
+      controller.signal,
+    );
     if (requestNumber !== historyRequest) return;
-    const incoming = Array.isArray(payload.deals) ? payload.deals : [];
-    const known = new Set(historyDeals.map((deal) => `${deal.account_id}:${deal.ticket}`));
-    const additions = incoming.filter((deal) => !known.has(`${deal.account_id}:${deal.ticket}`));
-    historyDeals = [...historyDeals, ...additions].slice(0, HISTORY_CLIENT_LIMIT);
-    historyNextCursor = historyDeals.length >= HISTORY_CLIENT_LIMIT ? null : payload.next_cursor;
-    setHistoryLoading(false);
+    const incoming = Array.isArray(payload.cycles)
+      ? payload.cycles.map((item) => ({ ...item, _entity: "cycle" })) : [];
+    const known = new Set(historyRecords.map(historyRecordKey));
+    historyRecords = [...historyRecords, ...incoming.filter((item) => !known.has(historyRecordKey(item)))]
+      .slice(0, HISTORY_CLIENT_LIMIT);
+    historyNextCursor = historyRecords.length >= HISTORY_CLIENT_LIMIT ? null : payload.next_cursor;
     renderHistory();
   } catch (error) {
-    if (requestNumber !== historyRequest) return;
-    historyNextCursor = null;
-    historyEmpty.hidden = historyDeals.length > 0;
-    historyEmpty.textContent = error.name === "AbortError"
-      ? "La consulta tardó demasiado. Podés volver a intentarlo."
-      : error.message;
-    historyMore.hidden = true;
+    handleHistoryError(error, requestNumber);
   } finally {
     window.clearTimeout(timeout);
     if (requestNumber === historyRequest) setHistoryLoading(false);
   }
+}
+
+async function loadMt5Registry({ append }) {
+  const selected = historyEntity.value;
+  const targets = selected === "all" ? ["deals", "orders"]
+    : selected === "current" ? [] : [selected];
+  if (append && !targets.some((entity) => historyNextCursors[entity])) return;
+  const requestNumber = ++historyRequest;
+  if (!append) {
+    historyRecords = registryCurrentRecords(selected, historyQuery.magic);
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  setHistoryLoading(true);
+  try {
+    const requests = targets
+      .filter((entity) => !append || historyNextCursors[entity])
+      .map(async (entity) => {
+        const parameters = historyParameters(
+          historyQuery,
+          append ? historyNextCursors[entity] : null,
+        );
+        const payload = await authenticatedHistoryFetch(`/api/${entity}?${parameters}`, controller.signal);
+        const values = Array.isArray(payload[entity]) ? payload[entity] : [];
+        return {
+          entity,
+          nextCursor: payload.next_cursor,
+          records: values.map((item) => ({
+            ...item,
+            _entity: entity === "deals" ? "deal" : "order",
+          })),
+        };
+      });
+    const results = await Promise.all(requests);
+    if (requestNumber !== historyRequest) return;
+    results.forEach((result) => { historyNextCursors[result.entity] = result.nextCursor; });
+    const incoming = results.flatMap((result) => result.records);
+    const known = new Set(historyRecords.map(historyRecordKey));
+    historyRecords = [
+      ...historyRecords,
+      ...incoming.filter((item) => !known.has(historyRecordKey(item))),
+    ]
+      .sort((left, right) => historyRecordTime(right) - historyRecordTime(left))
+      .slice(0, HISTORY_CLIENT_LIMIT);
+    historyNextCursor = targets.some((entity) => historyNextCursors[entity]) ? "registry" : null;
+    renderHistory();
+  } catch (error) {
+    handleHistoryError(error, requestNumber);
+  } finally {
+    window.clearTimeout(timeout);
+    if (requestNumber === historyRequest) setHistoryLoading(false);
+  }
+}
+
+function registryCurrentRecords(selected, magic) {
+  if (!["all", "current"].includes(selected)) return [];
+  return latestOperations
+    .filter((operation) => magic === null || String(operation.magic_number) === magic)
+    .map((operation) => ({ ...operation, _entity: "current" }));
+}
+
+function historyRecordKey(record) {
+  if (record._entity === "cycle") return `cycle:${record.cycle.account_id}:${record.cycle.position_id}`;
+  return `${record._entity}:${record.account_id || "current"}:${record.ticket}`;
+}
+
+function historyRecordTime(record) {
+  if (record._entity === "cycle") return record.cycle.last_event_at_msc;
+  if (record._entity === "deal") return record.time_msc;
+  if (record._entity === "order") return record.done_time_msc;
+  const opened = record.opened_at ? toDate(record.opened_at) : null;
+  return opened ? opened.getTime() : Number.MAX_SAFE_INTEGER;
+}
+
+function handleHistoryError(error, requestNumber) {
+  if (requestNumber !== historyRequest) return;
+  historyNextCursor = null;
+  historyEmpty.hidden = historyRecords.length > 0;
+  historyEmpty.textContent = error.name === "AbortError"
+    ? "La consulta tardó demasiado. Podés volver a intentarlo."
+    : error.message;
+  historyMore.hidden = true;
 }
 
 async function loadHistoryMetrics(query, requestNumber) {
@@ -648,7 +781,7 @@ async function loadHistoryMetrics(query, requestNumber) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(`/api/metrics?${parameters}`, {
+    const response = await fetch(`/api/cycle-metrics?${parameters}`, {
       cache: "no-store", signal: controller.signal,
     });
     if (response.status === 401) {
@@ -658,7 +791,7 @@ async function loadHistoryMetrics(query, requestNumber) {
     if (!response.ok) throw new Error("No se pudieron calcular las métricas para este período.");
     const payload = await response.json();
     if (requestNumber !== metricsRequest) return;
-    if (payload?.formula_version !== "partner-workbook-v1" || !Array.isArray(payload.series)) {
+    if (payload?.formula_version !== "position-cycle-v1" || !Array.isArray(payload.series)) {
       throw new Error("El servicio devolvió métricas en un formato desconocido.");
     }
     historyMetrics = payload;
@@ -699,8 +832,8 @@ function renderHistoryMetrics() {
     return;
   }
   metricsStatus.textContent = value.trade_count
-    ? `${value.trade_count} cierres · ${value.formula_version}`
-    : "Sin cierres para los filtros elegidos.";
+    ? `${value.trade_count} operaciones · ${value.formula_version}`
+    : "Sin operaciones elegibles para los filtros elegidos.";
   renderMetricCharts(Array.isArray(value.series) ? value.series : []);
 }
 
@@ -771,47 +904,152 @@ function renderMetricCharts(series) {
 }
 
 function renderHistory() {
-  historyBody.replaceChildren(...historyDeals.map(historyRow));
-  historyCount.textContent = number(historyDeals.length);
+  const showingClosed = tradingScope === "closed";
+  historyTitle.textContent = showingClosed ? "Operaciones cerradas" : "Registro MT5";
+  historyCopy.textContent = showingClosed
+    ? "Posiciones reconstruidas de principio a fin. Las métricas usan únicamente operaciones completas y atribuibles a un solo EA."
+    : "Evidencia detallada de órdenes, ejecuciones y actividad en curso para investigar qué hizo MT5 o un EA.";
+  historyNote.textContent = showingClosed
+    ? "Las operaciones intervenidas, incompletas o con Magic mixtos permanecen visibles, pero se excluyen del rendimiento."
+    : "Este registro sirve para auditoría y diagnóstico. Sus filas no se mezclan para calcular métricas de rendimiento.";
+  historyCountLabel.textContent = showingClosed ? "operaciones cargadas" : "eventos cargados";
+  historyCaption.textContent = showingClosed
+    ? "Operaciones cerradas reconstruidas por posición"
+    : "Registro de entidades informadas por MT5";
+  historyMetricsPanel.hidden = !showingClosed;
+  historyEntityField.hidden = showingClosed;
+  renderHistoryHeader(showingClosed);
+  historyBody.replaceChildren(...historyRecords.map(showingClosed ? positionCycleRow : registryRow));
+  historyCount.textContent = number(historyRecords.length);
   const period = historyQuery ? `${historyQuery.days === 1 ? "Últimas 24 horas" : `Últimos ${historyQuery.days} días`}` : "—";
   const bot = historyQuery?.magic ? `Magic ${historyQuery.magic}` : "todos los bots";
   historyScope.textContent = `${period} · ${bot}`;
-  historyEmpty.hidden = historyDeals.length > 0;
+  historyEmpty.hidden = historyRecords.length > 0;
   if (!historyLoading) {
     historyEmpty.textContent = historyInitialized
-      ? "No hay ejecuciones guardadas para los filtros elegidos."
+      ? `No hay ${showingClosed ? "operaciones cerradas" : "eventos"} guardados para los filtros elegidos.`
       : "Abrí esta sección para consultar el historial.";
   }
   historyMore.hidden = !historyNextCursor;
   historyMore.textContent = "Cargar 50 más";
 }
 
-function historyRow(deal) {
+function renderHistoryHeader(showingClosed) {
+  const labels = showingClosed
+    ? ["Cierre MT5", "Operación", "Magic", "Resultado", "Deals", "Métricas", "Observaciones"]
+    : ["Hora MT5", "Entidad", "Instrumento", "Magic", "Volumen", "Estado / resultado", "Identificador"];
   const row = document.createElement("tr");
-  const occurredAt = Number.isSafeInteger(deal.time_msc) ? new Date(deal.time_msc) : null;
+  labels.forEach((label, index) => {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    if ((showingClosed && index === 3) || (!showingClosed && [4, 5].includes(index))) {
+      cell.className = "numeric";
+    }
+    cell.textContent = label;
+    row.appendChild(cell);
+  });
+  historyHead.replaceChildren(row);
+}
+
+const cycleExclusionLabels = {
+  incomplete_evidence: "Evidencia incompleta",
+  open_position: "Posición abierta",
+  inconsistent_lifecycle: "Ciclo inconsistente",
+  unattributed_owner: "Sin EA propietario",
+  unattributed_action: "Intervención sin atribuir",
+  mixed_magic: "Magic mixtos",
+};
+
+function positionCycleRow(item) {
+  const cycle = item.cycle;
+  const row = document.createElement("tr");
+  const occurredAt = Number.isSafeInteger(cycle.last_event_at_msc)
+    ? new Date(cycle.last_event_at_msc) : null;
+  row.appendChild(textCell(
+    occurredAt && !Number.isNaN(occurredAt.getTime()) ? dateTimeFormatter.format(occurredAt) : "—",
+    "",
+    "Cierre MT5",
+  ));
+  row.appendChild(detailCell(
+    `Posición #${cycle.position_id}`,
+    `${dateTimeFormatter.format(new Date(cycle.started_at_msc))} → cierre`,
+    "",
+    "Operación",
+  ));
+  row.appendChild(textCell(cycle.owner_magic || "Sin atribuir", "", "Magic"));
+  const netResult = Number(cycle.observed_net_result);
+  const result = textCell(money(netResult, latestCurrency, true), "numeric", "Resultado");
+  if (netResult > 0) result.classList.add("positive-text");
+  else if (netResult < 0) result.classList.add("negative-text");
+  row.appendChild(result);
+  row.appendChild(textCell(number(cycle.deal_tickets.length), "", "Deals"));
+  row.appendChild(textCell(
+    cycle.eligible_for_autonomous_metrics ? "Incluida" : "Excluida",
+    cycle.eligible_for_autonomous_metrics ? "positive-text" : "warn-text",
+    "Métricas",
+  ));
+  const exclusions = cycle.exclusions.map((reason) => cycleExclusionLabels[reason] || reason);
+  row.appendChild(textCell(exclusions.length ? exclusions.join(" · ") : "Operación autónoma", "", "Observaciones"));
+  return row;
+}
+
+function registryRow(record) {
+  const row = document.createElement("tr");
+  const timeMsc = historyRecordTime(record);
+  const occurredAt = Number.isFinite(timeMsc) && timeMsc !== Number.MAX_SAFE_INTEGER
+    ? new Date(timeMsc) : null;
   row.appendChild(textCell(
     occurredAt && !Number.isNaN(occurredAt.getTime()) ? dateTimeFormatter.format(occurredAt) : "—",
     "",
     "Hora MT5",
   ));
+  if (record._entity === "deal") appendDealRegistryCells(row, record);
+  else if (record._entity === "order") appendOrderRegistryCells(row, record);
+  else appendCurrentRegistryCells(row, record);
+  return row;
+}
+
+function appendDealRegistryCells(row, deal) {
   const type = dealTypes[deal.deal_type] || `Tipo ${deal.deal_type}`;
   const entry = dealEntries[deal.entry] || `Entrada ${deal.entry}`;
-  row.appendChild(detailCell(type, `Deal #${deal.ticket} · ${entry}`, "", "Ejecución"));
+  row.appendChild(detailCell("Ejecución", `${type} · ${entry}`, "", "Entidad"));
   row.appendChild(detailCell(deal.symbol || "Cuenta", `Posición #${deal.position_id}`, "", "Instrumento"));
   row.appendChild(textCell(String(deal.magic_number), "", "Magic"));
   row.appendChild(textCell(decimal(deal.volume), "numeric", "Volumen"));
-  const result = textCell(money(deal.profit, latestCurrency, true), "numeric", "Resultado");
-  if (deal.profit > 0) result.classList.add("positive-text");
-  else if (deal.profit < 0) result.classList.add("negative-text");
+  const net = deal.profit + deal.commission + deal.swap + deal.fee;
+  const result = textCell(money(net, latestCurrency, true), "numeric", "Estado / resultado");
+  if (net > 0) result.classList.add("positive-text");
+  else if (net < 0) result.classList.add("negative-text");
   row.appendChild(result);
-  const costs = deal.commission + deal.swap + deal.fee;
-  row.appendChild(detailCell(
-    money(costs, latestCurrency, true),
-    `Com. ${money(deal.commission, latestCurrency, true)} · Swap ${money(deal.swap, latestCurrency, true)} · Fee ${money(deal.fee, latestCurrency, true)}`,
-    "numeric",
-    "Costos",
-  ));
-  return row;
+  row.appendChild(textCell(`Deal #${deal.ticket}`, "", "Identificador"));
+}
+
+function appendOrderRegistryCells(row, order) {
+  const type = historicalOrderTypes[order.order_type] || `Tipo ${order.order_type}`;
+  row.appendChild(detailCell("Orden", type, "", "Entidad"));
+  const position = order.position_id && order.position_id !== "0"
+    ? `Posición #${order.position_id}` : order.comment || "Sin posición asociada";
+  row.appendChild(detailCell(order.symbol || "Cuenta", position, "", "Instrumento"));
+  row.appendChild(textCell(String(order.magic_number), "", "Magic"));
+  row.appendChild(textCell(decimal(order.volume_initial), "numeric", "Volumen"));
+  const state = historicalOrderStates[order.state] || `Estado ${order.state}`;
+  const stateCell = textCell(state, "numeric", "Estado / resultado");
+  if ([2, 5, 6].includes(order.state)) stateCell.classList.add("warn-text");
+  row.appendChild(stateCell);
+  row.appendChild(textCell(`Orden #${order.ticket}`, "", "Identificador"));
+}
+
+function appendCurrentRegistryCells(row, operation) {
+  const kind = operation.kind === "position" ? "Posición en curso" : "Orden pendiente";
+  const type = operationTypes[operation.operation_type] || operation.operation_type;
+  row.appendChild(detailCell(kind, type, "", "Entidad"));
+  row.appendChild(textCell(operation.symbol, "", "Instrumento"));
+  row.appendChild(textCell(String(operation.magic_number), "", "Magic"));
+  row.appendChild(textCell(decimal(operation.volume), "numeric", "Volumen"));
+  const value = operation.kind === "position" && Number.isFinite(operation.floating_profit)
+    ? money(operation.floating_profit, latestCurrency, true) : "Pendiente";
+  row.appendChild(textCell(value, "numeric", "Estado / resultado"));
+  row.appendChild(textCell(`#${operation.ticket}`, "", "Identificador"));
 }
 
 function elapsed(seconds) {
@@ -1232,7 +1470,7 @@ async function performRefresh() {
     setText(elements.status, "Sin conexión local");
     statusDot.className = "status-dot degraded";
     updateFreshness();
-    if (activeView === "operations") renderOperations();
+    if (activeView === "trading" && tradingScope === "current") renderOperations();
     setText(errorHuman, "No se pudo consultar el servicio local.");
     errorTechnicalDetails.hidden = true;
     errorBox.hidden = false;
@@ -1260,9 +1498,42 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.setInterval(updateFreshness, 1000);
+
+function activateTradingScope(scope) {
+  if (!["current", "closed", "registry"].includes(scope)) return;
+  const scopeChanged = tradingScope !== scope;
+  tradingScope = scope;
+  document.querySelectorAll(".trading-scope").forEach((button) => {
+    const active = button.dataset.tradingScope === scope;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  tradingCurrentPanel.hidden = scope !== "current";
+  tradingHistoryPanel.hidden = scope === "current";
+  if (scope === "current") {
+    renderOperations();
+    return;
+  }
+  if (scopeChanged) {
+    historyRecords = [];
+    historyNextCursor = null;
+    historyNextCursors = { deals: null, orders: null };
+    historyInitialized = false;
+    historyQuery = null;
+    historyRequest += 1;
+    metricsRequest += 1;
+    setHistoryLoading(false);
+  }
+  renderHistory();
+  if (!historyInitialized) loadTradingHistory();
+  if (scope === "closed") {
+    window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
+  }
+}
+
 function activateView(view) {
   const titles = {
-    overview: "Resumen", operations: "Operaciones", history: "Historial", activity: "Actividad",
+    overview: "Resumen", trading: "Trading", activity: "Actividad",
   };
   setText(document.getElementById("page-title"), titles[view]);
   document.querySelectorAll(".view-tab").forEach((tab) => {
@@ -1275,12 +1546,7 @@ function activateView(view) {
     panel.hidden = panel.id !== `${view}-view`;
   });
   activeView = view;
-  if (activeView === "operations") renderOperations();
-  else if (activeView === "history" && !historyInitialized) loadDealHistory();
-  else if (activeView === "history") {
-    renderHistory();
-    window.requestAnimationFrame(() => metricCharts.forEach((chart) => chart.resize()));
-  }
+  if (activeView === "trading") activateTradingScope(tradingScope);
   else if (activeView === "activity") renderActivity();
   else {
     renderChart(lastHistory, latestIntervalSeconds);
@@ -1306,9 +1572,25 @@ document.querySelectorAll(".view-tab").forEach((button) => {
   });
 });
 
+document.querySelectorAll(".trading-scope").forEach((button) => {
+  button.addEventListener("click", () => {
+    activateTradingScope(button.dataset.tradingScope);
+    history.replaceState(null, "", `#trading/${button.dataset.tradingScope}`);
+  });
+});
+
 window.addEventListener("hashchange", () => {
-  const view = location.hash.slice(1);
-  if (["overview", "operations", "history", "activity"].includes(view)) activateView(view);
+  const route = location.hash.slice(1);
+  if (route === "operations") {
+    activateTradingScope("current");
+    activateView("trading");
+  } else if (route === "history") {
+    activateTradingScope("registry");
+    activateView("trading");
+  } else if (route.startsWith("trading/")) {
+    activateTradingScope(route.split("/")[1]);
+    activateView("trading");
+  } else if (["overview", "trading", "activity"].includes(route)) activateView(route);
 });
 
 let chartResizeFrame = null;
@@ -1373,15 +1655,25 @@ clearFilter.addEventListener("click", () => {
 });
 historyFilters.addEventListener("submit", (event) => {
   event.preventDefault();
-  loadDealHistory();
+  loadTradingHistory();
 });
 historyReset.addEventListener("click", () => {
   historyPeriod.value = "7";
   historyMagic.value = "";
   historyMagic.setCustomValidity("");
-  loadDealHistory();
+  loadTradingHistory();
 });
-historyMore.addEventListener("click", () => loadDealHistory({ append: true }));
+historyEntity.addEventListener("change", () => {
+  historyRecords = [];
+  historyNextCursor = null;
+  historyNextCursors = { deals: null, orders: null };
+  historyInitialized = false;
+  historyQuery = null;
+  historyRequest += 1;
+  setHistoryLoading(false);
+  loadTradingHistory();
+});
+historyMore.addEventListener("click", () => loadTradingHistory({ append: true }));
 function scheduleRefresh() {
   window.setTimeout(() => {
     refresh().finally(scheduleRefresh);
@@ -1389,8 +1681,12 @@ function scheduleRefresh() {
 }
 
 const initialView = location.hash.slice(1);
-if (["overview", "operations", "history", "activity"].includes(initialView)) {
-  history.replaceState(null, "", `#${initialView}`);
+if (initialView === "operations" || initialView === "history" || initialView.startsWith("trading/")) {
+  const initialScope = initialView === "history" ? "registry"
+    : initialView === "operations" ? "current" : initialView.split("/")[1];
+  activateTradingScope(initialScope);
+  activateView("trading");
+} else if (["overview", "trading", "activity"].includes(initialView)) {
   activateView(initialView);
 }
 refresh().finally(scheduleRefresh);

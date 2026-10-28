@@ -257,6 +257,17 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
 
 
 .operations-panel { padding: 16px 18px; }
+.trading-scopes {
+  display: inline-flex; gap: 3px; margin: 0 0 12px; padding: 3px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
+}
+.trading-scope {
+  min-height: 34px; padding: 6px 12px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--ink-2); font: inherit; font-size: 0.8125rem;
+  font-weight: 500; cursor: pointer;
+}
+.trading-scope:hover { color: var(--ink); background: var(--raised); }
+.trading-scope.active { color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 .operations-heading { margin-bottom: 12px; }
 .operations-heading .eyebrow { color: var(--accent); font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 6px; }
 .operations-heading h2 { margin: 0; font-size: 1rem; }
@@ -269,7 +280,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
 .filter-field input::placeholder { color: var(--ink-3); }
 .operations-controls { display: grid; grid-template-columns: minmax(180px, 280px) minmax(180px, 260px) auto; align-items: end; gap: 10px; }
 .operations-note { margin: 8px 0 0; color: var(--ink-3); font-size: 0.8125rem; max-width: 60ch; }
-.history-controls { display: grid; grid-template-columns: minmax(160px, 220px) minmax(180px, 240px) auto auto; align-items: end; gap: 10px; }
+.history-controls { display: grid; grid-template-columns: repeat(3, minmax(150px, 220px)) auto auto; align-items: end; gap: 10px; }
 .primary-action, .secondary-action {
   min-height: 38px; padding: 7px 14px; border: 1px solid transparent; border-radius: var(--radius-md);
   font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer;
@@ -405,7 +416,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   }
   .site-nav-links > a[aria-current="page"], .view-tab.active { background: transparent; }
   .site-nav-links .nav-icon { width: 21px; height: 21px; }
-  .view-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-column: 1 / -1; gap: 0; margin: 0; border: 0; }
+  .view-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-column: 1 / -1; gap: 0; margin: 0; border: 0; }
   .view-tab .nav-count { display: none; }
   .site-nav .theme-toggle {
     position: fixed; inset: 11px 24px auto auto; z-index: 21;
@@ -448,6 +459,16 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .history-table td[data-label="Hora MT5"] { grid-column: 1 / -1; grid-row: 3; color: var(--ink-3); font-size: 0.75rem; }
   .history-table td[data-label="Magic"] { grid-column: 1; grid-row: 4; color: var(--ink-3); font-size: 0.75rem; }
   .history-table td[data-label="Volumen"] { grid-column: 2; grid-row: 4; }
+  .history-table td[data-label="Orden"] { grid-column: 1; grid-row: 2; }
+  .history-table td[data-label="Precio"] { grid-column: 2; grid-row: 2; }
+  .history-table td[data-label="Estado"] { grid-column: 2; grid-row: 1; font-size: 0.875rem; text-align: right; }
+  .history-table td[data-label="Entidad"],
+  .history-table td[data-label="Operación"] { grid-column: 1; grid-row: 2; }
+  .history-table td[data-label="Estado / resultado"],
+  .history-table td[data-label="Resultado"] { grid-column: 2; grid-row: 1; font-size: 1rem; font-weight: 600; }
+  .history-table td[data-label="Identificador"],
+  .history-table td[data-label="Observaciones"] { grid-column: 1 / -1; grid-row: 3; color: var(--ink-3); font-size: 0.75rem; }
+  .history-table td[data-label="Métricas"] { grid-column: 2; grid-row: 2; }
 }
 
 .history-metrics { margin: 14px 0; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--sunken); }
@@ -517,7 +538,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .connection div { flex-direction: row; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
   .connection strong, .connection small { font-size: 0.75rem; }
   .mode-notice { font-size: 0.75rem; margin-bottom: 12px; }
-  .view-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+  .view-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; padding: 6px 0 14px; }
   .metric-card { padding: 0 0 0 16px; }
   .metric-card:nth-child(2) { padding-left: 0; border-left: 0; }
@@ -529,6 +550,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .panel { padding: 16px; }
   .operations-panel { padding: 0; border: 0; background: transparent; }
+  .trading-scopes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
   .operations-heading { margin-bottom: 10px; }
   .operations-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
   .history-controls { grid-template-columns: minmax(0, 1fr); gap: 8px; }

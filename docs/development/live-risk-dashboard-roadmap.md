@@ -194,6 +194,7 @@ La dirección se rige por
    entidades MT5 ni forzar una única tabla de almacenamiento.
 2. Exponer las órdenes históricas ya admitidas por telemetría v2 y su cobertura;
    conservar canceladas y vencidas para analizar comportamiento, no rendimiento.
+   **API autenticada implementada; integración visual pendiente.**
 3. Proyectar durablemente ciclos por `account_id + position_id`, mediante una
    migración explícita y sin reconstruir el historial creciente completo en
    memoria. **Implementado en código; despliegue piloto pendiente.**

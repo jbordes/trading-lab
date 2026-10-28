@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import unittest
@@ -86,6 +87,30 @@ class DashboardTelemetryV2Test(unittest.TestCase):
 
         self.assertEqual(result.selection.metrics.trade_count, 1)
         self.assertEqual(float(result.selection.metrics.net_profit), -2.1)
+
+    def test_canceled_order_reaches_validated_dashboard_shape(self) -> None:
+        document = json.loads((FIXTURES / "activity-canceled-order.json").read_bytes())
+        document["session_id"] = "synthetic-order-session"
+        document["event_id"] = "synthetic-order-session:1"
+        self.backend.accept(
+            json.dumps(document, separators=(",", ":")).encode(),
+            f"Bearer {ACTIVITY_AUTHORIZATION}",
+        )
+
+        page = V2HistoryProvider(self.client()).order_history(
+            from_msc=1792656000000,
+            to_msc=1792656060001,
+            magic_number="11122",
+        )
+
+        self.assertEqual(page.account_id, "account-demo")
+        self.assertEqual(page.source_id, "synthetic-activity")
+        self.assertIsNone(page.next_cursor)
+        order = page.orders[0]
+        self.assertEqual(order.ticket, "900000000000000001")
+        self.assertEqual(order.state, 2)
+        self.assertEqual(order.position_id, "0")
+        self.assertEqual(page.coverage["incomplete_batches"], 0)
 
     def test_reconciled_position_cycle_reaches_validated_dashboard_shape(self) -> None:
         body = (FIXTURES / "activity-position-reconcile.json").read_bytes()

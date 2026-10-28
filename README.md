@@ -18,6 +18,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Dashboard local de riesgo](docs/architecture/live-risk-dashboard.md)
 - [Entorno de desarrollo](docs/development/environment.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
+- [Referencia unificada de APIs](docs/development/api-reference.md)
 - [Roadmap del dashboard local de riesgo](docs/development/live-risk-dashboard-roadmap.md)
 - [Análisis de UX y diseño en evolución del dashboard](docs/development/dashboard-evolution-ux.md)
 - [Guía para acordar métricas de riesgo](docs/development/guia-metricas-para-el-socio.md)

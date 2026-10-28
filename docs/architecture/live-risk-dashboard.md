@@ -189,6 +189,17 @@ bloque, sin tarjetas ni columnas adicionales. El formato base será, por ejemplo
 offset. La hora local proviene del navegador y la del broker de una referencia
 explícita de la fuente, nunca de una suposición por máquina.
 
+En el piloto esa referencia es un offset UTC configurable en minutos, necesario
+para convertir la hora local. Sin configurarlo se informa que falta el offset.
+Es suficiente para la observación vigente, pero no modela cambios
+históricos de horario de verano: antes de analizar períodos que atraviesen esos
+cambios se deberá adoptar una regla temporal versionada del broker.
+
+Junto a los filtros históricos se presenta la cobertura durable informada por
+SQLite. `Datos completos` exige cobertura continua del período y ausencia de
+lotes incompletos; cualquier otra situación se rotula `Datos parciales` y también
+califica como parcial a las métricas calculadas sobre ese rango.
+
 Esta decisión resuelve la presentación, no el comienzo del día para DDD u otras
 métricas: cada contrato deberá declarar su zona de corte.
 
@@ -213,8 +224,92 @@ declarar período, moneda base, conversión y tratamiento de transferencias ante
 sumar resultados.
 
 Apache ECharts es la dependencia local fijada para las curvas analíticas actuales.
+
+En operaciones cerradas, la fila principal prioriza Magic, tipo Long/Short con
+posición debajo, símbolo, volumen, Open, Close, TP/SL y ganancia neta al final. Open/Close reciben
+mayor ancho; bajo cada precio se muestra solo la fecha y hora del broker hasta
+minutos en una línea. TP/SL ocupa una columna compacta y conserva su procedencia
+como ayuda contextual. La fila despliega u oculta el detalle con clic, toque, Enter o
+Espacio, sin columna ni botón adicional y con foco visible para teclado.
+El detalle evita repetir la fila y muestra únicamente deals, ganancia bruta,
+swap, comisión, pips y duración en una grilla de baja altura. Se presenta como
+una extensión plana de fondo neutro, con divisores finos y una transición breve;
+no compite visualmente con el resultado de la fila. Entradas y salidas parciales usan
+precios medios ponderados por volumen. Las reversiones ambiguas no se etiquetan
+como una dirección única. La ganancia neta determina un fondo verde/rojo tenue;
+el cero conserva el fondo normal. En anchos reducidos la fila se reorganiza y
+todos los campos se reorganizan sin scroll horizontal.
+Pips espera una definición por símbolo; TP/SL no presume cambios no observados.
 Las visualizaciones futuras, como histogramas de VaR o matrices de covarianza,
 reutilizarán la misma biblioteca una vez aprobadas sus métricas.
+
+### Navegación y tablas de actividad
+
+La navegación lateral separa `Trading`, `Performance financiera` y
+`Performance de ejecución`. `Trading` contiene únicamente posiciones y órdenes
+en curso. `Performance financiera` reúne las operaciones cerradas y las
+métricas y gráficos existentes. `Performance de ejecución` ofrece el Registro
+MT5 para consultar el comportamiento observado. Los nombres anteriores de las
+vistas se conservan solo como contexto histórico.
+
+Las tablas de posiciones y órdenes en curso, igual que el Registro MT5, usan el
+estilo compacto de operaciones cerradas: Magic primero, expansión por fila con
+clic o teclado y detalles sin duplicar los datos ya visibles en la fila. El
+diseño responde a pantallas estrechas. Los colores financieros expresan el
+resultado pertinente y no presentan cancelaciones como fallos.
+
+El resumen muestra Equity como cifra principal, con Balance y PnL flotante en
+segundo plano y el margen libre bajo «En esta cuenta». La Performance financiera
+ofrece dos modos. `Sumarizar` es el predeterminado: los EA elegidos se agregan
+en una sola serie y sus métricas se recalculan desde los ciclos, sin sumar ratios.
+`Comparar EAs` ofrece una barra lateral buscable con selección de hasta cinco EA.
+En este modo los gráficos preceden a la tabla comparativa de métricas. PnL
+acumulado es el gráfico principal y Drawdown aparece debajo, alineado con él; el
+DD se dibuja negativo, aunque el valor de la métrica se presenta positivo.
+PnL por operación y media móvil de 20 están bajo «Más gráficos». Un único zoom
+temporal visible sincroniza los cuatro gráficos. El cursor y las interacciones
+se conectan entre ellos, y al pasar por un EA se resaltan sus series. Se reducen
+grillas y etiquetas para dar prioridad a las curvas; los colores por EA son
+estables y no se repiten leyendas.
+
+Las curvas siguen usando fechas reales y segmentos rectos entre observaciones,
+sin suavizado ni escalones, y no alinean operaciones por índice. PnL por
+operación usa barras en ambos modos: `Sumarizar` colorea por resultado y
+`Comparar EAs` por EA. Cada barra muestra su valor numérico compacto, arriba si
+es positivo y debajo si es negativo. La tabla de ciclos cerrados se conserva.
+Se mantiene ECharts; este ajuste no cambia fórmulas ni datos.
+
+Las ventanas temporales de los gráficos admiten hasta 12 meses y una fecha final,
+incluida la vista de cuenta. El historial de Balance/Equity consulta capturas
+existentes de SQLite mediante las APIs descritas en la referencia de API; no
+cambia la retención. Cada consulta admite como máximo 366 días y devuelve hasta
+480 puntos, tomando la última observación por bucket de al menos un minuto. No
+preserva extremos, inventa valores ni rellena huecos. La ventana elegida no
+garantiza que existan observaciones para todo el período.
+
+La lista de operaciones cerradas conserva la paginación acotada a 500 registros
+consultados y filtra en el cliente por los Magic elegidos. Si aún no hay
+coincidencias en lo cargado, informa que puede usarse «Cargar más». La primera
+página de la lista no define el conjunto de las métricas: estas se calculan sobre
+el período consultado completo, sujeto al límite seguro de 500 ciclos.
+
+El resumen compacto de los tres mejores EA usa PnL neto del período de 7 o 30
+días (30 por defecto), solo ciclos elegibles y la cuenta actual, con los mismos
+colores deterministas por Magic. Muestra cuenta, operaciones y cobertura; no es
+un ranking ajustado por riesgo y puede incluir PnL negativo. Se actualiza como
+máximo cada 60 segundos y también al llegar una captura nueva o cambiar vista o
+filtro. Las etiquetas financieras usan «PnL neto»; distinguen «PnL flotante» y
+«PnL bruto».
+
+El historial de Balance/Equity solo presenta capturas disponibles: no reconstruye
+equity desde operaciones ni modifica la retención existente. Los textos
+auxiliares de métricas y cobertura se presentan como ayuda contextual junto al
+dato pertinente.
+
+Este ajuste de navegación no modifica la semántica del contrato de ciclos. Quedan
+pendientes definir métricas y gráficos de ejecución con el socio, y revisar si
+requieren persistir más evidencia; no es urgente ni se presupone cobertura
+completa.
 
 ## Seguridad y límites
 

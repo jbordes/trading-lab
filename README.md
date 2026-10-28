@@ -63,7 +63,7 @@ mismo token disponible fuera de Git y un `SourceId` configurado en el EA:
 
 ```text
 uv run python scripts/telemetry_receiver.py
-uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01
+uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01 --broker-utc-offset-minutes 120
 ```
 
 La aplicación queda disponible únicamente en `http://127.0.0.1:8765`: `/` es la
@@ -74,6 +74,8 @@ del token de telemetría configurado en el EA. La vista `Trading` reúne `En cur
 a sus métricas y explorar órdenes, deals y actividad vigente sin mezclarlos en el
 cálculo. Para cuentas
 reales se utilizará una identidad separada con acceso de inversor.
+El offset del ejemplo (`120`, UTC+02:00) es una configuración explícita de la
+fuente: debe ajustarse al reloj vigente del broker y nunca se deduce de la VPS.
 La vista `Actividad` muestra el estado de la fuente (salud del receptor local:
 aceptados, duplicados, secuencias faltantes, retenidos e historial) separado de
 la actualización de la vista. La hora del historial se presenta según el

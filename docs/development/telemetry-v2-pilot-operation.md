@@ -77,6 +77,11 @@ comprueba que las cinco sean diferentes, abre los dos receptores, espera su salu
 recién entonces inicia el dashboard con historial v2. Ctrl+C detiene exclusivamente
 esos tres procesos.
 
+El piloto Juampi declara UTC+02:00 (`120` minutos) como offset operativo del
+broker. Esa referencia permite mostrar `Broker` y `Local` sin depender del reloj
+de la VPS. Es una configuración fija del piloto: debe revisarse cuando el broker
+cambie su horario; no representa todavía una regla histórica de DST.
+
 ## Comprobación manual
 
 1. Confirmar en la consola `Receptores v1/v2 listos`.

@@ -102,17 +102,33 @@ dashboard, sin entregar al navegador la credencial interna del receptor v2.
 Parámetros opcionales:
 
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `from_msc` y `to_msc`: período semiabierto opcional; deben aparecer juntos.
+- `closed=true`: limita el resultado a ciclos cerrados.
 - `limit`: tamaño de página `1..100`; valor predeterminado `50`.
 - `cursor`: cursor opaco recibido como `next_cursor`.
 
 La respuesta contiene `account_id`, `source_id`, `owner_magic`, `cycles` y
 `next_cursor`. Los importes decimales se conservan como texto para no perder
-precisión. La ruta prepara el consumo autenticado, pero no implica que un ciclo
-alimente métricas ni que exista evidencia real validada en el piloto.
+precisión. Cada ciclo informa elegibilidad y motivos de exclusión.
 
 Respuestas principales: `200`, `400 invalid_position_cycles_query`, `401
 authentication_required`, `404 position_cycles_unavailable`, `503
 position_cycles_unavailable`.
+
+### `GET /api/cycle-metrics`
+
+Calcula las métricas `position-cycle-v1` exclusivamente sobre ciclos cerrados y
+elegibles. Requiere `from_msc` y `to_msc`; admite `magic_number` como filtro del EA
+propietario. No admite paginación explícita y rechaza períodos que superen el
+límite seguro de 500 operaciones observadas.
+
+La respuesta conserva las métricas y series del contrato visible, pero cada punto
+representa una posición completa reconstruida. Ciclos incompletos, intervenidos o
+con Magic mixtos quedan fuera sin ser eliminados del historial.
+
+Respuestas principales: `200`, `400 invalid_cycle_metrics_query`, `401
+authentication_required`, `404 cycle_metrics_unavailable`, `503
+cycle_metrics_unavailable`.
 
 ### `GET /health`
 

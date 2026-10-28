@@ -173,8 +173,9 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 4. **Primer corte implementado:** calcular y visualizar por período y Magic Number
    las fórmulas `partner-workbook-v1` observadas en el Excel del socio. Se incluyen
    tarjetas y las cuatro curvas de referencia con ECharts local. Cada cierre MT5
-   sigue siendo una fila; la comparación entre bots y la reconstrucción de trades
-   con múltiples deals esperan definición con el socio.
+   fue inicialmente una fila. Este corte se conserva como referencia de contraste;
+   la interfaz vigente aplica las mismas fórmulas bajo el contrato separado
+   `position-cycle-v1`, únicamente a operaciones completas elegibles.
    También queda pendiente acordar si la interfaz debe presentar la hora del
    broker/MT5, la hora local del usuario o ambas; hasta entonces no se usará esa
    escala temporal para calcular cortes diarios.
@@ -189,12 +190,12 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 La dirección se rige por
 [ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md):
 
-1. Unificar `Operaciones` e `Historial` como experiencia de `Trading`, con
-   alcances `En curso`, `Ejecuciones`, `Órdenes` y `Todo`, sin reemplazar las
-   entidades MT5 ni forzar una única tabla de almacenamiento.
+1. **Implementado:** unificar `Operaciones` e `Historial` como experiencia de
+   `Trading`, con alcances `En curso`, `Operaciones cerradas` y `Registro MT5`,
+   sin reemplazar las entidades MT5 ni forzar una única tabla de almacenamiento.
 2. Exponer las órdenes históricas ya admitidas por telemetría v2 y su cobertura;
    conservar canceladas y vencidas para analizar comportamiento, no rendimiento.
-   **API autenticada implementada; integración visual pendiente.**
+   **API autenticada e integración visual implementadas.**
 3. Proyectar durablemente ciclos por `account_id + position_id`, mediante una
    migración explícita y sin reconstruir el historial creciente completo en
    memoria. **Implementado en código; despliegue piloto pendiente.**
@@ -206,6 +207,10 @@ La dirección se rige por
 6. Separar `Rendimiento` de `Estado del sistema`: los gráficos analíticos consumen
    solo ciclos elegibles; frescura, cobertura y errores siguen siendo visibles
    como contexto y diagnóstico.
+
+La organización final de estas vistas y el contrato `position-cycle-v1` se rigen
+por [ADR-0015](../adr/0015-closed-operations-and-mt5-registry.md), que reemplaza
+parcialmente la navegación inicialmente descrita por ADR-0014.
 
 Antes de implementar la reconstrucción, preparar fixtures de entrada múltiple,
 cierre parcial, Stop Loss/Take Profit, intervención manual, Magic mixto, reversa

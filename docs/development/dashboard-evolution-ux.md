@@ -21,7 +21,7 @@ El dashboard es el primer producto de observabilidad del piloto (mod. 2.4): la v
 2. **Dos audiencias, una pantalla**: el trader (detalle operativo, trazabilidad) y el socio no técnico (riesgo en castellano llano).
 3. **El diseño es un contrato más**: cada valor derivado debe poder remitir a su fuente (run, deployment, evidence bundle) cuando exista el catálogo.
 
-## 2. Estado del prototipo (actualizado 18 de octubre de 2026)
+## 2. Estado del prototipo (actualizado 27 de octubre de 2026)
 
 A partir de tres análisis previos (UX, diseño visual, performance en navegador) se aplicaron en fases y, en octubre de 2026, un rediseño completo según el ADR-0005:
 
@@ -37,7 +37,11 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
   color y palabra, balance y margen secundarios en una banda sin tres cajas.
   Fuente resumida, gráfico reciente y contexto de la cuenta; identificador y versión
   del collector en diagnóstico. Nota desplegable de riesgo sin estimaciones.
-- Operaciones con tabla de seis columnas en escritorio y composición de tarjeta
+- Trading unifica la navegación de operaciones e historial mediante los alcances
+  `En curso`, `Operaciones cerradas` y `Registro MT5`. El registro combina las
+  entidades sin confundirlas y permite filtrarlas; conserva órdenes canceladas y
+  expiradas como evidencia, pero nunca alimenta las métricas de rendimiento.
+- En curso conserva la tabla de seis columnas en escritorio y composición de tarjeta
   bajo 900 px: instrumento/resultado primero, Magic visible, dirección/volumen y
   detalle secundario. Hora y comentario completos quedan en el detalle móvil.
   Barra de filtros arriba de los resultados, conteos en una línea, sin tarjetas.
@@ -95,11 +99,12 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 - **Locale `es-AR`** con hora 24 h, agrupación de miles consistente y signo explícito en resultados.
 - **Fuente del sistema**: sin fuentes descargadas; el sistema operativo provee la tipografía (sin `@font-face` ni dependencias).
 - **Sin dependencias externas ni build**: HTML/CSS/JS/SVG servidos por la biblioteca estándar; ECharts se incorpora solo en el incremento 3 como archivo local fijado.
-- **Navegación actual**: Resumen, Operaciones, Historial y Actividad. Es un estado
-  transitorio que todavía refleja la separación técnica entre snapshot e historia.
-- **Dirección aprobada**: Resumen, Trading, Rendimiento y Estado del sistema.
-  Trading integra `En curso`, `Ejecuciones`, `Órdenes` y `Todo`; Rendimiento solo
-  consume ciclos completos elegibles y Estado conserva captura y diagnóstico.
+- **Navegación actual**: Resumen, Trading y Actividad. Trading integra `En curso`,
+  `Operaciones cerradas` y `Registro MT5`; la separación técnica entre snapshot e historia no se
+  traslada a la navegación principal.
+- **Dirección aprobada**: Resumen, Trading y Estado del sistema. Trading reúne
+  actividad vigente, operaciones cerradas con rendimiento y un registro MT5
+  investigable; Estado conserva captura y diagnóstico.
 - **Filtros que no recargan**: match exacto por Magic Number y selección de
   posiciones u órdenes; se persisten por fuente para no arrastrar silenciosamente
   un filtro entre cuentas. La experiencia unificada extenderá el mismo principio
@@ -107,11 +112,9 @@ A partir de tres análisis previos (UX, diseño visual, performance en navegador
 
 ### Actividad observada y rendimiento atribuible
 
-La pantalla unificada no convierte orden, deal y posición en sinónimos. Comparte
-la navegación y los filtros, pero cada registro mantiene su entidad y presenta
-solo las columnas comunes antes de abrir el detalle específico. `Todo` es una
-cronología para investigar; no es una tabla sobre la que se calculen métricas
-mezclando clases diferentes.
+El Registro MT5 no convierte orden, deal y posición en sinónimos. Comparte filtros,
+pero cada fila mantiene su entidad. Es una cronología para investigar, no una
+tabla sobre la que se calculen métricas mezclando clases diferentes.
 
 Rendimiento utiliza ciclos reconstruidos por `account_id + position_id`. El Magic
 Number atribuye el ciclo a un EA cuando todo el recorrido es completo y no hubo

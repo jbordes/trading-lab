@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from tradinglab.telemetry.operational_job import (  # noqa: E402
     exclusive_job_lock,
+    rotate_log,
     write_job_status,
 )
 
@@ -34,6 +35,18 @@ class TelemetryOperationalJobTest(unittest.TestCase):
             self.assertEqual(document["state"], "failed")
             self.assertEqual(len(document["detail"]), 500)
             self.assertFalse(status.with_suffix(".json.tmp").exists())
+
+    def test_log_rotation_keeps_a_bounded_number_of_copies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "receivers.log"
+            log.write_bytes(b"12345")
+            rotate_log(log, max_bytes=5, copies=2)
+            self.assertFalse(log.exists())
+            self.assertEqual(log.with_name("receivers.log.1").read_bytes(), b"12345")
+            log.write_bytes(b"67890")
+            rotate_log(log, max_bytes=5, copies=2)
+            self.assertEqual(log.with_name("receivers.log.1").read_bytes(), b"67890")
+            self.assertEqual(log.with_name("receivers.log.2").read_bytes(), b"12345")
 
 
 if __name__ == "__main__":

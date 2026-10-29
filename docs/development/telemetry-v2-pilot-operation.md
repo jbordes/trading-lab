@@ -128,9 +128,30 @@ sistema operativo rechaza ejecuciones simultáneas y el último resultado queda 
 `_storage/operations/maintenance-status.json`, sin credenciales. También admite
 `--storage-root` para la ubicación local persistente elegida en el arranque.
 
-Este comando es el núcleo que invocará la tarea programada. En este incremento no
-se instala ni habilita ninguna tarea de Windows y no se prueba restauración. Una
-copia local sigue sin proteger frente a la pérdida completa de la VPS.
+Este comando es el núcleo que invoca la tarea programada. Ejecutarlo por sí solo no
+instala ni habilita ninguna tarea de Windows y no prueba restauración. Una copia
+local sigue sin proteger frente a la pérdida completa de la VPS.
+
+### Tareas automáticas de Windows
+
+La configuración se inspecciona primero sin modificar Task Scheduler:
+
+```powershell
+py -3 -m uv run python scripts/configure_telemetry_windows_tasks.py
+```
+
+La vista previa prepara `TradingLab Telemetry Receivers`, iniciada al abrir sesión
+con hasta tres reintentos acotados, y `TradingLab Telemetry Maintenance`, diaria a
+las 03:30 y con límite de una hora. Ambas se ejecutan como el usuario actual, con
+privilegios mínimos y política de instancia única. Sus comandos contienen rutas,
+nunca valores de tokens. El receptor guarda salida local rotada y estado bajo
+`_storage/operations/`; el mantenimiento conserva su último resultado allí.
+
+Solo después de revisar rutas, usuario, horario, `.env.local` y espacio disponible,
+agregar `--apply` para registrarlas. El instalador no sobrescribe tareas existentes.
+No inicia ni cierra MT5: una sesión de Windows y la terminal conectada continúan
+siendo dependencias operativas separadas. Antes de aplicar en una cuenta real se
+deben actualizar los ADR de backup, probar restauración y acordar alertas.
 
 Para mantener datos fuera del checkout se puede indicar un directorio local:
 

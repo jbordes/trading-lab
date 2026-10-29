@@ -109,9 +109,9 @@ previo con las mismas bases y versiones compatibles.
 
 ### 2. Operación autónoma y mantenimiento programado
 
-**Estado:** núcleo de mantenimiento preparado en
-`feature/autonomous-telemetry-startup`; instalación de tareas y supervisión de
-arranque todavía pendientes.
+**Estado:** núcleo de mantenimiento y definiciones de Task Scheduler preparados en
+`feature/autonomous-telemetry-startup`; pendiente validación manual en vista previa,
+actualización del ADR y activación humana en una ventana operativa.
 
 **Implementación:** preparar primero instalación en modo de vista previa. Usar un
 servicio o tarea de arranque de Windows para los receptores, con reinicio acotado

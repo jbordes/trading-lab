@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -50,6 +51,32 @@ def write_job_status(path: Path, *, job: str, state: str, detail: str) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def rotate_log(path: Path, *, max_bytes: int = 5 * 1024 * 1024, copies: int = 3) -> None:
+    """Rotate a bounded operational log before starting a new supervised process."""
+
+    if max_bytes < 1 or copies < 1:
+        raise ValueError("La rotación de logs requiere límites positivos")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.stat().st_size < max_bytes:
+        return
+    oldest = path.with_name(f"{path.name}.{copies}")
+    oldest.unlink(missing_ok=True)
+    for index in range(copies - 1, 0, -1):
+        source = path.with_name(f"{path.name}.{index}")
+        if source.exists():
+            source.replace(path.with_name(f"{path.name}.{index + 1}"))
+    path.replace(path.with_name(f"{path.name}.1"))
+
+
+def run_logged(command: list[str], *, cwd: Path, log_path: Path) -> int:
+    """Run one fixed argv without a shell and append stdout/stderr to a local log."""
+
+    rotate_log(log_path)
+    with log_path.open("ab") as log:
+        result = subprocess.run(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, shell=False)
+    return result.returncode
 
 
 def _lock(stream: BinaryIO) -> None:

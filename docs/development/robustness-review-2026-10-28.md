@@ -91,8 +91,8 @@ si falta el offset, queda indicado sin inferirlo.
 - **ROB-02:** `owner_magics` llega hasta SQLite y se aplica antes del cursor y el
   límite. El descubrimiento usa una consulta `DISTINCT` autenticada y acotada a
   100 Magic Numbers.
-- **ROB-03:** el detalle muestra `fee` únicamente cuando es distinto de cero,
-  sin recalcular ni duplicar el resultado neto.
+- **ROB-03:** el detalle muestra `fee` junto a Swap y Comisión, incluso cuando
+  vale cero, sin recalcular ni duplicar el resultado neto.
 - **ROB-04:** el servidor publica cadencia de captura, tolerancia y edad. El
   navegador incrementa esa edad con reloj monotónico y ya no usa su reloj civil.
 - **ROB-05:** la fila conserva la hora del broker y el detalle agrega hora local

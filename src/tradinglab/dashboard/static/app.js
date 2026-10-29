@@ -1478,9 +1478,7 @@ function positionCycleRow(item) {
   add("Close · hora local", closed?.local || "No informada");
   add("Swap", money(facts.swap, latestCurrency, true));
   add("Comisión", money(facts.commission, latestCurrency, true));
-  if (Number.isFinite(Number(facts.fee)) && Number(facts.fee) !== 0) {
-    add("Otros cargos (fee)", money(Number(facts.fee), latestCurrency, true));
-  }
+  add("Fee", money(facts.fee, latestCurrency, true));
   add("PnL bruto", money(facts.gross_profit, latestCurrency, true));
   add("Pips", "— · tamaño de pip pendiente para este símbolo");
   add("Duración (horas)", decimal(facts.duration_hours));

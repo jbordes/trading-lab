@@ -132,8 +132,10 @@ permite pausar solo el backfill profundo conservando sus cursores; la captura re
 y los heartbeats continúan y exponen `deep_paused`. La persistencia se validó con un
 dataset sintético reproducible que abarca más de 12 meses, cierre/reapertura de SQLite
 y repetición idempotente de una página antes de completar su cadena. `activity-0.6.0`
-compiló con 0 errores y 0 warnings; continúa pendiente su validación operativa en
-la terminal de prueba.
+compiló con 0 errores y 0 warnings. La validación operativa del 29 de octubre de 2026
+persistió un heartbeat real de Juampi con estado `ok`, sin avisos descartados ni
+bloqueos, recuperación profunda activa y ambos cursores separados por cinco segundos.
+El collector no registra cada ACK exitoso para evitar ruido en la pestaña Expertos.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

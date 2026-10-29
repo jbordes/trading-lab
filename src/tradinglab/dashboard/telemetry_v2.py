@@ -326,6 +326,7 @@ class LoopbackV2HistoryClient:
             raise ValueError("Timeout v2 fuera de rango")
         self._activity_url = f"http://127.0.0.1:{port}/v2/activity"
         self._cycles_url = f"http://127.0.0.1:{port}/v2/position-cycles"
+        self._cycle_magics_url = f"http://127.0.0.1:{port}/v2/position-cycle-magics"
         self._authorization = f"Bearer {read_authorization}"
         self._source_id = activity_source_id
         self._timeout = float(timeout_seconds)
@@ -437,12 +438,15 @@ class LoopbackV2HistoryClient:
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryPositionCyclePage:
         parameters: dict[str, str | int] = {"limit": limit}
         if owner_magic is not None:
             parameters["owner_magic"] = owner_magic
+        if owner_magics:
+            parameters["owner_magics"] = ",".join(owner_magics)
         if cursor is not None:
             parameters["cursor"] = cursor
         request = urllib.request.Request(
@@ -469,9 +473,42 @@ class LoopbackV2HistoryClient:
             return self._position_cycle_page(
                 json.loads(body),
                 owner_magic=owner_magic,
+                owner_magics=owner_magics,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DashboardReadError("El receptor devolvió ciclos v2 inválidos") from exc
+
+    def position_cycle_magics(self) -> tuple[str, ...]:
+        request = urllib.request.Request(
+            self._cycle_magics_url,
+            headers={"Authorization": self._authorization, "Accept": "application/json"},
+        )
+        try:
+            with self._opener.open(request, timeout=self._timeout) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            raise DashboardReadError("No se pudo descubrir los Magic Numbers") from exc
+        if len(body) > MAX_BODY_BYTES:
+            raise DashboardReadError("La lista de Magic Numbers supera el límite")
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict) or set(payload) != {"magics"}:
+                raise ValueError("Respuesta inválida")
+            magics = payload["magics"]
+            if (
+                not isinstance(magics, list)
+                or len(magics) > 100
+                or any(not isinstance(item, str) for item in magics)
+            ):
+                raise ValueError("Magic Numbers inválidos")
+            validated = tuple(self._magic_text(item, allow_none=False) for item in magics)
+            if len(set(validated)) != len(validated):
+                raise ValueError("Magic Numbers duplicados")
+            return validated
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise DashboardReadError("El receptor devolvió Magic Numbers inválidos") from exc
 
     def _deal_page(
         self,
@@ -700,6 +737,7 @@ class LoopbackV2HistoryClient:
         payload: object,
         *,
         owner_magic: str | None,
+        owner_magics: tuple[str, ...] = (),
     ) -> TelemetryPositionCyclePage:
         if not isinstance(payload, dict) or set(payload) != _CYCLE_RESPONSE_FIELDS:
             raise ValueError("Respuesta de ciclos v2 inválida")
@@ -720,6 +758,8 @@ class LoopbackV2HistoryClient:
         if owner_magic is not None and any(
             item.cycle.owner_magic != owner_magic for item in cycles
         ):
+            raise ValueError("Magic propietario de ciclos v2 inesperado")
+        if owner_magics and any(item.cycle.owner_magic not in owner_magics for item in cycles):
             raise ValueError("Magic propietario de ciclos v2 inesperado")
         next_cursor = payload["next_cursor"]
         if next_cursor is not None:
@@ -1005,6 +1045,7 @@ class V2HistoryProvider:
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
@@ -1016,6 +1057,7 @@ class V2HistoryProvider:
         if from_msc is None:
             return self._client.position_cycles(
                 owner_magic=owner_magic,
+                owner_magics=owner_magics,
                 limit=limit,
                 cursor=cursor,
             )
@@ -1030,6 +1072,7 @@ class V2HistoryProvider:
         while len(matches) < limit and not reached_start:
             page = self._client.position_cycles(
                 owner_magic=owner_magic,
+                owner_magics=owner_magics,
                 limit=min(100, limit - len(matches)),
                 cursor=next_cursor,
             )
@@ -1065,12 +1108,16 @@ class V2HistoryProvider:
             None if reached_start else next_cursor,
         )
 
+    def position_cycle_magics(self) -> tuple[str, ...]:
+        return self._client.position_cycle_magics()
+
     def cycle_performance_metrics(
         self,
         *,
         from_msc: int,
         to_msc: int,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
     ) -> TelemetryCyclePerformance:
         evidence = self._client.deal_history(
             from_msc=from_msc,
@@ -1088,6 +1135,7 @@ class V2HistoryProvider:
         while True:
             page = self.position_cycles(
                 owner_magic=owner_magic,
+                owner_magics=owner_magics,
                 from_msc=from_msc,
                 to_msc=to_msc,
                 closed_only=True,

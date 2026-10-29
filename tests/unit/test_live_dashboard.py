@@ -422,6 +422,22 @@ class LiveDashboardTest(unittest.TestCase):
         self.assertEqual(state["capture"]["consecutive_failures"], 1)
         self.assertEqual(state["capture"]["last_duration_ms"], 25.0)
 
+    def test_freshness_contract_separates_capture_from_dashboard_polling(self) -> None:
+        service = LiveDashboardService(
+            DemoSnapshotSource(),
+            interval_seconds=5,
+            capture_interval_seconds=20,
+            clock=lambda: self.observed_at,
+        )
+
+        service.poll_once()
+        state = service.state()
+
+        self.assertEqual(state["interval_seconds"], 5)
+        self.assertEqual(state["capture_interval_seconds"], 20)
+        self.assertEqual(state["freshness_tolerance_seconds"], 10)
+        self.assertEqual(state["latest_age_seconds"], 0)
+
     def test_service_retains_bounded_deterministic_history(self) -> None:
         instants = iter(
             [self.observed_at, self.observed_at + timedelta(seconds=5), self.observed_at]

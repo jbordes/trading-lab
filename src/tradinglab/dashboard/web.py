@@ -97,10 +97,13 @@ class PositionCyclePage(Protocol):
 
 
 class PositionCycleProvider(Protocol):
+    def position_cycle_magics(self) -> tuple[str, ...]: ...
+
     def position_cycles(
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
@@ -114,6 +117,7 @@ class PositionCycleProvider(Protocol):
         from_msc: int,
         to_msc: int,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
     ) -> TelemetryCyclePerformance: ...
 
 
@@ -345,6 +349,7 @@ def create_server(
                         from_msc=history_query["from_msc"],
                         to_msc=history_query["to_msc"],
                         owner_magic=history_query["magic_number"],
+                        owner_magics=selected_magics,
                     )
                 except ValueError:
                     self._send_json(
@@ -387,6 +392,27 @@ def create_server(
                     )
                     return
                 self._send_json(page.as_dict())
+                return
+            if path == "/api/cycle-magics":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if position_cycle_provider is None or raw_query:
+                    self._send_json(
+                        {"error": "cycle_magics_unavailable"}, status=HTTPStatus.NOT_FOUND
+                    )
+                    return
+                try:
+                    magics = position_cycle_provider.position_cycle_magics()
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "cycle_magics_unavailable"},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self._send_json({"magics": list(magics)})
                 return
             if path == "/api/orders":
                 if session is None:
@@ -639,10 +665,11 @@ def create_server(
                 raw_query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=6,
+                max_num_fields=7,
             )
             if not set(values) <= {
                 "owner_magic",
+                "owner_magics",
                 "from_msc",
                 "to_msc",
                 "closed",
@@ -661,6 +688,9 @@ def create_server(
             ):
                 raise ValueError("Límite de ciclos inválido")
             owner_magic = values.get("owner_magic", [None])[0]
+            owner_magics = parse_magic_selection(values.get("owner_magics", []))
+            if owner_magic is not None and owner_magics:
+                raise ValueError("Filtros Magic incompatibles")
             if owner_magic is not None:
                 try:
                     parsed_magic = int(owner_magic)
@@ -690,6 +720,7 @@ def create_server(
                 raise ValueError("Filtro de ciclo cerrado inválido")
             return {
                 "owner_magic": owner_magic,
+                "owner_magics": owner_magics,
                 "from_msc": from_msc,
                 "to_msc": to_msc,
                 "closed_only": closed == "true",

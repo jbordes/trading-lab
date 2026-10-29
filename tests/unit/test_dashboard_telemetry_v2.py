@@ -132,6 +132,9 @@ class DashboardTelemetryV2Test(unittest.TestCase):
         self.assertEqual(page.cycles[0].details["side"], "long")
         self.assertEqual(page.cycles[0].details["open_price"], 4200)
         self.assertEqual(page.cycles[0].as_dict()["details"]["gross_profit"], 10)
+        multi = V2HistoryProvider(self.client()).position_cycles(owner_magics=("11122", "99999"))
+        self.assertEqual(multi.cycles, page.cycles)
+        self.assertEqual(self.client().position_cycle_magics(), ("11122",))
 
     def test_rejects_invalid_trade_details(self) -> None:
         self.backend.accept(

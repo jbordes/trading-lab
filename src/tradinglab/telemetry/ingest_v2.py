@@ -48,9 +48,12 @@ class V2TelemetryBackend(Protocol):
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage: ...
+
+    def position_cycle_magics(self) -> tuple[str, ...]: ...
 
 
 def create_v2_telemetry_server(
@@ -115,11 +118,29 @@ def create_v2_telemetry_server(
                 state.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, state)
                 return
-            if target.path not in {"/v2/activity", "/v2/position-cycles"}:
+            if target.path not in {
+                "/v2/activity",
+                "/v2/position-cycles",
+                "/v2/position-cycle-magics",
+            }:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not self._is_read_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if target.path == "/v2/position-cycle-magics":
+                if target.query:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
+                    return
+                try:
+                    magics = backend.position_cycle_magics()
+                except V2StorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "storage_unavailable"},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, {"magics": list(magics)})
                 return
             if target.path == "/v2/position-cycles":
                 try:
@@ -303,17 +324,29 @@ def create_v2_telemetry_server(
                 query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=3,
+                max_num_fields=4,
             )
-            if not set(values) <= {"owner_magic", "limit", "cursor"}:
+            if not set(values) <= {"owner_magic", "owner_magics", "limit", "cursor"}:
                 raise ValueError("Parámetros de ciclos inválidos")
             if any(len(items) != 1 for items in values.values()):
                 raise ValueError("Parámetros de ciclos repetidos")
             limit = values.get("limit", ["50"])[0]
             if not limit.isascii() or not limit.isdecimal() or str(int(limit)) != limit:
                 raise ValueError("Límite de ciclos inválido")
+            owner_magic = values.get("owner_magic", [None])[0]
+            owner_magics_text = values.get("owner_magics", [None])[0]
+            if owner_magic is not None and owner_magics_text is not None:
+                raise ValueError("Filtros Magic incompatibles")
+            owner_magics = () if owner_magics_text is None else tuple(owner_magics_text.split(","))
+            if (
+                len(owner_magics) > 12
+                or len(set(owner_magics)) != len(owner_magics)
+                or any(not item for item in owner_magics)
+            ):
+                raise ValueError("Selección Magic inválida")
             return {
-                "owner_magic": values.get("owner_magic", [None])[0],
+                "owner_magic": owner_magic,
+                "owner_magics": owner_magics,
                 "limit": int(limit),
                 "cursor": values.get("cursor", [None])[0],
             }

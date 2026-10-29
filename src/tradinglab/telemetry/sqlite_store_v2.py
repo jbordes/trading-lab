@@ -837,6 +837,7 @@ class V2TelemetryRegistry:
         account_id: str,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -845,13 +846,19 @@ class V2TelemetryRegistry:
         account = _identifier(account_id, "account_id")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
             raise ValueError("limit debe estar entre 1 y 500")
-        if owner_magic is not None:
-            if not isinstance(owner_magic, str) or not owner_magic:
+        if owner_magic is not None and owner_magics:
+            raise ValueError("Los filtros owner_magic y owner_magics son incompatibles")
+        if len(owner_magics) > 12 or len(set(owner_magics)) != len(owner_magics):
+            raise ValueError("owner_magics inválido")
+        for magic in (owner_magic,) if owner_magic is not None else owner_magics:
+            if not isinstance(magic, str) or not magic:
                 raise ValueError("owner_magic inválido")
             try:
-                int(owner_magic)
+                parsed_magic = int(magic)
             except ValueError as exc:
                 raise ValueError("owner_magic inválido") from exc
+            if str(parsed_magic) != magic or not -(2**63) <= parsed_magic < 2**63:
+                raise ValueError("owner_magic inválido")
         cursor_event, cursor_position = self._decode_activity_cursor(cursor)
         if cursor_position is not None and (
             cursor_position == "0" or str(int(cursor_position)) != cursor_position
@@ -862,6 +869,10 @@ class V2TelemetryRegistry:
         if owner_magic is not None:
             filters.append("owner_magic = ?")
             parameters.append(owner_magic)
+        elif owner_magics:
+            placeholders = ",".join("?" for _ in owner_magics)
+            filters.append(f"owner_magic IN ({placeholders})")
+            parameters.extend(owner_magics)
         result_filter = "capture_rank = 1"
         if cursor_event is not None and cursor_position is not None:
             result_filter += """ AND (last_event_at_msc < ? OR
@@ -978,6 +989,21 @@ class V2TelemetryRegistry:
                 cycle.position_id,
             )
         return V2PositionCyclePage(account, owner_magic, page_items, next_cursor)
+
+    def position_cycle_magics(self, account_id: str, *, limit: int = 100) -> tuple[str, ...]:
+        """Return a bounded discovery list without loading position cycles."""
+        account = _identifier(account_id, "account_id")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("limit debe estar entre 1 y 100")
+        rows = self._connection.execute(
+            """SELECT DISTINCT owner_magic FROM position_cycle_observations
+               WHERE account_id = ? AND owner_magic IS NOT NULL
+               ORDER BY length(owner_magic), owner_magic LIMIT ?""",
+            (account, limit + 1),
+        ).fetchall()
+        if len(rows) > limit:
+            raise V2StorageError("La cuenta supera el límite seguro de Magic Numbers")
+        return tuple(str(row[0]) for row in rows)
 
     @staticmethod
     def _encode_activity_cursor(event_msc: int, ticket: str) -> str:

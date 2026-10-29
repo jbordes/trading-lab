@@ -112,6 +112,15 @@ persistencia transaccional, recuperación y composición por cuenta sin tocar v1
 Aún se requieren migración/provisión, proyecciones incrementales y receptor opt-in
 antes de habilitar productores v2.
 
+Actualización de planificación del 2026-10-29: el piloto ya dispone de receptores
+v1/v2 y actividad/ciclos durables, como documenta la
+[operación del piloto](../development/telemetry-v2-pilot-operation.md). El
+[plan de captura autónoma e historial completo](../development/autonomous-capture-history-plan.md)
+define separar su operación del dashboard, recuperar años de historia disponible
+y preparar consultas y retención. SQLite continúa en la etapa local; un backend
+remoto con SQLite junto al proceso o PostgreSQL central son alternativas futuras.
+El plan no autoriza despliegue remoto ni modifica los ADR vigentes de retención.
+
 El historial de operaciones no espera esa transición. El journal SQLite v1 ya
 persistido será el punto de partida de una vista paginada por periodo y Magic
 Number. Las nuevas proyecciones de consulta serán durables y se agregarán mediante

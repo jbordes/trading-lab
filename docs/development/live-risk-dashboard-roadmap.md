@@ -1,5 +1,22 @@
 # Roadmap — Dashboard local de riesgo
 
+## Prioridad acordada — 29 de octubre de 2026
+
+El [plan de captura autónoma, historial completo y rendimiento](autonomous-capture-history-plan.md)
+define la siguiente tanda, pendiente de aprobación para implementar:
+
+1. Separar receptores y dashboard, incluyendo configuración y credenciales.
+2. Preparar arranque autónomo y mantenimiento programado con guardas.
+3. Ampliar la recuperación reanudable a toda la historia disponible sin frenar
+   datos recientes.
+4. Preparar consultas y métricas para años de actividad; índices justificados por
+   consultas y validación sintética, sin esperar a acumular años en el piloto.
+5. Definir retención por clase de dato manteniendo entretanto la política sin TTL.
+
+SQLite continúa para estos incrementos. Servidor central y PostgreSQL se evalúan
+en una etapa posterior. Cada paso del plan detalla implementación, aceptación y
+reversión; esta actualización no activa tareas, migraciones ni cambios en MT5.
+
 **Fecha:** 2026-10-14
 
 **Estado:** piloto MT5 operativo; validación de exactitud con reporte en curso

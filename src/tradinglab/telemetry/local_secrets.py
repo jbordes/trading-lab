@@ -36,9 +36,7 @@ def load_local_secrets(
             continue
         match = _ASSIGNMENT.fullmatch(line)
         if match is None:
-            raise ValueError(
-                f"Línea {line_number} inválida en {path.name}; use NOMBRE=valor"
-            )
+            raise ValueError(f"Línea {line_number} inválida en {path.name}; use NOMBRE=valor")
         name, value = match.groups()
         if name not in allowed:
             raise ValueError(f"Variable no permitida en {path.name}: {name}")

@@ -39,16 +39,16 @@ class TelemetryComponentCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             secrets_file = Path(temporary_directory) / ".env.local"
             secrets_file.write_text(
-                "TRADINGLAB_TELEMETRY_TOKEN=file-token-123456789012345\n"
-                "TRADINGLAB_TELEMETRY_LIVE_TOKEN=live-token-123456789012345\n"
-                "TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN=activity-token-123456789012\n"
-                "TRADINGLAB_TELEMETRY_READ_TOKEN=read-token-123456789012345\n",
+                "TRADINGLAB_TELEMETRY_TOKEN=example-file-token-not-for-use\n"
+                "TRADINGLAB_TELEMETRY_LIVE_TOKEN=example-live-token-not-for-use\n"
+                "TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN=example-activity-token-not-for-use\n"
+                "TRADINGLAB_TELEMETRY_READ_TOKEN=example-read-token-not-for-use\n",
                 encoding="utf-8",
             )
             with (
                 patch.dict(
                     CLI.os.environ,
-                    {"TRADINGLAB_TELEMETRY_TOKEN": "process-token-123456789012"},
+                    {"TRADINGLAB_TELEMETRY_TOKEN": "example-process-token-not-for-use"},
                     clear=True,
                 ),
                 patch.object(CLI.getpass, "getpass") as prompt,
@@ -57,11 +57,11 @@ class TelemetryComponentCliTest(unittest.TestCase):
 
         prompt.assert_not_called()
         self.assertEqual(
-            environment["TRADINGLAB_TELEMETRY_TOKEN"], "process-token-123456789012"
+            environment["TRADINGLAB_TELEMETRY_TOKEN"], "example-process-token-not-for-use"
         )
         self.assertEqual(
             environment["TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN"],
-            "activity-token-123456789012",
+            "example-activity-token-not-for-use",
         )
 
     def test_local_secrets_reject_unknown_names(self) -> None:

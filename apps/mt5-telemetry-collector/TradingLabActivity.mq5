@@ -81,7 +81,8 @@ bool safety_stopped = false;
 ulong next_send_ms = 0;
 int retry_delay_seconds = 2;
 int send_attempts = 0;
-TransactionHint transaction_hints[TRANSACTION_HINT_CAPACITY];
+// MQL5 requires a literal size for a static array declaration.
+TransactionHint transaction_hints[128];
 int transaction_hint_head = 0;
 int transaction_hint_count = 0;
 long transaction_hints_dropped = 0;

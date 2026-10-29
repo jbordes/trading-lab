@@ -79,8 +79,8 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
    commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
    Conserva deals y órdenes finalizadas. Un rango mínimo saturado usa páginas
    compuestas y solo avanza después de confirmar su cadena durable. La versión
-   anterior compiló sin errores; `activity-0.6.0` todavía requiere compilación e
-   instalación manual en la terminal de prueba.
+   `activity-0.6.0` compiló en el MetaEditor de Juampi con 0 errores y 0 warnings;
+   todavía requiere validación operativa en esa terminal.
 4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
    la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
    con cursor estable; la cobertura completa y los lotes incompletos se informan
@@ -131,8 +131,9 @@ heartbeat durable sin crear una proyección creciente en memoria. `EnableDeepRec
 permite pausar solo el backfill profundo conservando sus cursores; la captura reciente
 y los heartbeats continúan y exponen `deep_paused`. La persistencia se validó con un
 dataset sintético reproducible que abarca más de 12 meses, cierre/reapertura de SQLite
-y repetición idempotente de una página antes de completar su cadena. Continúa pendiente
-la compilación e instalación manual de `activity-0.6.0` en la terminal de prueba.
+y repetición idempotente de una página antes de completar su cadena. `activity-0.6.0`
+compiló con 0 errores y 0 warnings; continúa pendiente su validación operativa en
+la terminal de prueba.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

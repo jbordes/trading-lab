@@ -44,6 +44,10 @@ En el Navegador, refrescar `Asesores Expertos/TradingLab` y adjuntar
 | `MinimumWindowSeconds` | `60` |
 | `OverlapSeconds` | `5` |
 | `MaxItemsPerCollection` | `200` |
+| `RecentLookbackSeconds` | `3600` |
+| `RecentCadenceSeconds` | `60` |
+| `HeartbeatSeconds` | `60` |
+| `EnableDeepRecovery` | `true` durante la recuperación; `false` para pausarla |
 | `ExpectedDemoLogin` | login completo visible localmente en la terminal demo |
 | `ExpectedDemoServer` | `RoboForex-Pro` |
 

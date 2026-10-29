@@ -26,13 +26,25 @@ class BackupResult:
 class BackupPlan:
     root: Path
     filename: str
+    storage_root: Path | None = None
+    expected_schema_versions: tuple[int, ...] = (SCHEMA_VERSION,)
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not DATABASE_NAME.fullmatch(self.filename):
             raise ValueError("Nombre de base SQLite inválido")
+        if not self.expected_schema_versions or any(
+            isinstance(version, bool) or not isinstance(version, int) or version < 1
+            for version in self.expected_schema_versions
+        ):
+            raise ValueError("Versiones SQLite esperadas inválidas")
 
     @property
     def storage(self) -> Path:
+        if self.storage_root is not None:
+            storage = self.storage_root.resolve(strict=True)
+            if not storage.is_dir() or storage.is_symlink():
+                raise ValueError("El almacenamiento debe ser un directorio local real")
+            return storage
         root = self.root.resolve()
         storage = root / "_storage"
         if not storage.resolve().is_relative_to(root):
@@ -64,7 +76,10 @@ class BackupPlan:
         temporary = Path(tempfile.mkdtemp(prefix=".tmp-telemetry-", dir=backups))
         copied = temporary / "data.sqlite3"
         with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
-            if reader.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+            if (
+                reader.execute("PRAGMA user_version").fetchone()[0]
+                not in self.expected_schema_versions
+            ):
                 raise ValueError("Versión SQLite de TradingLab no admitida")
             with closing(sqlite3.connect(copied)) as writer:
                 writer.execute("PRAGMA synchronous = FULL")

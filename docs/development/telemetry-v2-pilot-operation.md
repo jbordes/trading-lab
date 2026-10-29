@@ -114,6 +114,24 @@ Solicita los tokens v1, humano y de lectura v2, comprueba que ambos receptores
 respondan y arranca solo el dashboard. Ctrl+C no detiene receptores ni modifica
 MT5. Un puerto ocupado se rechaza; el comando nunca adopta ni cierra ese proceso.
 
+### Mantenimiento preparado, todavía no programado
+
+El mantenimiento conjunto de las bases v1/v2 se puede previsualizar sin escribir:
+
+```powershell
+py -3 -m uv run python scripts/run_telemetry_maintenance.py
+```
+
+Agregar `--apply` crea una copia online verificada de cada base sin detener los
+receptores, sobrescribir copias anteriores ni eliminar información. Una guarda del
+sistema operativo rechaza ejecuciones simultáneas y el último resultado queda en
+`_storage/operations/maintenance-status.json`, sin credenciales. También admite
+`--storage-root` para la ubicación local persistente elegida en el arranque.
+
+Este comando es el núcleo que invocará la tarea programada. En este incremento no
+se instala ni habilita ninguna tarea de Windows y no se prueba restauración. Una
+copia local sigue sin proteger frente a la pérdida completa de la VPS.
+
 Para mantener datos fuera del checkout se puede indicar un directorio local:
 
 ```powershell

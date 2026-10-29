@@ -59,6 +59,20 @@ class TelemetryBackupTest(unittest.TestCase):
     def test_preview_and_invalid_inputs_do_not_create_backups(self) -> None:
         self.assertEqual(self.plan.source, self.source)
         self.assertFalse((self.root / "_storage" / "backups").exists())
+
+    def test_explicit_storage_accepts_the_expected_v2_schema_only(self) -> None:
+        external = self.root / "external-storage"
+        external.mkdir()
+        database = external / "pilot-v2.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("PRAGMA user_version = 4")
+        plan = BackupPlan(self.root, database.name, external, (4,))
+        result = plan.apply(clock=self.now)
+        self.assertTrue((result.directory / "data.sqlite3").is_file())
+        with self.assertRaisesRegex(ValueError, "no admitida"):
+            BackupPlan(self.root, database.name, external, (1,)).apply(
+                clock=self.now + timedelta(seconds=1)
+            )
         with self.assertRaises(ValueError):
             BackupPlan(self.root, "../pilot.sqlite3")
         with self.assertRaises(FileNotFoundError):

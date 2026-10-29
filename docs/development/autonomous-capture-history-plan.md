@@ -109,6 +109,10 @@ previo con las mismas bases y versiones compatibles.
 
 ### 2. Operación autónoma y mantenimiento programado
 
+**Estado:** núcleo de mantenimiento preparado en
+`feature/autonomous-telemetry-startup`; instalación de tareas y supervisión de
+arranque todavía pendientes.
+
 **Implementación:** preparar primero instalación en modo de vista previa. Usar un
 servicio o tarea de arranque de Windows para los receptores, con reinicio acotado
 ante fallos; tareas separadas para mantenimiento periódico. La lógica continúa en

@@ -145,21 +145,24 @@ def _heartbeat(payload: dict[str, Any]) -> None:
 
 def _activity_progress(value: Any) -> None:
     progress = _object(value, "activity_progress")
+    expected_fields = {
+        "recent_cursor_msc",
+        "deep_cursor_msc",
+        "backlog_msc",
+        "recent_blocked",
+        "deep_blocked",
+        "queued_hints",
+        "dropped_hints",
+        "last_transaction_age_ms",
+        "latest_deal_ticket",
+        "latest_order_ticket",
+        "latest_position_id",
+    }
+    if "deep_paused" in progress:
+        expected_fields.add("deep_paused")
     v1._require_exact_fields(
         progress,
-        {
-            "recent_cursor_msc",
-            "deep_cursor_msc",
-            "backlog_msc",
-            "recent_blocked",
-            "deep_blocked",
-            "queued_hints",
-            "dropped_hints",
-            "last_transaction_age_ms",
-            "latest_deal_ticket",
-            "latest_order_ticket",
-            "latest_position_id",
-        },
+        expected_fields,
         "activity_progress",
     )
     for field in (
@@ -172,7 +175,9 @@ def _activity_progress(value: Any) -> None:
         "latest_position_id",
     ):
         v1._decimal_text(progress, field, minimum=0, maximum=v1.MAX_INT64)
-    for field in ("recent_blocked", "deep_blocked"):
+    for field in ("recent_blocked", "deep_blocked", "deep_paused"):
+        if field not in progress:
+            continue
         if not isinstance(progress[field], bool):
             raise TelemetryValidationError(f"{field} debe ser booleano")
     for field in ("queued_hints", "dropped_hints"):

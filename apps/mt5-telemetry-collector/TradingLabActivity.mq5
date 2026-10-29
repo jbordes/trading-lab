@@ -17,12 +17,13 @@ input int MaxItemsPerCollection = 200;
 input int RecentLookbackSeconds = 3600;
 input int RecentCadenceSeconds = 60;
 input int HeartbeatSeconds = 60;
+input bool EnableDeepRecovery = true;
 // Operator-approved demo identity; never commit real account configuration.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.5.0";
+const string COLLECTOR_VERSION = "activity-0.6.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 
@@ -276,7 +277,8 @@ void OnTimer()
    bool recent_due = !recent_recovery_blocked &&
       (startup_pending || trade_activity_pending ||
        now_msc - recent_confirmed_from_msc >= (long)RecentCadenceSeconds * 1000);
-   bool deep_due = !recovery_blocked && confirmed_from_msc < recent_confirmed_from_msc;
+   bool deep_due = EnableDeepRecovery && !recovery_blocked &&
+      confirmed_from_msc < recent_confirmed_from_msc;
    if(!recent_due && !deep_due)
       return;
 
@@ -1156,6 +1158,7 @@ string BuildHeartbeatPayload(const ulong now_tick_ms)
    payload += "\"backlog_msc\":\"" + IntegerToString(backlog_msc) + "\",";
    payload += "\"recent_blocked\":" + (recent_recovery_blocked ? "true" : "false") + ",";
    payload += "\"deep_blocked\":" + (recovery_blocked ? "true" : "false") + ",";
+   payload += "\"deep_paused\":" + (EnableDeepRecovery ? "false" : "true") + ",";
    payload += "\"queued_hints\":" + IntegerToString(transaction_hint_count) + ",";
    payload += "\"dropped_hints\":" + IntegerToString(transaction_hints_dropped) + ",";
    payload += "\"last_transaction_age_ms\":\"" + UnsignedIdentifier(transaction_age_ms) + "\",";

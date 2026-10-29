@@ -127,6 +127,34 @@ def authorized_page(
     return directory().authorize(encoded, f"Bearer {ACTIVITY_CREDENTIAL}")
 
 
+def authorized_order_observation(
+    sequence: int,
+    *,
+    ticket: str,
+    done_at: datetime,
+) -> AuthorizedEnvelope:
+    value = fixture("activity-canceled-order")
+    session_id = "synthetic-long-history"
+    done_msc = int(done_at.timestamp() * 1000)
+    value.update(
+        session_id=session_id,
+        sequence=sequence,
+        event_id=f"{session_id}:{sequence}",
+        captured_at=done_at.isoformat().replace("+00:00", "Z"),
+    )
+    value["payload"]["window"] = {
+        "from_server_msc": str(done_msc - 30_000),
+        "to_server_msc": str(done_msc + 30_000),
+    }
+    order = value["payload"]["orders"]["items"][0]
+    order.update(
+        ticket=ticket,
+        setup_time_msc=str(done_msc - 90_000),
+        done_time_msc=str(done_msc),
+    )
+    return directory().authorize(json.dumps(value).encode(), f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
 class V2SqliteTest(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -470,6 +498,9 @@ class V2SqliteTest(unittest.TestCase):
             before = registry.coverage_report(
                 "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
             )
+        with open_v2_registry(self.path) as registry:
+            duplicate = registry.store_authorized(first, received_at=self.now)
+            self.assertEqual(duplicate.disposition, AdmissionDisposition.DUPLICATE)
             registry.store_authorized(final, received_at=self.now)
             after = registry.coverage_report(
                 "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
@@ -506,6 +537,28 @@ class V2SqliteTest(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0],
                 0,
             )
+
+    def test_more_than_twelve_months_survives_restart_without_retention_cutoff(self) -> None:
+        old_at = datetime(2025, 8, 1, 12, tzinfo=UTC)
+        recent_at = datetime(2026, 10, 20, 12, tzinfo=UTC)
+        old = authorized_order_observation(1, ticket="800000000000000001", done_at=old_at)
+        recent = authorized_order_observation(2, ticket="800000000000000002", done_at=recent_at)
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(old, received_at=self.now)
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(recent, received_at=self.now)
+            page = registry.activity_page(
+                "account-demo",
+                "order",
+                from_msc=int(old_at.timestamp() * 1000) - 60_000,
+                to_msc=int(recent_at.timestamp() * 1000) + 60_000,
+            )
+
+        self.assertGreater((recent_at - old_at).days, 365)
+        self.assertEqual(
+            {item.ticket for item in page.items},
+            {"800000000000000001", "800000000000000002"},
+        )
 
     def test_position_reconcile_is_durable_without_claiming_account_range(self) -> None:
         with open_v2_registry(self.path) as registry:

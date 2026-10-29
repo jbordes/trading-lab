@@ -184,6 +184,12 @@ mismos puertos al mismo tiempo.
 6. Detener con Ctrl+C y volver a iniciar. El cursor debe continuar desde lo
    confirmado, sin duplicar deals ni órdenes.
 
+Para pausar temporalmente una recuperación histórica extensa, reconfigurar únicamente
+`EnableDeepRecovery=false` en `TradingLabActivity 0.6.0`. Esto no borra cursores ni
+detiene la captura reciente. Confirmar `deep_paused=true` en
+`GET /v2/activity-progress`. Para reanudar, volver a `true` conservando la misma
+cuenta, fuente y fecha inicial; no retirar variables globales.
+
 La cobertura ya viaja por la API, pero su indicador visual continúa pendiente. Un
 lote `truncated` no se considera cobertura completa y requiere revisión antes de
 usar métricas como si el período estuviera íntegro.

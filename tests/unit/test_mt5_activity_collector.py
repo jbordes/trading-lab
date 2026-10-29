@@ -78,7 +78,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.5.0"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.6.0"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
@@ -120,6 +120,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             "backlog_msc",
             "recent_blocked",
             "deep_blocked",
+            "deep_paused",
             "queued_hints",
             "dropped_hints",
             "latest_deal_ticket",
@@ -134,6 +135,13 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         )[0]
         self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
         self.assertNotIn("PersistValue", heartbeat_ack)
+
+    def test_deep_recovery_can_pause_without_stopping_recent_capture(self) -> None:
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("EnableDeepRecovery && !recovery_blocked", timer)
+        recent = timer.split("bool recent_due", 1)[1].split("bool deep_due", 1)[0]
+        self.assertNotIn("EnableDeepRecovery", recent)
+        self.assertIn("deep_paused", self.source)
 
     def test_saturated_pages_use_stable_composite_keys_and_restart_changed_snapshot(self) -> None:
         pager = self.source.split("string BuildPagedActivityPayload", 1)[1].split(

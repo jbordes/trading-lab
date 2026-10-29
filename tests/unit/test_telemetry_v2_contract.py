@@ -304,6 +304,7 @@ class TelemetryV2ContractTest(unittest.TestCase):
             "backlog_msc": "26035200000",
             "recent_blocked": False,
             "deep_blocked": False,
+            "deep_paused": True,
             "queued_hints": 0,
             "dropped_hints": 0,
             "last_transaction_age_ms": "2500",
@@ -316,6 +317,7 @@ class TelemetryV2ContractTest(unittest.TestCase):
 
         for field, invalid in (
             ("recent_blocked", 0),
+            ("deep_paused", 0),
             ("queued_hints", True),
             ("deep_cursor_msc", 1),
         ):

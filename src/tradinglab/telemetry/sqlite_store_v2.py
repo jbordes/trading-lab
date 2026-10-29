@@ -655,10 +655,7 @@ class V2TelemetryRegistry:
         edges: dict[tuple[int, int, int], list[tuple[tuple[int, int, int], bool]]] = {}
         for (encoded,) in rows:
             payload = json.loads(encoded)["payload"]
-            if (
-                payload["deals"]["total"] != deal_total
-                or payload["orders"]["total"] != order_total
-            ):
+            if payload["deals"]["total"] != deal_total or payload["orders"]["total"] != order_total:
                 continue
             pagination = payload["pagination"]
             after = V2TelemetryRegistry._stored_page_key(pagination["after"])

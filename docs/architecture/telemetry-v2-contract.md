@@ -128,7 +128,7 @@ confirma rangos de actividad. La ausencia de heartbeat no prueba que un EA de
 trading esté detenido. Cadencia y presentación quedan para la implementación.
 
 El productor `activity` puede agregar `activity_progress` con cursores reciente y
-profundo, atraso, bloqueos, avisos en cola/descartados, antigüedad de la última
+profundo, atraso, bloqueos, pausa intencional del carril profundo, avisos en cola/descartados, antigüedad de la última
 transacción y últimos tickets observados. Es diagnóstico durable, no cobertura.
 
 ## Persistencia, reenvíos y recuperación

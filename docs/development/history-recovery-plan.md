@@ -79,7 +79,7 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
    commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
    Conserva deals y órdenes finalizadas. Un rango mínimo saturado usa páginas
    compuestas y solo avanza después de confirmar su cadena durable. La versión
-   anterior compiló sin errores; `activity-0.5.0` todavía requiere compilación e
+   anterior compiló sin errores; `activity-0.6.0` todavía requiere compilación e
    instalación manual en la terminal de prueba.
 4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
    la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
@@ -118,7 +118,7 @@ completa, incrementa un contador de descartes y la recuperación autoritativa po
 historial continúa siendo la protección contra huecos. Los avisos aceleran y
 diagnostican; no se convierten en una segunda fuente de verdad.
 
-La versión `activity-0.5.0` emite además un heartbeat operativo cada minuto. El
+La versión `activity-0.6.0` emite además un heartbeat operativo cada minuto. El
 mensaje informa por separado los cursores reciente y profundo, atraso pendiente,
 bloqueos, avisos en cola o descartados y los últimos tickets observados. Un heartbeat
 confirmado no mueve cursores, no confirma cobertura y no desencadena reconciliación
@@ -127,9 +127,12 @@ los productores existentes sigan siendo compatibles. Un bloqueo o un descarte
 de avisos degrada explícitamente su estado.
 
 El progreso se consulta mediante `GET /v2/activity-progress`, leyendo el último
-heartbeat durable sin crear una proyección creciente en memoria. Continúan pendientes
-dentro del punto 3: pausa operativa, prueba reproducible con más de 12 meses y
-compilación/validación manual de `activity-0.5.0` en la terminal de prueba.
+heartbeat durable sin crear una proyección creciente en memoria. `EnableDeepRecovery`
+permite pausar solo el backfill profundo conservando sus cursores; la captura reciente
+y los heartbeats continúan y exponen `deep_paused`. La persistencia se validó con un
+dataset sintético reproducible que abarca más de 12 meses, cierre/reapertura de SQLite
+y repetición idempotente de una página antes de completar su cadena. Continúa pendiente
+la compilación e instalación manual de `activity-0.6.0` en la terminal de prueba.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

@@ -36,7 +36,7 @@ from tradinglab.telemetry.contract import (
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 
 _POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
     message_id INTEGER PRIMARY KEY REFERENCES telemetry_v2_messages(message_id),
@@ -60,7 +60,15 @@ _POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
 ) STRICT;"""
 _POSITION_CYCLE_INDEX = """CREATE INDEX position_cycle_observations_query
 ON position_cycle_observations(account_id, last_event_at_msc, position_id);"""
-_POSITION_CYCLE_DDL = _POSITION_CYCLE_TABLE + "\n" + _POSITION_CYCLE_INDEX
+_POSITION_CYCLE_REVISION_INDEX = """CREATE INDEX position_cycle_observations_revision
+ON position_cycle_observations(
+    account_id, position_id, captured_at_utc DESC, message_id DESC
+);"""
+_POSITION_CYCLE_MAGIC_INDEX = """CREATE INDEX position_cycle_observations_magic_query
+ON position_cycle_observations(account_id, owner_magic, last_event_at_msc, position_id);"""
+_POSITION_CYCLE_EXTRA_INDEXES = _POSITION_CYCLE_REVISION_INDEX + "\n" + _POSITION_CYCLE_MAGIC_INDEX
+_POSITION_CYCLE_DDL_V4 = _POSITION_CYCLE_TABLE + "\n" + _POSITION_CYCLE_INDEX
+_POSITION_CYCLE_DDL = _POSITION_CYCLE_DDL_V4 + "\n" + _POSITION_CYCLE_EXTRA_INDEXES
 
 _SCHEMA = f"""
 BEGIN IMMEDIATE;
@@ -155,10 +163,13 @@ CREATE TABLE activity_coverage (
 CREATE INDEX activity_coverage_query
 ON activity_coverage(account_id, entity_type, from_server_msc, to_server_msc);
 {_POSITION_CYCLE_DDL}
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 COMMIT;
 """
-_SCHEMA_V3 = _SCHEMA.replace(_POSITION_CYCLE_DDL, "").replace(
+_SCHEMA_V4 = _SCHEMA.replace("\n" + _POSITION_CYCLE_EXTRA_INDEXES, "").replace(
+    "PRAGMA user_version = 5", "PRAGMA user_version = 4"
+)
+_SCHEMA_V3 = _SCHEMA_V4.replace(_POSITION_CYCLE_DDL_V4, "").replace(
     "PRAGMA user_version = 4", "PRAGMA user_version = 3"
 )
 
@@ -253,7 +264,7 @@ class V2PositionCycleItem:
     cycle: PositionCycle
     source_id: str
     captured_at: str
-    details: dict[str, object]
+    details: dict[str, object] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -953,6 +964,8 @@ class V2TelemetryRegistry:
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -975,6 +988,8 @@ class V2TelemetryRegistry:
             raise ValueError("Período de ciclos inválido")
         if not isinstance(closed_only, bool):
             raise ValueError("closed_only inválido")
+        if not isinstance(ascending, bool) or not isinstance(include_details, bool):
+            raise ValueError("Opciones de ciclos inválidas")
         if len(owner_magics) > 12 or len(set(owner_magics)) != len(owner_magics):
             raise ValueError("owner_magics inválido")
         for magic in (owner_magic,) if owner_magic is not None else owner_magics:
@@ -1007,9 +1022,10 @@ class V2TelemetryRegistry:
         if closed_only:
             result_filter += " AND lifecycle = 'closed'"
         if cursor_event is not None and cursor_position is not None:
-            result_filter += """ AND (last_event_at_msc < ? OR
-                (last_event_at_msc = ? AND (length(position_id) < ? OR
-                (length(position_id) = ? AND position_id < ?))))"""
+            comparator = ">" if ascending else "<"
+            result_filter += f""" AND (last_event_at_msc {comparator} ? OR
+                (last_event_at_msc = ? AND (length(position_id) {comparator} ? OR
+                (length(position_id) = ? AND position_id {comparator} ?))))"""
             parameters.extend(
                 (
                     cursor_event,
@@ -1020,6 +1036,7 @@ class V2TelemetryRegistry:
                 )
             )
         parameters.append(limit + 1)
+        direction = "ASC" if ascending else "DESC"
         rows = self._connection.execute(
             f"""WITH filtered AS (
                 SELECT * FROM position_cycle_observations
@@ -1044,14 +1061,15 @@ class V2TelemetryRegistry:
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
                    observed_magics_json, deal_tickets_json, exclusions_json
             FROM eligible WHERE {result_filter}
-            ORDER BY last_event_at_msc DESC, length(position_id) DESC, position_id DESC
+            ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
+                     position_id {direction}
             LIMIT ?""",
             parameters,
         ).fetchall()
         items: list[V2PositionCycleItem] = []
         message_ids = [int(row[0]) for row in rows[:limit]]
         evidence = {}
-        if message_ids:
+        if include_details and message_ids:
             placeholders = ",".join("?" for _ in message_ids)
             evidence = {
                 row[0]: row[1:]
@@ -1093,7 +1111,7 @@ class V2TelemetryRegistry:
             )
             if actual != expected:
                 raise V2StorageError("Columnas y ciclo de posición guardado no coinciden")
-            details = {}
+            details = None
             if int(row[0]) in evidence:
                 canonical, digest = evidence[int(row[0])]
                 try:
@@ -1109,7 +1127,7 @@ class V2TelemetryRegistry:
                     details = trade_details(cycle, envelope.payload)
                 except (ValueError, TypeError, KeyError) as exc:
                     raise V2StorageError("Detalle de operación inválido") from exc
-            elif len(items) < limit:
+            elif include_details and len(items) < limit:
                 raise V2StorageError("Falta la evidencia del ciclo")
             items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3], details))
         page_items = tuple(items[:limit])
@@ -1438,12 +1456,70 @@ def migrate_v2_database_v3_to_v4(path: Path, backup_path: Path) -> int:
             )
             projected += 1
         connection.execute("PRAGMA user_version = 4")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
             raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise V2StorageError("La migración produjo relaciones inválidas")
         connection.commit()
         return projected
+    except sqlite3.Error as exc:
+        connection.rollback()
+        raise V2StorageError("No se pudo migrar la base v2") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        if backup_connection is not None:
+            backup_connection.close()
+        connection.close()
+
+
+def migrate_v2_database_v4_to_v5(path: Path, backup_path: Path) -> None:
+    """Back up and atomically add the indexes used by multi-year cycle queries."""
+
+    if path.suffix != ".sqlite3" or backup_path.suffix != ".sqlite3":
+        raise ValueError("La base y su copia deben usar extensión .sqlite3")
+    source = path.resolve(strict=True)
+    backup = backup_path.resolve(strict=False)
+    if source == backup:
+        raise ValueError("La copia debe usar otro archivo")
+    if backup.exists():
+        raise FileExistsError(f"La copia ya existe: {backup}")
+    backup.parent.resolve(strict=True)
+
+    connection = sqlite3.connect(source, timeout=5.0)
+    backup_connection: sqlite3.Connection | None = None
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA synchronous = FULL")
+        if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
+            raise V2StorageError("La migración exige una base v2 con esquema 4")
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
+            raise V2StorageError("El esquema 4 no coincide con TradingLab v2")
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            raise V2StorageError("Falló la comprobación previa de SQLite v2")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise V2StorageError("La base v2 contiene relaciones inválidas")
+
+        backup_connection = sqlite3.connect(backup, timeout=5.0)
+        connection.backup(backup_connection)
+        backup_connection.commit()
+        if backup_connection.execute("PRAGMA quick_check").fetchall() != [
+            ("ok",)
+        ] or _schema_objects(backup_connection) != _expected_schema_objects(_SCHEMA_V4):
+            raise V2StorageError("La copia previa a la migración no quedó verificada")
+        backup_connection.close()
+        backup_connection = None
+
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_POSITION_CYCLE_REVISION_INDEX)
+        connection.execute(_POSITION_CYCLE_MAGIC_INDEX)
+        connection.execute("PRAGMA user_version = 5")
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
+            raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise V2StorageError("La migración produjo relaciones inválidas")
+        connection.commit()
     except sqlite3.Error as exc:
         connection.rollback()
         raise V2StorageError("No se pudo migrar la base v2") from exc

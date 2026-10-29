@@ -53,6 +53,8 @@ class V2TelemetryBackend(Protocol):
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage: ...
@@ -348,7 +350,7 @@ def create_v2_telemetry_server(
                 query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=7,
+                max_num_fields=9,
             )
             if not set(values) <= {
                 "owner_magic",
@@ -356,6 +358,8 @@ def create_v2_telemetry_server(
                 "from_msc",
                 "to_msc",
                 "closed_only",
+                "order",
+                "include_details",
                 "limit",
                 "cursor",
             }:
@@ -396,12 +400,20 @@ def create_v2_telemetry_server(
             closed_text = values.get("closed_only", ["false"])[0]
             if closed_text not in {"true", "false"}:
                 raise ValueError("closed_only inválido")
+            order = values.get("order", ["desc"])[0]
+            if order not in {"asc", "desc"}:
+                raise ValueError("Orden de ciclos inválido")
+            details_text = values.get("include_details", ["true"])[0]
+            if details_text not in {"true", "false"}:
+                raise ValueError("include_details inválido")
             return {
                 "owner_magic": owner_magic,
                 "owner_magics": owner_magics,
                 "from_msc": from_msc,
                 "to_msc": to_msc,
                 "closed_only": closed_text == "true",
+                "ascending": order == "asc",
+                "include_details": details_text == "true",
                 "limit": int(limit),
                 "cursor": values.get("cursor", [None])[0],
             }

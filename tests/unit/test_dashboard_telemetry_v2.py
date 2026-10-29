@@ -181,10 +181,12 @@ class DashboardTelemetryV2Test(unittest.TestCase):
     def test_ea_comparison_separates_results_and_excludes_interventions(self) -> None:
         body = (FIXTURES / "activity-position-reconcile.json").read_bytes()
         self.backend.accept(body, f"Bearer {ACTIVITY_AUTHORIZATION}")
-        performance = V2HistoryProvider(self.client()).cycle_performance_metrics(
+        provider = V2HistoryProvider(self.client())
+        performance = provider.cycle_performance_metrics(
             from_msc=1792656000000, to_msc=1792656060001
         )
-        first = performance.cycles[0]
+        first = provider.position_cycles(owner_magic="11122").cycles[0]
+        performance = replace(performance, prepared=None)
 
         def variation(magic: str, pnl: str, position: str):
             return replace(

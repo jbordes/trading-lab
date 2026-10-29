@@ -31,6 +31,7 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     V2TelemetryRegistry,
     create_v2_database,
     migrate_v2_database_v3_to_v4,
+    migrate_v2_database_v4_to_v5,
     open_v2_registry,
 )
 
@@ -652,10 +653,39 @@ class V2SqliteTest(unittest.TestCase):
                 ).fetchone()
             )
             self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+        backup_v4 = self.path.with_name("telemetry-v2-before-v5.sqlite3")
+        migrate_v2_database_v4_to_v5(self.path, backup_v4)
+        with closing(sqlite3.connect(backup_v4)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
         with open_v2_registry(self.path) as registry:
             cycles = registry.position_cycles("account-demo")
         self.assertEqual(len(cycles.items), 1)
         self.assertEqual(cycles.items[0].cycle.position_id, "600000000000000001")
+
+    def test_v4_migration_adds_verified_multi_year_query_indexes(self) -> None:
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("DROP INDEX position_cycle_observations_revision")
+            connection.execute("DROP INDEX position_cycle_observations_magic_query")
+            connection.execute("PRAGMA user_version = 4")
+        backup = self.path.with_name("telemetry-v2-v4-backup.sqlite3")
+
+        migrate_v2_database_v4_to_v5(self.path, backup)
+
+        with closing(sqlite3.connect(backup)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+        with open_v2_registry(self.path) as registry:
+            self.assertEqual(registry.position_cycles("account-demo").items, ())
+        with closing(sqlite3.connect(self.path)) as connection:
+            indexes = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                ).fetchall()
+            }
+        self.assertIn("position_cycle_observations_revision", indexes)
+        self.assertIn("position_cycle_observations_magic_query", indexes)
 
     def test_position_cycles_use_stable_keyset_pagination(self) -> None:
         second = fixture("activity-position-reconcile")
@@ -685,11 +715,21 @@ class V2SqliteTest(unittest.TestCase):
                 limit=1,
                 cursor=first.next_cursor,
             )
+            oldest = registry.position_cycles("account-demo", ascending=True, limit=1)
+            newer = registry.position_cycles(
+                "account-demo",
+                ascending=True,
+                limit=1,
+                cursor=oldest.next_cursor,
+            )
 
         self.assertEqual(first.items[0].cycle.position_id, position_id)
         self.assertIsNotNone(first.next_cursor)
         self.assertEqual(following.items[0].cycle.position_id, "600000000000000001")
         self.assertIsNone(following.next_cursor)
+        self.assertEqual(oldest.items[0].cycle.position_id, "600000000000000001")
+        self.assertEqual(newer.items[0].cycle.position_id, position_id)
+        self.assertIsNone(newer.next_cursor)
 
     def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
         def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:

@@ -136,6 +136,8 @@ class PersistentV2TelemetryReceiver:
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -150,6 +152,8 @@ class PersistentV2TelemetryReceiver:
                 from_msc=from_msc,
                 to_msc=to_msc,
                 closed_only=closed_only,
+                ascending=ascending,
+                include_details=include_details,
                 limit=limit,
                 cursor=cursor,
             )

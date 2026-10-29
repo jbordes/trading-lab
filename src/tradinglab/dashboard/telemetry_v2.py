@@ -20,7 +20,11 @@ from tradinglab.dashboard.telemetry import (
 )
 from tradinglab.metrics import calculate_closed_deal_metrics
 from tradinglab.metrics.position_cycles import CycleExclusion, CycleLifecycle, PositionCycle
-from tradinglab.metrics.workbook_v1 import calculate_workbook_metrics
+from tradinglab.metrics.workbook_v1 import (
+    StreamingWorkbookMetrics,
+    StreamingWorkbookSnapshot,
+    calculate_workbook_metrics,
+)
 from tradinglab.telemetry.contract import (
     IDENTIFIER,
     MAX_BODY_BYTES,
@@ -141,8 +145,11 @@ class TelemetryCyclePerformance:
     owner_magic: str | None
     cycles: tuple[TelemetryPositionCycle, ...]
     coverage: dict[str, object]
+    prepared: dict[str, object] | None = None
 
     def as_dict(self, *, selected_magics: tuple[str, ...] = ()) -> dict[str, object]:
+        if self.prepared is not None:
+            return self.prepared
         available_magics = sorted(
             {item.cycle.owner_magic for item in self.cycles if item.cycle.owner_magic is not None}
         )
@@ -245,6 +252,34 @@ def _compare_eas(cycles: tuple[TelemetryPositionCycle, ...]) -> list[dict[str, o
 
 def _optional_decimal(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
+
+
+def _streaming_metric_values(metrics: StreamingWorkbookSnapshot) -> dict[str, object]:
+    return {
+        "trade_count": metrics.trade_count,
+        "net_profit": float(metrics.net_profit),
+        "profit_factor": _optional_decimal(metrics.profit_factor),
+        "winning_percentage": _optional_decimal(metrics.winning_percentage),
+        "average_trade": _optional_decimal(metrics.average_trade),
+        "maximum_drawdown": float(metrics.maximum_drawdown),
+        "maximum_drawdown_percentage": float(metrics.maximum_drawdown_percentage),
+        "current_drawdown": float(metrics.current_drawdown),
+        "current_drawdown_percentage": float(metrics.current_drawdown_percentage),
+        "return_drawdown_ratio": _optional_decimal(metrics.return_drawdown_ratio),
+        "expectancy_r": _optional_decimal(metrics.expectancy_r),
+        "standard_deviation": _optional_decimal(metrics.standard_deviation),
+        "series": [
+            {
+                "ticket": point.ticket,
+                "time_msc": point.time_msc,
+                "net_profit": float(point.net_profit),
+                "cumulative_profit": float(point.cumulative_profit),
+                "drawdown": float(point.drawdown),
+                "rolling_average_20": float(point.rolling_average_20),
+            }
+            for point in metrics.series
+        ],
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,6 +477,8 @@ class LoopbackV2HistoryClient:
         from_msc: int | None = None,
         to_msc: int | None = None,
         closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryPositionCyclePage:
@@ -457,6 +494,10 @@ class LoopbackV2HistoryClient:
             parameters["to_msc"] = to_msc
         if closed_only:
             parameters["closed_only"] = "true"
+        if ascending:
+            parameters["order"] = "asc"
+        if not include_details:
+            parameters["include_details"] = "false"
         if cursor is not None:
             parameters["cursor"] = cursor
         request = urllib.request.Request(
@@ -484,6 +525,7 @@ class LoopbackV2HistoryClient:
                 json.loads(body),
                 owner_magic=owner_magic,
                 owner_magics=owner_magics,
+                ascending=ascending,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DashboardReadError("El receptor devolvió ciclos v2 inválidos") from exc
@@ -748,6 +790,7 @@ class LoopbackV2HistoryClient:
         *,
         owner_magic: str | None,
         owner_magics: tuple[str, ...] = (),
+        ascending: bool = False,
     ) -> TelemetryPositionCyclePage:
         if not isinstance(payload, dict) or set(payload) != _CYCLE_RESPONSE_FIELDS:
             raise ValueError("Respuesta de ciclos v2 inválida")
@@ -763,7 +806,7 @@ class LoopbackV2HistoryClient:
         for previous, current in zip(cycles, cycles[1:], strict=False):
             left = (previous.cycle.last_event_at_msc, int(previous.cycle.position_id))
             right = (current.cycle.last_event_at_msc, int(current.cycle.position_id))
-            if left <= right:
+            if (ascending and left >= right) or (not ascending and left <= right):
                 raise ValueError("Orden de ciclos v2 inválido")
         if owner_magic is not None and any(
             item.cycle.owner_magic != owner_magic for item in cycles
@@ -864,7 +907,7 @@ class LoopbackV2HistoryClient:
             or set(cycle.observed_magics) != {cycle.owner_magic}
         ):
             raise ValueError("Ciclo elegible v2 inconsistente")
-        details = self._trade_details(item["details"])
+        details = None if item["details"] is None else self._trade_details(item["details"])
         return TelemetryPositionCycle(item["message_id"], item["captured_at"], cycle, details)
 
     def _trade_details(self, value: object) -> dict[str, object]:
@@ -1068,6 +1111,8 @@ class V2HistoryProvider:
             from_msc=from_msc,
             to_msc=to_msc,
             closed_only=closed_only,
+            ascending=False,
+            include_details=True,
             limit=limit,
             cursor=cursor,
         )
@@ -1091,42 +1136,89 @@ class V2HistoryProvider:
         )
         if evidence.coverage is None:
             raise DashboardReadError("El receptor no informó cobertura de deals")
-        cycles: list[TelemetryPositionCycle] = []
+        combined = StreamingWorkbookMetrics()
+        by_magic: dict[str, StreamingWorkbookMetrics] = {}
+        available_magics: set[str] = set()
         cursor: str | None = None
         account_id: str | None = None
         source_id: str | None = None
-        inspected = 0
         while True:
-            page = self.position_cycles(
+            page = self._client.position_cycles(
                 owner_magic=owner_magic,
                 owner_magics=owner_magics,
                 from_msc=from_msc,
                 to_msc=to_msc,
                 closed_only=True,
+                ascending=True,
+                include_details=False,
                 limit=100,
                 cursor=cursor,
             )
+            if account_id is not None and page.account_id != account_id:
+                raise DashboardReadError("La cuenta cambió durante el cálculo")
+            if source_id is not None and page.source_id != source_id:
+                raise DashboardReadError("La fuente cambió durante el cálculo")
             account_id = page.account_id
             source_id = page.source_id
-            inspected += len(page.cycles)
-            cycles.extend(
-                item for item in page.cycles if item.cycle.eligible_for_autonomous_metrics
-            )
-            cursor = page.next_cursor
-            if cursor is None:
+            for item in page.cycles:
+                cycle = item.cycle
+                if not cycle.eligible_for_autonomous_metrics or cycle.owner_magic is None:
+                    continue
+                available_magics.add(cycle.owner_magic)
+                combined.add(
+                    cycle.observed_net_result,
+                    ticket=cycle.position_id,
+                    time_msc=cycle.last_event_at_msc,
+                )
+                magic_metrics = by_magic.get(cycle.owner_magic)
+                if magic_metrics is None:
+                    magic_metrics = StreamingWorkbookMetrics()
+                    by_magic[cycle.owner_magic] = magic_metrics
+                magic_metrics.add(
+                    cycle.observed_net_result,
+                    ticket=cycle.position_id,
+                    time_msc=cycle.last_event_at_msc,
+                )
+            next_cursor = page.next_cursor
+            if next_cursor is None:
                 break
-            if inspected >= 500:
-                raise DashboardReadError("El período supera el límite seguro de 500 operaciones")
+            if next_cursor == cursor or not page.cycles:
+                raise DashboardReadError("El receptor no avanzó la paginación de ciclos")
+            cursor = next_cursor
         if account_id is None or source_id is None:
             raise DashboardReadError("El receptor no informó la cuenta")
+        combined_snapshot = combined.snapshot()
+        prepared = {
+            "account_id": account_id,
+            "source_id": source_id,
+            "from_msc": from_msc,
+            "to_msc": to_msc,
+            "magic_number": owner_magic,
+            "formula_version": "position-cycle-v1",
+            "coverage": evidence.coverage,
+            "reference_capital": float(combined_snapshot.reference_capital),
+            "risk_amount": float(combined_snapshot.risk_amount),
+            **_streaming_metric_values(combined_snapshot),
+            "by_ea": [
+                {
+                    "account_id": account_id,
+                    "magic_number": magic,
+                    **_streaming_metric_values(metrics.snapshot()),
+                }
+                for magic, metrics in sorted(by_magic.items())
+            ],
+            "available_magics": sorted(available_magics),
+            "selected_magics": list(owner_magics),
+        }
         return TelemetryCyclePerformance(
             account_id,
             source_id,
             from_msc,
             to_msc,
             owner_magic,
-            tuple(cycles),
+            (),
             evidence.coverage,
+            prepared,
         )
 
     def order_history(

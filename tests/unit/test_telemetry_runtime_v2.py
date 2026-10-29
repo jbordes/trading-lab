@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from tradinglab.telemetry.runtime_v2 import (  # noqa: E402
     V2PilotRuntimeConfig,
+    run_v2_dashboard,
     run_v2_pilot,
+    run_v2_receivers,
 )
 
 TEST_ENV = {
@@ -119,6 +121,111 @@ class V2PilotRuntimeTest(unittest.TestCase):
                 v1_port=8776,
                 v2_port=8776,
             )
+
+    def test_independent_receivers_do_not_spawn_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.configured(root)
+            v1, v2 = Mock(), Mock()
+            v1.poll.return_value = None
+            v2.poll.return_value = None
+            spawn = Mock(side_effect=[v1, v2])
+
+            def stop_after_first_monitor(_: float) -> None:
+                v2.poll.return_value = 1
+
+            with self.assertRaisesRegex(RuntimeError, "receptor v2"):
+                run_v2_receivers(
+                    root,
+                    config,
+                    TEST_ENV,
+                    spawn=spawn,
+                    check_port=Mock(),
+                    ready=Mock(return_value=True),
+                    sleep=stop_after_first_monitor,
+                    report=Mock(),
+                )
+
+            commands = [call.args[0] for call in spawn.call_args_list]
+            self.assertEqual(len(commands), 2)
+            self.assertIn("telemetry_receiver.py", commands[0][1])
+            self.assertIn("telemetry_receiver_v2.py", commands[1][1])
+            self.assertNotIn("live_dashboard.py", str(commands))
+            self.assertNotIn("TRADINGLAB_DASHBOARD_TOKEN", spawn.call_args_list[0].kwargs["env"])
+            self.assertNotIn(
+                "TRADINGLAB_TELEMETRY_READ_TOKEN", spawn.call_args_list[0].kwargs["env"]
+            )
+            self.assertNotIn("TRADINGLAB_TELEMETRY_TOKEN", spawn.call_args_list[1].kwargs["env"])
+            v1.terminate.assert_called_once()
+
+    def test_independent_dashboard_requires_receivers_and_stops_only_itself(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.configured(root)
+            dashboard = Mock()
+            dashboard.poll.return_value = 1
+            spawn = Mock(return_value=dashboard)
+
+            with self.assertRaisesRegex(RuntimeError, "inesperadamente"):
+                run_v2_dashboard(
+                    root,
+                    config,
+                    TEST_ENV,
+                    spawn=spawn,
+                    check_port=Mock(),
+                    ready=Mock(return_value=True),
+                    report=Mock(),
+                )
+
+            self.assertEqual(spawn.call_count, 1)
+            self.assertIn("live_dashboard.py", spawn.call_args.args[0][1])
+            self.assertNotIn("telemetry_receiver", str(spawn.call_args.args[0]))
+            self.assertNotIn("TRADINGLAB_TELEMETRY_ACTIVITY_TOKEN", spawn.call_args.kwargs["env"])
+            self.assertNotIn("TRADINGLAB_TELEMETRY_LIVE_TOKEN", spawn.call_args.kwargs["env"])
+
+            unavailable_spawn = Mock()
+            with self.assertRaisesRegex(RuntimeError, "deben estar listos"):
+                run_v2_dashboard(
+                    root,
+                    config,
+                    TEST_ENV,
+                    spawn=unavailable_spawn,
+                    check_port=Mock(),
+                    ready=Mock(return_value=False),
+                )
+            unavailable_spawn.assert_not_called()
+
+    def test_storage_root_can_be_outside_checkout_when_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as checkout, tempfile.TemporaryDirectory() as data:
+            root = Path(checkout)
+            storage = Path(data)
+            v1 = storage / "v1.sqlite3"
+            v2 = storage / "v2.sqlite3"
+            v1.touch()
+            v2.touch()
+            config = V2PilotRuntimeConfig(
+                "live",
+                "activity",
+                "account",
+                v1,
+                v2,
+                storage_root=storage,
+            )
+            first, second = Mock(), Mock()
+            first.poll.return_value = 1
+            spawn = Mock(side_effect=[first, second])
+
+            with self.assertRaisesRegex(RuntimeError, "arranque"):
+                run_v2_receivers(
+                    root,
+                    config,
+                    TEST_ENV,
+                    spawn=spawn,
+                    check_port=Mock(),
+                )
+
+            command = spawn.call_args_list[0].args[0]
+            self.assertEqual(command[command.index("--storage-root") + 1], str(storage.resolve()))
 
 
 if __name__ == "__main__":

@@ -21,7 +21,12 @@ def port(value: str) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=port, default=8766, help="Puerto local de ingestión.")
-    parser.add_argument("--sqlite-db", type=Path, help="Base SQLite existente bajo _storage/.")
+    parser.add_argument("--sqlite-db", type=Path, help="Base SQLite existente.")
+    parser.add_argument(
+        "--storage-root",
+        type=Path,
+        help="Directorio local autorizado que contiene la base; por defecto _storage/.",
+    )
     parser.add_argument("--source-id", help="Fuente única autorizada para esta base y token.")
     parser.add_argument(
         "--max-messages",
@@ -71,10 +76,12 @@ def main(argv: list[str] | None = None) -> int:
         if (args.sqlite_db is None) != (args.source_id is None):
             raise ValueError("--sqlite-db y --source-id deben indicarse juntos")
         if args.sqlite_db is not None:
-            storage_root = (root / "_storage").resolve()
+            storage_root = (args.storage_root or root / "_storage").resolve(strict=True)
+            if not storage_root.is_dir():
+                raise ValueError("El directorio de almacenamiento no es válido")
             database = args.sqlite_db.resolve(strict=True)
             if not database.is_relative_to(storage_root):
-                raise ValueError("La base SQLite debe estar bajo _storage/")
+                raise ValueError("La base SQLite debe estar bajo --storage-root")
             persistent = PersistentTelemetryReceiver(database, source_id=args.source_id)
             buffer = persistent
         else:

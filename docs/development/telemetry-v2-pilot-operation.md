@@ -82,6 +82,45 @@ broker. Esa referencia permite mostrar `Broker` y `Local` sin depender del reloj
 de la VPS. Es una configuración fija del piloto: debe revisarse cuando el broker
 cambie su horario; no representa todavía una regla histórica de DST.
 
+## Arranque independiente de receptores y dashboard
+
+El arranque independiente mantiene la captura aunque el dashboard se detenga.
+No instala tareas automáticas todavía. En una consola, iniciar los receptores:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py receivers
+```
+
+Solicita de forma oculta los tokens v1, live v2, activity v2 y lectura v2. Deben
+ser los mismos en cada reinicio de los componentes que los usan; el comando no
+genera credenciales efímeras. Arranca solo los receptores v1/v2, espera su salud
+y detiene únicamente esos dos hijos ante Ctrl+C o fallo de uno de ellos.
+
+En otra consola, iniciar el dashboard cuando sea necesario:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py dashboard
+```
+
+Solicita los tokens v1, humano y de lectura v2, comprueba que ambos receptores
+respondan y arranca solo el dashboard. Ctrl+C no detiene receptores ni modifica
+MT5. Un puerto ocupado se rechaza; el comando nunca adopta ni cierra ese proceso.
+
+Para mantener datos fuera del checkout se puede indicar un directorio local:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py receivers `
+  --storage-root "C:\ruta\privada\TradingLabData"
+```
+
+Las dos bases deben existir dentro de esa raíz. SQLite no se ubica en una carpeta
+de red. `TRADINGLAB_STORAGE_ROOT` permite declarar la misma ruta sin repetir el
+argumento; no contiene secretos. Identidades, nombres de base y puertos también
+son configurables, pero otra cuenta requiere provisión previa y operación autorizada.
+
+El arranque único continúa como fallback. No ejecutar ambos modos sobre los
+mismos puertos al mismo tiempo.
+
 ## Comprobación manual
 
 1. Confirmar en la consola `Receptores v1/v2 listos`.

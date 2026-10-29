@@ -85,6 +85,9 @@ incluye documentación operativa y pruebas dirigidas. CI ejecuta la suite comple
 
 ### 1. Separar receptores y dashboard
 
+**Estado:** implementación preparada en `feature/independent-telemetry-runtime`;
+pendiente de validación manual, CI y merge humano.
+
 **Implementación:** revisar supervisor, configuración y credenciales; extraer
 entradas independientes para recepción y dashboard reutilizando la lógica actual.
 Usar rutas absolutas de datos independientes del checkout y configuración segura
@@ -234,3 +237,5 @@ resolviendo configuración y credenciales para reinicios independientes. Un PR p
 esa capacidad. Luego automatización operativa y recuperación histórica, en ese
 orden; revisar índices desde el inicio si las consultas conocidas lo requieren.
 Este documento no instala tareas, abre puertos, migra datos ni modifica MT5.
+El primer incremento agrega supervisores separados, credenciales estables
+provistas en memoria y una raíz local de datos independiente del checkout.

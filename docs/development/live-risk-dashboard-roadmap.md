@@ -5,7 +5,8 @@
 El [plan de captura autónoma, historial completo y rendimiento](autonomous-capture-history-plan.md)
 define la siguiente tanda, pendiente de aprobación para implementar:
 
-1. Separar receptores y dashboard, incluyendo configuración y credenciales.
+1. **Implementación preparada:** separar receptores y dashboard, incluyendo
+   configuración y credenciales; pendiente de validación manual, CI y merge.
 2. Preparar arranque autónomo y mantenimiento programado con guardas.
 3. Ampliar la recuperación reanudable a toda la historia disponible sin frenar
    datos recientes.

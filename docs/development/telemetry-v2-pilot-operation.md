@@ -85,6 +85,14 @@ cambie su horario; no representa todavía una regla histórica de DST.
 ## Arranque independiente de receptores y dashboard
 
 El arranque independiente mantiene la captura aunque el dashboard se detenga.
+
+Para no volver a escribir los tokens en cada arranque, copiar `.env.example` como
+`.env.local` en la raíz del repositorio y reemplazar únicamente los valores de
+ejemplo. `.env.local` está ignorado por Git y nunca debe compartirse ni
+versionarse. El proceso usa primero las variables ya definidas en el sistema,
+luego completa las ausentes desde ese archivo y solo pregunta las que todavía
+falten. El archivo admite exclusivamente las cinco variables documentadas en la
+plantilla, una por línea y sin comillas ni espacios alrededor de `=`.
 No instala tareas automáticas todavía. En una consola, iniciar los receptores:
 
 ```powershell

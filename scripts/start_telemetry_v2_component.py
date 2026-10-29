@@ -24,6 +24,7 @@ DASHBOARD_PROMPTS = {
     "TRADINGLAB_DASHBOARD_TOKEN": "Token de acceso al dashboard",
     "TRADINGLAB_TELEMETRY_READ_TOKEN": "Token de lectura v2",
 }
+LOCAL_SECRET_NAMES = frozenset(RECEIVER_PROMPTS | DASHBOARD_PROMPTS)
 
 
 def port(value: str) -> int:
@@ -51,6 +52,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("component", choices=("receivers", "dashboard"))
     parser.add_argument(
+        "--secrets-file",
+        type=Path,
+        default=ROOT / ".env.local",
+        help="Archivo local ignorado por Git con los tokens (por defecto: .env.local).",
+    )
+    parser.add_argument(
         "--storage-root",
         type=Path,
         default=Path(os.environ.get("TRADINGLAB_STORAGE_ROOT", ROOT / "_storage")),
@@ -68,8 +75,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _read_environment(component: str) -> dict[str, str]:
-    environment = dict(os.environ)
+def _read_environment(component: str, secrets_file: Path) -> dict[str, str]:
+    from tradinglab.telemetry.local_secrets import load_local_secrets
+
+    environment = load_local_secrets(
+        secrets_file,
+        allowed_names=LOCAL_SECRET_NAMES,
+        environment=os.environ,
+    )
     prompts = RECEIVER_PROMPTS if component == "receivers" else DASHBOARD_PROMPTS
     for name, label in prompts.items():
         if environment.get(name):
@@ -102,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             dashboard_port=args.dashboard_port,
             broker_utc_offset_minutes=args.broker_utc_offset_minutes,
         )
-        environment = _read_environment(args.component)
+        environment = _read_environment(args.component, args.secrets_file)
         if args.component == "receivers":
             run_v2_receivers(ROOT, config, environment)
         else:

@@ -465,3 +465,12 @@ Ningún control actual autoriza ampliar la exposición del piloto.
 - autenticación multiusuario;
 - fórmulas inferidas de ejemplos de Gemini;
 - Excel como salida principal.
+
+Después de completar el plan vigente de captura autónoma, historia, consultas y
+retención, se analizará una API central de ingesta para separar receptor, base y
+dashboard de la VPS de MT5. Los collectors seguirán publicando contratos HTTP; no
+accederán directamente a la base. El análisis deberá decidir entre envío remoto
+directo y un relay local con cola durable, además de seguridad, idempotencia,
+autorización por cuenta/fuente y estrategia de migración. Esta línea futura está
+detallada en el
+[plan de captura autónoma e historial](autonomous-capture-history-plan.md#análisis-posterior-a-los-cinco-pasos-api-central-de-ingesta).

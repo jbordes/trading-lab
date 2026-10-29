@@ -223,6 +223,27 @@ rotación de secretos, cuotas, cola durable local y observabilidad del retraso.
 No exponer los servidores loopback actuales directamente a Internet ni cambiar
 simplemente su dirección de escucha. El navegador accede al backend, nunca a la BDD.
 
+### Análisis posterior a los cinco pasos: API central de ingesta
+
+Una vez completados los cinco pasos de este plan, analizar la extracción del
+receptor y la base fuera de la VPS de MT5. Los collectors `Telemetry` y
+`TradingLabActivity` ya publican contratos HTTP y no escriben SQLite directamente;
+la evolución propuesta consiste en conservar esos contratos o versionarlos para
+una API central que valide y persista la información en la base elegida.
+
+No conectar los EAs directamente a la base ni exponer los receptores loopback
+actuales a Internet. El análisis debe cubrir HTTPS, credenciales distintas por
+productor y fuente, autorización por cuenta/rol, idempotencia, secuencia, límites
+de tamaño y frecuencia, versionado de contratos y observabilidad del atraso. Debe
+comparar dos alternativas: publicación remota directa con el outbox acotado del
+EA, y relay local con cola durable. La segunda es la referencia inicial porque
+permite seguir aceptando lotes durante cortes entre VPS y servidor central.
+
+El objetivo es poder trasladar API, base y dashboard sin reconfigurar la lógica
+de trading ni perder trazabilidad. La selección de SQLite junto al backend o
+PostgreSQL central, el despliegue y la migración quedan fuera de los cinco pasos
+actuales y requerirán análisis, ADR y aprobación humana propios.
+
 Evaluar PostgreSQL si el diseño central exige escritores concurrentes, separación
 backend/BDD por red, múltiples instancias de backend o disponibilidad gestionada.
 Comparar con SQLite centralizado según requisitos, coste operativo y prueba sintética.

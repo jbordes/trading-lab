@@ -950,6 +950,9 @@ class V2TelemetryRegistry:
         *,
         owner_magic: str | None = None,
         owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -960,6 +963,18 @@ class V2TelemetryRegistry:
             raise ValueError("limit debe estar entre 1 y 500")
         if owner_magic is not None and owner_magics:
             raise ValueError("Los filtros owner_magic y owner_magics son incompatibles")
+        if (from_msc is None) != (to_msc is None):
+            raise ValueError("El período de ciclos debe estar completo")
+        if from_msc is not None and (
+            isinstance(from_msc, bool)
+            or isinstance(to_msc, bool)
+            or not isinstance(from_msc, int)
+            or not isinstance(to_msc, int)
+            or not 0 <= from_msc < to_msc < 2**63
+        ):
+            raise ValueError("Período de ciclos inválido")
+        if not isinstance(closed_only, bool):
+            raise ValueError("closed_only inválido")
         if len(owner_magics) > 12 or len(set(owner_magics)) != len(owner_magics):
             raise ValueError("owner_magics inválido")
         for magic in (owner_magic,) if owner_magic is not None else owner_magics:
@@ -986,6 +1001,11 @@ class V2TelemetryRegistry:
             filters.append(f"owner_magic IN ({placeholders})")
             parameters.extend(owner_magics)
         result_filter = "capture_rank = 1"
+        if from_msc is not None and to_msc is not None:
+            result_filter += " AND last_event_at_msc >= ? AND last_event_at_msc < ?"
+            parameters.extend((from_msc, to_msc))
+        if closed_only:
+            result_filter += " AND lifecycle = 'closed'"
         if cursor_event is not None and cursor_position is not None:
             result_filter += """ AND (last_event_at_msc < ? OR
                 (last_event_at_msc = ? AND (length(position_id) < ? OR

@@ -439,6 +439,9 @@ class LoopbackV2HistoryClient:
         *,
         owner_magic: str | None = None,
         owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryPositionCyclePage:
@@ -447,6 +450,13 @@ class LoopbackV2HistoryClient:
             parameters["owner_magic"] = owner_magic
         if owner_magics:
             parameters["owner_magics"] = ",".join(owner_magics)
+        if (from_msc is None) != (to_msc is None):
+            raise ValueError("El período de ciclos debe estar completo")
+        if from_msc is not None and to_msc is not None:
+            parameters["from_msc"] = from_msc
+            parameters["to_msc"] = to_msc
+        if closed_only:
+            parameters["closed_only"] = "true"
         if cursor is not None:
             parameters["cursor"] = cursor
         request = urllib.request.Request(
@@ -1052,60 +1062,14 @@ class V2HistoryProvider:
         limit: int = 50,
         cursor: str | None = None,
     ) -> TelemetryPositionCyclePage:
-        if (from_msc is None) != (to_msc is None):
-            raise ValueError("El período de ciclos debe estar completo")
-        if from_msc is None:
-            return self._client.position_cycles(
-                owner_magic=owner_magic,
-                owner_magics=owner_magics,
-                limit=limit,
-                cursor=cursor,
-            )
-        if not 0 <= from_msc < to_msc < 2**63:
-            raise ValueError("Período de ciclos inválido")
-        matches: list[TelemetryPositionCycle] = []
-        next_cursor = cursor
-        account_id: str | None = None
-        source_id: str | None = None
-        reached_start = False
-        inspected = 0
-        while len(matches) < limit and not reached_start:
-            page = self._client.position_cycles(
-                owner_magic=owner_magic,
-                owner_magics=owner_magics,
-                limit=min(100, limit - len(matches)),
-                cursor=next_cursor,
-            )
-            if account_id is not None and page.account_id != account_id:
-                raise DashboardReadError("La cuenta cambió durante la consulta de ciclos")
-            if source_id is not None and page.source_id != source_id:
-                raise DashboardReadError("La fuente cambió durante la consulta de ciclos")
-            account_id = page.account_id
-            source_id = page.source_id
-            inspected += len(page.cycles)
-            for item in page.cycles:
-                cycle = item.cycle
-                if cycle.last_event_at_msc < from_msc:
-                    reached_start = True
-                    break
-                if cycle.last_event_at_msc >= to_msc:
-                    continue
-                if closed_only and cycle.lifecycle is not CycleLifecycle.CLOSED:
-                    continue
-                matches.append(item)
-            next_cursor = page.next_cursor
-            if next_cursor is None or inspected >= 500:
-                break
-        if inspected >= 500 and next_cursor is not None and len(matches) < limit:
-            raise DashboardReadError("La consulta de ciclos supera el límite seguro de 500")
-        if account_id is None or source_id is None:
-            raise DashboardReadError("El receptor no informó ciclos")
-        return TelemetryPositionCyclePage(
-            account_id,
-            source_id,
-            owner_magic,
-            tuple(matches[:limit]),
-            None if reached_start else next_cursor,
+        return self._client.position_cycles(
+            owner_magic=owner_magic,
+            owner_magics=owner_magics,
+            from_msc=from_msc,
+            to_msc=to_msc,
+            closed_only=closed_only,
+            limit=limit,
+            cursor=cursor,
         )
 
     def position_cycle_magics(self) -> tuple[str, ...]:

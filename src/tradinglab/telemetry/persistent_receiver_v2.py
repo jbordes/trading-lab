@@ -133,6 +133,9 @@ class PersistentV2TelemetryReceiver:
         *,
         owner_magic: str | None = None,
         owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -144,6 +147,9 @@ class PersistentV2TelemetryReceiver:
                 self._account_id,
                 owner_magic=owner_magic,
                 owner_magics=owner_magics,
+                from_msc=from_msc,
+                to_msc=to_msc,
+                closed_only=closed_only,
                 limit=limit,
                 cursor=cursor,
             )

@@ -276,6 +276,28 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertEqual(cycle["observed_net_result"], "9.8")
         self.assertTrue(cycle["eligible_for_autonomous_metrics"])
 
+        ranged = (
+            "/v2/position-cycles?from_msc=1792656000000&to_msc=1792656060001"
+            "&closed_only=true&limit=1"
+        )
+        status, ranged_payload = self.request(ranged, authorization=read_authorization())
+        self.assertEqual(status, 200)
+        self.assertEqual(len(ranged_payload["items"]), 1)
+        self.assertEqual(
+            self.request(
+                "/v2/position-cycles?from_msc=1792656000000&limit=1",
+                authorization=read_authorization(),
+            )[0],
+            400,
+        )
+        self.assertEqual(
+            self.request(
+                "/v2/position-cycles?closed_only=1&limit=1",
+                authorization=read_authorization(),
+            )[0],
+            400,
+        )
+
         self.assertEqual(
             self.request(
                 "/v2/position-cycles?limit=01",

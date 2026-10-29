@@ -50,6 +50,9 @@ class V2TelemetryBackend(Protocol):
         *,
         owner_magic: str | None = None,
         owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage: ...
@@ -345,9 +348,17 @@ def create_v2_telemetry_server(
                 query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=4,
+                max_num_fields=7,
             )
-            if not set(values) <= {"owner_magic", "owner_magics", "limit", "cursor"}:
+            if not set(values) <= {
+                "owner_magic",
+                "owner_magics",
+                "from_msc",
+                "to_msc",
+                "closed_only",
+                "limit",
+                "cursor",
+            }:
                 raise ValueError("Parámetros de ciclos inválidos")
             if any(len(items) != 1 for items in values.values()):
                 raise ValueError("Parámetros de ciclos repetidos")
@@ -365,9 +376,32 @@ def create_v2_telemetry_server(
                 or any(not item for item in owner_magics)
             ):
                 raise ValueError("Selección Magic inválida")
+            from_text = values.get("from_msc", [None])[0]
+            to_text = values.get("to_msc", [None])[0]
+            if (from_text is None) != (to_text is None):
+                raise ValueError("El período de ciclos debe estar completo")
+            if from_text is not None and to_text is not None:
+                if any(
+                    not value.isascii() or not value.isdecimal() or str(int(value)) != value
+                    for value in (from_text, to_text)
+                ):
+                    raise ValueError("Período de ciclos inválido")
+                from_msc = int(from_text)
+                to_msc = int(to_text)
+                if not 0 <= from_msc < to_msc < 2**63:
+                    raise ValueError("Período de ciclos inválido")
+            else:
+                from_msc = None
+                to_msc = None
+            closed_text = values.get("closed_only", ["false"])[0]
+            if closed_text not in {"true", "false"}:
+                raise ValueError("closed_only inválido")
             return {
                 "owner_magic": owner_magic,
                 "owner_magics": owner_magics,
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+                "closed_only": closed_text == "true",
                 "limit": int(limit),
                 "cursor": values.get("cursor", [None])[0],
             }

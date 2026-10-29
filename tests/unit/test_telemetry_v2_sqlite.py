@@ -576,6 +576,18 @@ class V2SqliteTest(unittest.TestCase):
             multi_filtered = registry.position_cycles(
                 "account-demo", owner_magics=("11122", "99999")
             )
+            ranged_cycles = registry.position_cycles(
+                "account-demo",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+                closed_only=True,
+            )
+            outside_range = registry.position_cycles(
+                "account-demo",
+                from_msc=1792656060001,
+                to_msc=1792656120001,
+                closed_only=True,
+            )
             other_cycles = registry.position_cycles("account-demo", owner_magic="99999")
             discovered_magics = registry.position_cycle_magics("account-demo")
             coverage = registry.coverage_report(
@@ -591,6 +603,8 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(len(cycles.items), 1)
         self.assertEqual(filtered_cycles.items, cycles.items)
         self.assertEqual(multi_filtered.items, cycles.items)
+        self.assertEqual(ranged_cycles.items, cycles.items)
+        self.assertEqual(outside_range.items, ())
         self.assertEqual(other_cycles.items, ())
         self.assertEqual(discovered_magics, ("11122",))
         self.assertIsNone(cycles.next_cursor)
@@ -600,6 +614,9 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(cycle.observed_net_result, Decimal("9.8"))
         self.assertEqual(cycle.deal_tickets, ("700000000000000001", "700000000000000002"))
         self.assertTrue(cycle.eligible_for_autonomous_metrics)
+        with self.assertRaisesRegex(ValueError, "período"):
+            with open_v2_registry(self.path) as registry:
+                registry.position_cycles("account-demo", from_msc=1792656000000)
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0

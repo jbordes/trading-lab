@@ -141,8 +141,9 @@ el arranque manual. Activación operativa y nuevo ADR antes del despliegue.
 ### 3. Recuperación histórica completa y reanudable
 
 **Estado:** primer incremento preparado en `feature/resumable-complete-history`:
-carriles reciente y profundo con cursores/bloqueos independientes. Progreso
-consultable, fixtures extensos y desempate de ventanas mínimas siguen pendientes.
+carriles reciente y profundo con cursores/bloqueos independientes y cola circular
+de avisos mínimos del callback. Heartbeat/progreso consultable, fixtures extensos
+y desempate de ventanas mínimas siguen pendientes.
 
 **Implementación:** extender el collector de actividad existente con progreso
 durable por cuenta, fuente, rango y versión de recuperación. Mantener seguimiento

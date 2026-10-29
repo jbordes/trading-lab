@@ -91,6 +91,21 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("recent_confirmed_from_msc = next_cursor", finalizer)
         self.assertIn("confirmed_from_msc = next_cursor", finalizer)
 
+    def test_trade_callback_only_enqueues_bounded_minimal_hints(self) -> None:
+        callback = self.source.split("void OnTradeTransaction", 1)[1].split(
+            "void EnqueueTransactionHint", 1
+        )[0]
+        self.assertIn("EnqueueTransactionHint(transaction)", callback)
+        for forbidden in ("HistorySelect(", "SendMessage(", "Database", "FileWrite"):
+            self.assertNotIn(forbidden, callback)
+        enqueue = self.source.split("void EnqueueTransactionHint", 1)[1].split(
+            "int DrainTransactionHints", 1
+        )[0]
+        self.assertIn("TRANSACTION_HINT_CAPACITY", enqueue)
+        self.assertIn("transaction_hints_dropped++", enqueue)
+        self.assertNotIn("ArrayResize", enqueue)
+        self.assertIn("DrainTransactionHints()", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

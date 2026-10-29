@@ -23,6 +23,17 @@ input string ExpectedDemoServer = "";
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
 const string COLLECTOR_VERSION = "activity-0.3.0";
 const int MAX_PAYLOAD_BYTES = 262144;
+const int TRANSACTION_HINT_CAPACITY = 128;
+
+struct TransactionHint
+{
+   long transaction_type;
+   ulong deal_ticket;
+   ulong order_ticket;
+   ulong position_id;
+   string symbol;
+   ulong observed_tick_ms;
+};
 
 string session_id = "";
 string cursor_key = "";
@@ -50,6 +61,14 @@ bool safety_stopped = false;
 ulong next_send_ms = 0;
 int retry_delay_seconds = 2;
 int send_attempts = 0;
+TransactionHint transaction_hints[TRANSACTION_HINT_CAPACITY];
+int transaction_hint_head = 0;
+int transaction_hint_count = 0;
+long transaction_hints_dropped = 0;
+ulong last_transaction_tick_ms = 0;
+ulong last_hint_deal_ticket = 0;
+ulong last_hint_order_ticket = 0;
+ulong last_hint_position_id = 0;
 
 
 int OnInit()
@@ -175,6 +194,9 @@ void OnTimer()
       ContinuePositionReconciliation();
       return;
    }
+   int drained_hints = DrainTransactionHints();
+   if(drained_hints > 0)
+      trade_activity_pending = true;
    long now_msc = (long)TimeCurrent() * 1000;
    bool recent_due = !recent_recovery_blocked &&
       (startup_pending || trade_activity_pending ||
@@ -238,8 +260,47 @@ void OnTradeTransaction(
    const MqlTradeResult &result
 )
 {
-   // Network and history reads remain outside the transaction callback.
+   // Keep this callback bounded: no network, disk, SQLite or history reads.
+   EnqueueTransactionHint(transaction);
    trade_activity_pending = true;
+}
+
+
+void EnqueueTransactionHint(const MqlTradeTransaction &transaction)
+{
+   last_transaction_tick_ms = GetTickCount64();
+   if(transaction_hint_count >= TRANSACTION_HINT_CAPACITY)
+   {
+      transaction_hints_dropped++;
+      return;
+   }
+   int tail = (transaction_hint_head + transaction_hint_count) % TRANSACTION_HINT_CAPACITY;
+   transaction_hints[tail].transaction_type = (long)transaction.type;
+   transaction_hints[tail].deal_ticket = transaction.deal;
+   transaction_hints[tail].order_ticket = transaction.order;
+   transaction_hints[tail].position_id = transaction.position;
+   transaction_hints[tail].symbol = transaction.symbol;
+   transaction_hints[tail].observed_tick_ms = last_transaction_tick_ms;
+   transaction_hint_count++;
+}
+
+
+int DrainTransactionHints()
+{
+   int drained = transaction_hint_count;
+   while(transaction_hint_count > 0)
+   {
+      TransactionHint hint = transaction_hints[transaction_hint_head];
+      if(hint.deal_ticket > 0)
+         last_hint_deal_ticket = hint.deal_ticket;
+      if(hint.order_ticket > 0)
+         last_hint_order_ticket = hint.order_ticket;
+      if(hint.position_id > 0)
+         last_hint_position_id = hint.position_id;
+      transaction_hint_head = (transaction_hint_head + 1) % TRANSACTION_HINT_CAPACITY;
+      transaction_hint_count--;
+   }
+   return drained;
 }
 
 

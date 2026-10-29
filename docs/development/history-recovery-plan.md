@@ -107,9 +107,17 @@ saturado ni se declara cobertura completa. Los parámetros nuevos son
 y un minuto. El cursor histórico anterior se reutiliza y el cursor reciente nuevo
 se inicializa sin borrar variables globales.
 
-Continúan pendientes dentro del punto 3: progreso/cobertura consultable por fuente,
-pausa operativa, prueba con más de 12 meses y resolución estable de una ventana
-mínima que exceda el límite por compartir muchos registros el mismo timestamp.
+El callback `OnTradeTransaction` conserva además hasta 128 avisos mínimos en una
+cola circular preasignada. Solo copia tipo, tickets, posición, símbolo y reloj
+monotónico de recepción; no consulta historia ni realiza red, archivos o SQLite.
+El timer drena esos avisos para priorizar la relectura reciente. Si la cola se
+completa, incrementa un contador de descartes y la recuperación autoritativa por
+historial continúa siendo la protección contra huecos. Los avisos aceleran y
+diagnostican; no se convierten en una segunda fuente de verdad.
+
+Continúan pendientes dentro del punto 3: heartbeat y progreso/cobertura consultable
+por fuente, pausa operativa, prueba con más de 12 meses y resolución estable de una
+ventana mínima que exceda el límite por compartir muchos registros el mismo timestamp.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

@@ -120,9 +120,10 @@ Implementado en el primer corte:
 
 Pendiente para cerrar el incremento:
 
-1. validar campos y operaciones reales contra MT5 o una captura Python aislada;
-2. implementar la presentación compacta de fecha y hora `Broker` / `Local` usando
-   una referencia explícita del broker, sin inferirla desde la VPS;
+1. **Validado el 2026-10-28:** campos y operaciones del piloto coinciden con el
+   reporte MT5 para el mismo corte;
+2. **Implementado:** presentación compacta `Broker` / `Local` con offset explícito,
+   sin inferirlo desde la VPS;
 3. medir frescura y estabilidad durante una prueba prolongada.
 
 Ya se comprobó en la terminal demo aislada el recorrido collector-receptor-
@@ -171,18 +172,19 @@ Esta prioridad precede nuevas ampliaciones de telemetría v2 y se rige por
 2. **Implementado:** `Trading` separa actividad en curso, ciclos cerrados y el
    registro MT5 auditable. El registro integra deals y órdenes históricas sin
    confundirlos con operaciones completas ni con las métricas.
-3. **Pendiente visual:** mostrar cobertura, truncamiento y periodos sin datos
-   junto a los filtros mediante una señal compacta. Debe indicar `Datos
-   completos`, `Datos parciales` o el intervalo faltante; una métrica calculada
-   sobre cobertura incompleta nunca se presenta como definitiva.
+3. **Implementado en el piloto:** mostrar cobertura y lotes incompletos junto a
+   los filtros mediante una señal compacta. Indica `Datos completos`, `Datos
+   parciales` o `Instantánea actual`; las métricas con cobertura parcial quedan
+   rotuladas como tales.
 4. **Primer corte implementado:** calcular y visualizar por período y Magic Number
    las fórmulas `partner-workbook-v1` observadas en el Excel del socio. Se incluyen
    tarjetas y las cuatro curvas de referencia con ECharts local. Cada cierre MT5
    fue inicialmente una fila. Este corte se conserva como referencia de contraste;
    la interfaz vigente aplica las mismas fórmulas bajo el contrato separado
    `position-cycle-v1`, únicamente a operaciones completas elegibles.
-   La interfaz presentará hora y fecha del broker/MT5 junto con hora y fecha
-   local del usuario. Esta decisión de presentación no define todavía qué zona
+   La interfaz presenta hora y fecha del broker/MT5 junto con hora y fecha local
+   del usuario mediante un offset explícito de la fuente. Esta decisión de
+   presentación no define todavía qué zona
    usarán los futuros cortes diarios de las métricas.
 5. Crear tablas derivadas durables e índices mediante una migración explícita
    cuando la consulta real o una prueba sintética representativa demuestre esa
@@ -211,11 +213,97 @@ La dirección se rige por
    sobre ciclos cerrados y elegibles. Las fórmulas continúan versionadas porque
    el socio las ajustará durante la evolución del producto.
 6. **Implementado:** `Operaciones cerradas` separa rendimiento de la actividad y
-   del diagnóstico del sistema. Falta hacer visible la cobertura del período.
+   del diagnóstico del sistema y hace visible la cobertura del período.
 
-La organización final de estas vistas y el contrato `position-cycle-v1` se rigen
-por [ADR-0015](../adr/0015-closed-operations-and-mt5-registry.md), que reemplaza
-parcialmente la navegación inicialmente descrita por ADR-0014.
+La organización de navegación se rige por
+[ADR-0016](../adr/0016-separate-financial-and-execution-performance.md), que
+reemplaza únicamente la agrupación definida por ADR-0015. ADR-0015 sigue rigiendo
+la experiencia de operaciones cerradas, el Registro MT5 y el contrato
+`position-cycle-v1`.
+
+### Navegación y tablas — corte de presentación
+
+- [x] Separar la navegación lateral en `Trading` (solo posiciones y órdenes en
+  curso), `Performance financiera` (operaciones cerradas, métricas y gráficos
+  existentes) y `Performance de ejecución` (Registro MT5 para consultar
+  comportamiento).
+- [x] Compactar las tablas en curso y el Registro MT5 al estilo de operaciones
+  cerradas: Magic primero, expansión por fila y teclado, detalles sin duplicados
+  y composición responsive.
+- [x] Aplicar colores financieros sin interpretar cancelaciones como fallos.
+- [x] Presentar aclaraciones de métricas y cobertura como ayuda contextual junto
+  al dato, no como textos sueltos en la vista.
+- [ ] Definir métricas y gráficos de ejecución.
+- [ ] Revisar si las métricas de ejecución requieren persistir evidencia
+  adicional. No es urgente y no implica que la cobertura actual sea completa.
+
+Este corte cambia presentación y navegación; no modifica contratos, fórmulas,
+collector ni BDD. Los nombres anteriores de las vistas se mantienen como
+contexto histórico.
+
+### Pendientes visuales futuros
+
+- [ ] Revisar la iconografía semántica del panel lateral.
+- [ ] Añadir iconos para cerrar sesión y alternar tema claro/oscuro.
+- [ ] Permitir expandir y contraer la barra lateral.
+- [ ] Permitir seleccionar colores por Magic de forma controlada.
+- [ ] Diagnosticar el indicador «Actualizado hace…», que rara vez vuelve a cero
+  o parece quedar desfasado.
+
+### Comparación financiera por EA y resumen compacto
+
+- [x] Extender `/api/cycle-metrics` con `by_ea`, agrupado por
+  `account_id + magic_number`, exclusivamente para ciclos cerrados elegibles.
+  Cada grupo conserva `trade_count`, `net_profit`, `profit_factor`,
+  `winning_percentage`, `maximum_drawdown`, `average_trade` y series de
+  `time_msc`, `cumulative_profit`, `net_profit`, `drawdown` y
+  `rolling_average_20`. Usa las fórmulas, cobertura y límite seguro de 500
+  operaciones existentes.
+- [x] Reutilizar los cuatro gráficos financieros existentes (PnL acumulado,
+  drawdown, media móvil 20 y PnL por operación) con series por EA, colores
+  estables por Magic y eje temporal de fechas reales. Las curvas trazan líneas
+  rectas continuas entre observaciones reales, sin suavizado ni escalones. PnL
+  por operación usa barras y no alinea cierres entre EA por índice. No se añade
+  un quinto gráfico.
+- [x] Incorporar `Sumarizar` como modo predeterminado, con los EA elegidos
+  agregados en una sola serie y métricas recalculadas desde ciclos elegibles.
+- [x] Incorporar `Comparar EAs` con barra lateral buscable, selección de hasta
+  cinco, colores estables y sin leyendas repetidas; la tabla compara las mismas
+  métricas y la tabla de ciclos se conserva.
+- [x] Ordenar la vista comparativa con gráficos antes de la tabla de métricas;
+  PnL acumulado es principal y Drawdown queda debajo y alineado. PnL por
+  operación y media móvil 20 se muestran en «Más gráficos».
+- [x] Sincronizar los cuatro gráficos con un solo zoom temporal visible y
+  conectar cursor e interacción; hover de EA resalta sus series.
+- [x] Reducir grillas y etiquetas y evitar leyendas repetidas. Dibujar DD
+  negativo, manteniendo positivo el valor de la métrica.
+- [x] Usar barras de PnL por operación en ambos modos: coloreadas por resultado
+  en `Sumarizar` y por EA en `Comparar EAs`. Cada barra muestra el valor numérico
+  compacto arriba si es positivo y debajo si es negativo.
+- [x] Mantener ECharts; el ajuste no cambia datos ni fórmulas.
+- [x] Permitir ventanas de gráfico hasta 12 meses con fecha final, incluida la
+  cuenta. La consulta de Balance/Equity usa capturas SQLite existentes, con
+  bucket mínimo de un minuto y máximo de 366 días y 480 puntos. Toma la última
+  observación por bucket, no preserva extremos ni rellena huecos, no inventa
+  datos y no modifica retención. La ventana no garantiza cobertura histórica.
+- [x] Mantener paginación de operaciones cerradas acotada a 500 registros
+  consultados con filtro cliente; sin coincidencias entre lo cargado, indicar
+  que se puede «Cargar más». La primera página no limita el cálculo de métricas,
+  que usa el período consultado completo dentro de su límite seguro de 500.
+- [x] Mostrar Equity como cifra principal del resumen, Balance y PnL flotante
+  debajo, y margen libre en «En esta cuenta».
+- [x] Añadir Top 3 por PnL neto para período de 7/30 días (30 por defecto), solo
+  ciclos elegibles y cuenta actual; mostrar cuenta, operaciones y cobertura.
+  Usa los mismos colores deterministas por Magic; no es un ranking ajustado por
+  riesgo y puede incluir resultados negativos. Se actualiza como máximo cada 60
+  segundos y ante captura nueva o cambio de vista o filtro.
+- [x] Usar «PnL neto» en etiquetas y distinguir PnL flotante y bruto.
+- [ ] Definir métricas y gráficos de ejecución con el socio.
+- [x] Consultar el historial de Balance/Equity disponible en SQLite sin
+  migración ni cambio de retención. Solo se muestran observaciones persistidas;
+  no se reconstruye equity desde operaciones ni se rellenan períodos sin datos.
+- [ ] Ampliar retención únicamente tras una decisión basada en necesidad
+  observada; la consulta actual no garantiza seis meses disponibles.
 
 Mantener y ampliar fixtures de entrada múltiple, cierre parcial, Stop Loss/Take
 Profit, intervención manual, Magic mixto, reversa netting, orden sin ejecución y
@@ -316,6 +404,11 @@ Las decisiones y ejemplos pendientes se recopilan en la
 
 ## Seguimiento de robustez
 
+La revisión de solo lectura de PR #48 (commit `a1d6959`) documenta cinco
+hallazgos abiertos, prioridades y criterios de aceptación en
+[Revisión de robustez — 2026-10-28](robustness-review-2026-10-28.md). Las
+soluciones son propuestas y aún no están implementadas.
+
 Se prepararon el [contrato v2 propuesto](../architecture/telemetry-v2-contract.md),
 ADR-0011 y ejemplos sintéticos. El validador y la admisión v2 aislados cubren
 credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia
@@ -323,16 +416,16 @@ estricta y recuperación histórica fuera de orden. No están conectados al rece
 v1. La [persistencia y composición v2](telemetry-v2-persistence.md) agregan una
 base opt-in separada, recuperación durable y una vista de referencia. Migración,
 proyecciones, receptor v2, collector de actividad y despliegue piloto ya están
-operativos; faltan el contraste formal contra el reporte MT5, la cobertura visible
-y la promoción fuera de la cuenta demo. V1 conserva el estado vivo; v2 es la
+operativos; el contraste formal contra el reporte MT5 y la cobertura visible ya
+están resueltos. Falta la promoción fuera de la cuenta demo. V1 conserva el estado vivo; v2 es la
 fuente durable de actividad y ciclos.
 
 Antes de implementar nuevos collectors, revisar la
 [separación de responsabilidades](../architecture/collector-responsibilities.md):
 dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
 terminal actual. Contrato, identidades, admisión, persistencia, migración,
-receptor v2 y composición ya tienen fixtures y regresiones. El próximo incremento
-contrasta el piloto contra el reporte MT5 y expone la cobertura al usuario.
+receptor v2 y composición ya tienen fixtures y regresiones. El contraste del
+piloto contra MT5 y la cobertura visible quedaron completados el 2026-10-28.
 No se adoptará una proyección histórica acumulativa en memoria. La frecuencia de
 un segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
 

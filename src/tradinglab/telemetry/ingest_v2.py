@@ -325,6 +325,7 @@ def create_v2_telemetry_server(
                 "message_id": item.message_id,
                 "source_id": item.source_id,
                 "captured_at": item.captured_at,
+                "details": item.details,
                 "cycle": {
                     "account_id": cycle.account_id,
                     "position_id": cycle.position_id,

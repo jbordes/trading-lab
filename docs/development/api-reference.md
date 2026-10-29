@@ -26,6 +26,14 @@ Estas rutas están pensadas para la aplicación web, no como API pública. El
 servidor valida el encabezado `Host`; las rutas protegidas requieren la cookie
 de sesión creada por `POST /login`. El token humano nunca es el token de los EAs.
 
+### `GET /api/account-history`
+
+Proxy con sesión del historial de capturas de cuenta del receptor v1. Requiere
+`from_msc` y `to_msc`; la fuente se resuelve en el backend. Admite como máximo
+366 días y devuelve hasta 480 puntos, agrupados en buckets de al menos un minuto
+con la última observación disponible. No preserva extremos de cada bucket, no
+rellena huecos ni cambia la retención. La respuesta refleja capturas existentes.
+
 ### `GET /api/state`
 
 Devuelve la muestra actual de la cuenta, operaciones abiertas, actividad
@@ -119,11 +127,23 @@ position_cycles_unavailable`.
 
 Calcula las métricas `position-cycle-v1` exclusivamente sobre ciclos cerrados y
 elegibles. Requiere `from_msc` y `to_msc`; admite `magic_number` como filtro del EA
-propietario. No admite paginación explícita y rechaza períodos que superen el
-límite seguro de 500 operaciones observadas.
+propietario o `magic_numbers` como lista CSV de 1 a 5 Magic explícitos. Los
+valores deben ser enteros signed 64-bit canónicos, únicos; `magic_number` y
+`magic_numbers` no se pueden combinar. No admite paginación explícita y rechaza
+períodos que superen el límite seguro de 500 operaciones inspeccionadas. Si se
+excede, la solicitud se rechaza y no devuelve métricas parciales.
 
-La respuesta conserva las métricas y series del contrato visible, pero cada punto
-representa una posición completa reconstruida. Ciclos incompletos, intervenidos o
+La respuesta conserva las métricas y series existentes, donde cada punto
+representa una posición completa reconstruida, y agrega `by_ea`. Este campo
+agrupa por `account_id + magic_number` y contiene para cada grupo
+`trade_count`, `net_profit`, `profit_factor`, `winning_percentage`,
+`maximum_drawdown`, `average_trade` y `series` con los campos `time_msc`,
+`cumulative_profit`, `net_profit`, `drawdown` y `rolling_average_20`. La respuesta
+incluye `selected_magics` y `available_magics`; este último enumera los Magic
+propietarios elegibles para el período. La consulta base sigue acotada y el
+backend calcula la selección sobre ella; las métricas agregadas se recalculan
+desde los ciclos seleccionados, sin sumar ratios. Los grupos aplican las mismas
+fórmulas y cobertura del contrato existente. Ciclos incompletos, intervenidos o
 con Magic mixtos quedan fuera sin ser eliminados del historial.
 
 Respuestas principales: `200`, `400 invalid_cycle_metrics_query`, `401
@@ -201,6 +221,23 @@ Cada elemento identifica mensaje, fuente y captura, y contiene:
 estado del ciclo, volumen restante, resultado neto observado, tickets de deals,
 causas de exclusión y `eligible_for_autonomous_metrics`.
 
+Cada elemento agrega `details`, también expuesto por `/api/position-cycles`:
+`side` (long/short o null ante reversión/ambigüedad), `symbol`, `opening_tickets`,
+`volume` de entrada, `open_price` y `close_price` ponderados por volumen,
+`gross_profit`, `swap`, `commission`, `fee`, `take_profit`, `stop_loss`,
+`levels_basis`, `pips` y `duration_hours`. Los costos abarcan todos los deals
+comerciales del ciclo, incluidas entradas. El neto conserva los cargos `fee`.
+La dirección se identifica por deals de entrada, no por el tipo del cierre.
+
+`levels_basis=exit_order` indica niveles no nulos registrados en una orden de
+salida; `initial_order` señala la primera orden de entrada disponible; `unknown`
+indica ausencia de evidencia. No se afirma disponer de todas las modificaciones
+del TP/SL. Un cierre con niveles cero no prueba que se hayan retirado las
+protecciones. `pips` permanece null hasta definir el tamaño del pip por símbolo.
+Los datos se calculan sobre el mensaje de reconciliación validado que respalda
+el ciclo seleccionado, mediante una consulta acotada a la página. No requiere
+migración ni cargar el historial completo en memoria.
+
 Un ciclo con intervención, mezcla de Magics o evidencia insuficiente puede
 conservarse para auditoría y quedar excluido de las métricas autónomas.
 
@@ -233,6 +270,14 @@ esa fuente. Puede responder `404 snapshot_unavailable`.
 Requiere Bearer. Parámetros: `source_id`, `from_msc` y `to_msc` obligatorios;
 `magic_number`, `limit` y `cursor` opcionales. Devuelve `deals` y
 `next_cursor`. Solo está disponible cuando el receptor usa persistencia.
+
+### `GET /v1/account-history`
+
+Requiere Bearer. Parámetros obligatorios: `source_id`, `from_msc` y `to_msc`.
+Lee capturas SQLite existentes de la fuente indicada. El rango máximo es de 366
+días; devuelve hasta 480 puntos con la última observación disponible en buckets
+de al menos un minuto. No preserva extremos ni rellena huecos, y no modifica la
+retención existente.
 
 ### `GET /health`
 

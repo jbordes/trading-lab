@@ -8,7 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from tradinglab.dashboard.auth import SESSION_COOKIE, DashboardAuth
 from tradinglab.dashboard.service import LiveDashboardService
@@ -16,6 +16,27 @@ from tradinglab.dashboard.snapshot import DashboardReadError
 from tradinglab.dashboard.telemetry import TelemetryDealPage, TelemetryPerformance
 from tradinglab.dashboard.telemetry_v2 import TelemetryCyclePerformance
 from tradinglab.telemetry.http_server import BoundedHTTPServer
+
+
+def parse_magic_selection(values: list[str]) -> tuple[str, ...]:
+    """Validate a bounded multi-EA filter without converting identifiers to floats."""
+    if not values:
+        return ()
+    if len(values) != 1:
+        raise ValueError("Filtro Magic repetido")
+    magics = values[0].split(",")
+    if not 1 <= len(magics) <= 12 or len(set(magics)) != len(magics):
+        raise ValueError("Seleccionar entre 1 y 12 Magic distintos")
+    for magic in magics:
+        number = int(magic)
+        if not magic.isascii() or str(number) != magic or not -(2**63) <= number < 2**63:
+            raise ValueError("Magic inválido")
+    return tuple(magics)
+
+
+class AccountHistoryProvider(Protocol):
+    def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
 
 STATIC_ROOT = Path(__file__).with_name("static")
 STATIC_ROUTES = {
@@ -133,6 +154,8 @@ def create_server(
     history_provider: DealHistoryProvider | None = None,
     position_cycle_provider: PositionCycleProvider | None = None,
     historical_order_provider: HistoricalOrderProvider | None = None,
+    account_history_provider: AccountHistoryProvider | None = None,
+    broker_utc_offset_minutes: int | None = None,
     max_connections: int = 16,
     request_timeout: float = 5.0,
 ) -> BoundedHTTPServer:
@@ -152,6 +175,12 @@ def create_server(
         or not 0.05 <= request_timeout <= 30
     ):
         raise ValueError("request_timeout debe ser 0.05..30 segundos")
+    if broker_utc_offset_minutes is not None and (
+        isinstance(broker_utc_offset_minutes, bool)
+        or not isinstance(broker_utc_offset_minutes, int)
+        or not -14 * 60 <= broker_utc_offset_minutes <= 14 * 60
+    ):
+        raise ValueError("broker_utc_offset_minutes debe estar entre -840 y 840")
     auth = DashboardAuth(dashboard_token)
 
     class DashboardHandler(BaseHTTPRequestHandler):
@@ -193,6 +222,46 @@ def create_server(
                     self.send_error(HTTPStatus.BAD_REQUEST, "Parámetro since inválido")
                     return
                 self._send_json(state)
+                return
+            if path == "/api/account-history":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                if account_history_provider is None:
+                    self._send_json({"error": "history_unavailable"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                try:
+                    values = parse_qs(
+                        raw_query, strict_parsing=True, keep_blank_values=True, max_num_fields=2
+                    )
+                    if set(values) != {"from_msc", "to_msc"}:
+                        raise ValueError("Consulta inválida")
+                    selected = self._history_query(raw_query)
+                    start, end = selected["from_msc"], selected["to_msc"]
+                    if end - start > 366 * 86400000 or end >= 253402300799000:
+                        raise ValueError("La ventana máxima es de 12 meses")
+                    result = account_history_provider.account_history(from_msc=start, to_msc=end)
+                except ValueError:
+                    self._send_json(
+                        {"error": "invalid_history_query"}, status=HTTPStatus.BAD_REQUEST
+                    )
+                    return
+                except DashboardReadError:
+                    self._send_json(
+                        {"error": "history_unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE
+                    )
+                    return
+                self._send_json(result)
+                return
+            if path == "/api/config":
+                if session is None:
+                    self._send_json(
+                        {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
+                    )
+                    return
+                self._send_json({"broker_utc_offset_minutes": broker_utc_offset_minutes})
                 return
             if path == "/api/deals":
                 if session is None:
@@ -262,7 +331,14 @@ def create_server(
                     )
                     return
                 try:
-                    history_query = self._history_query(raw_query)
+                    selection_query = parse_qs(
+                        raw_query, keep_blank_values=True, strict_parsing=True, max_num_fields=6
+                    )
+                    selection = selection_query.pop("magic_numbers", [])
+                    selected_magics = parse_magic_selection(selection)
+                    if selected_magics and "magic_number" in selection_query:
+                        raise ValueError("Filtros Magic incompatibles")
+                    history_query = self._history_query(urlencode(selection_query, doseq=True))
                     if history_query["limit"] != 50 or history_query["cursor"] is not None:
                         raise ValueError("Parámetros innecesarios para métricas")
                     result = position_cycle_provider.cycle_performance_metrics(
@@ -282,7 +358,7 @@ def create_server(
                         status=HTTPStatus.SERVICE_UNAVAILABLE,
                     )
                     return
-                self._send_json(result.as_dict())
+                self._send_json(result.as_dict(selected_magics=selected_magics))
                 return
             if path == "/api/position-cycles":
                 if session is None:

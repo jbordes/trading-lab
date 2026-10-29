@@ -185,7 +185,8 @@ el historial recuperado desde v2:
 ```text
 uv run python scripts/live_dashboard.py --telemetry \
   --telemetry-source <live-v1> --telemetry-port 8776 \
-  --history-v2 --history-v2-source <activity-v2> --history-v2-port 8777
+  --history-v2 --history-v2-source <activity-v2> --history-v2-port 8777 \
+  --broker-utc-offset-minutes <offset_broker>
 ```
 
 Además del token normal del dashboard y el token v1, ese proceso recibe

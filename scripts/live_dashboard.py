@@ -26,6 +26,13 @@ def port(value: str) -> int:
     return parsed
 
 
+def utc_offset_minutes(value: str) -> int:
+    parsed = int(value)
+    if not -14 * 60 <= parsed <= 14 * 60:
+        raise argparse.ArgumentTypeError("El offset UTC del broker debe estar entre -840 y 840")
+    return parsed
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -39,6 +46,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--interval", type=interval, default=5.0, help="Segundos entre lecturas.")
     parser.add_argument("--port", type=port, default=8765, help="Puerto local.")
+    parser.add_argument(
+        "--broker-utc-offset-minutes",
+        type=utc_offset_minutes,
+        help="Offset UTC explícito del reloj del broker (por ejemplo, 120 para UTC+02:00).",
+    )
     parser.add_argument(
         "--telemetry-port", type=port, default=8766, help="Puerto local del receptor push."
     )
@@ -183,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         history_provider=history_provider,
         position_cycle_provider=position_cycle_provider,
         historical_order_provider=historical_order_provider,
+        account_history_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
+        broker_utc_offset_minutes=args.broker_utc_offset_minutes,
     )
     service.start()
     print(f"TradingLab Live (solo lectura): http://127.0.0.1:{server.server_port}")

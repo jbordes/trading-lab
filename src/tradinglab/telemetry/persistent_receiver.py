@@ -77,6 +77,13 @@ class PersistentTelemetryReceiver:
             snapshot = self._view.snapshot()
             return snapshot.envelope.as_dict() if snapshot is not None else None
 
+    def account_history(self, source_id: str, *, from_msc: int, to_msc: int) -> dict[str, Any]:
+        if source_id != self._source_id:
+            raise MessageAdmissionError("Fuente no autorizada por este receptor")
+        with self._lock:
+            self._require_open()
+            return self._registry.account_history(source_id, from_msc=from_msc, to_msc=to_msc)
+
     def deal_history(
         self,
         source_id: str,

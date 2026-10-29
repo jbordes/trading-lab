@@ -55,6 +55,11 @@ class TelemetryBackend(Protocol):
 
 
 @runtime_checkable
+class AccountHistoryBackend(Protocol):
+    def account_history(self, source_id: str, *, from_msc: int, to_msc: int) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class DealHistoryBackend(Protocol):
     def deal_history(
         self,
@@ -297,6 +302,42 @@ def create_telemetry_server(
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "snapshot_unavailable"})
                     return
                 self._send_json(HTTPStatus.OK, latest)
+                return
+            if path == "/v1/account-history":
+                if not self._is_authorized():
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                if not isinstance(buffer, AccountHistoryBackend):
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "history_unavailable"})
+                    return
+                try:
+                    values = parse_qs(
+                        request_target.query,
+                        strict_parsing=True,
+                        keep_blank_values=True,
+                        max_num_fields=3,
+                    )
+                    if set(values) != {"source_id", "from_msc", "to_msc"} or any(
+                        len(v) != 1 for v in values.values()
+                    ):
+                        raise ValueError("Consulta inválida")
+                    result = buffer.account_history(
+                        values["source_id"][0],
+                        from_msc=self._query_integer(values["from_msc"][0]),
+                        to_msc=self._query_integer(values["to_msc"][0]),
+                    )
+                except MessageAdmissionError:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "history_unavailable"})
+                    return
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_history_query"})
+                    return
+                except TelemetryStorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE, {"error": "storage_unavailable"}
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, result)
                 return
             if path == "/v1/deals":
                 if not self._is_authorized():

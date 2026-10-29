@@ -18,6 +18,7 @@ from tradinglab.metrics.position_cycles import (
     PositionCycle,
     reconstruct_position_cycles,
 )
+from tradinglab.metrics.trade_details import trade_details
 from tradinglab.telemetry.admission_v2 import (
     AdmissionDisposition,
     AuthorizedEnvelope,
@@ -239,6 +240,7 @@ class V2PositionCycleItem:
     cycle: PositionCycle
     source_id: str
     captured_at: str
+    details: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -904,6 +906,18 @@ class V2TelemetryRegistry:
             parameters,
         ).fetchall()
         items: list[V2PositionCycleItem] = []
+        message_ids = [int(row[0]) for row in rows[:limit]]
+        evidence = {}
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            evidence = {
+                row[0]: row[1:]
+                for row in self._connection.execute(
+                    f"SELECT message_id, payload_json, content_sha256 FROM telemetry_v2_messages "
+                    f"WHERE message_id IN ({placeholders})",
+                    message_ids,
+                )
+            }
         for row in rows:
             cycle = _restore_cycle(row[1])
             expected = (
@@ -936,7 +950,25 @@ class V2TelemetryRegistry:
             )
             if actual != expected:
                 raise V2StorageError("Columnas y ciclo de posición guardado no coinciden")
-            items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3]))
+            details = {}
+            if int(row[0]) in evidence:
+                canonical, digest = evidence[int(row[0])]
+                try:
+                    body = canonical.encode("utf-8")
+                    if hashlib.sha256(body).hexdigest() != digest:
+                        raise ValueError("Hash de evidencia incorrecto")
+                    envelope = parse_envelope_v2(body)
+                    if (
+                        envelope.source_id != row[2]
+                        or envelope.payload.get("reason") != "position_reconcile"
+                    ):
+                        raise ValueError("Procedencia de evidencia incorrecta")
+                    details = trade_details(cycle, envelope.payload)
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise V2StorageError("Detalle de operación inválido") from exc
+            elif len(items) < limit:
+                raise V2StorageError("Falta la evidencia del ciclo")
+            items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3], details))
         page_items = tuple(items[:limit])
         next_cursor = None
         if len(items) > limit and page_items:

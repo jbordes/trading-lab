@@ -195,6 +195,10 @@ class FakeDealHistoryProvider:
             to_msc=int(query["to_msc"]),
             owner_magic=query["owner_magic"],
             cycles=page.cycles,
+            coverage={
+                "complete_ranges": [{"from_msc": "999000", "to_msc": "1000000"}],
+                "incomplete_batches": 0,
+            },
         )
 
     def order_history(self, **query: object) -> TelemetryHistoricalOrderPage:
@@ -590,6 +594,7 @@ globalThis.document = { createElement: () => nodeStub() };
 globalThis.telemetryMode = false;
 globalThis.toDate = (value) => new Date(value);
 globalThis.dateTimeFormatter = { format: () => "15/10/2026, 01:00:00" };
+globalThis.operationalTimeCell = () => nodeStub();
 globalThis.activityTypes = { sell_out: "Venta · salida" };
 globalThis.activityStates = {};
 globalThis.latestCurrency = "USD";
@@ -616,6 +621,37 @@ if (row.children[4].textContent !== "10") throw new Error("El resultado no qued�
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_navigation_and_expandable_rows_without_browser(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js no está disponible")
+        result = subprocess.run(
+            [node, str(ROOT / "tests/browser/dashboard-navigation.cjs")],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_multiple_magic_filter_validation(self) -> None:
+        from tradinglab.dashboard.web import parse_magic_selection
+
+        self.assertEqual(parse_magic_selection([]), ())
+        self.assertEqual(parse_magic_selection(["11122,-1"]), ("11122", "-1"))
+        for invalid in (
+            [""],
+            ["1,1"],
+            [" 1"],
+            ["01"],
+            [str(2**63)],
+            ["1", "2"],
+            ["1,,2"],
+            [",".join(str(value) for value in range(13))],
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                parse_magic_selection(invalid)
 
     def test_chart_uses_observation_time_and_breaks_capture_gaps(self) -> None:
         node = shutil.which("node")
@@ -771,6 +807,7 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             history_provider=provider,
             position_cycle_provider=provider,
             historical_order_provider=provider,
+            broker_utc_offset_minutes=120,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -804,6 +841,9 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
             unauthorized_orders.exception.close()
 
             opener = authenticated_opener(base_url)
+            with opener.open(f"{base_url}/api/config", timeout=2) as response:
+                config = json.loads(response.read())
+            self.assertEqual(config["broker_utc_offset_minutes"], 120)
             with opener.open(route, timeout=2) as response:
                 payload = json.loads(response.read())
             self.assertEqual(payload["deals"][0]["ticket"], "2")
@@ -833,7 +873,21 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
                 cycle_metrics = json.loads(response.read())
             self.assertEqual(cycle_metrics["formula_version"], "position-cycle-v1")
             self.assertEqual(cycle_metrics["trade_count"], 1)
+            self.assertEqual(cycle_metrics["coverage"]["incomplete_batches"], 0)
             self.assertEqual(provider.cycle_performance_calls[0]["owner_magic"], "11122")
+            multi_route = (
+                f"{base_url}/api/cycle-metrics?from_msc=999000&to_msc=1000000"
+                "&magic_numbers=11122,999"
+            )
+            with opener.open(multi_route, timeout=2) as response:
+                multi = json.loads(response.read())
+            self.assertEqual(multi["selected_magics"], ["11122", "999"])
+            self.assertEqual(multi["trade_count"], 1)
+            for suffix in ("&magic_number=11122", "&magic_numbers=11123"):
+                with self.assertRaises(urllib.error.HTTPError) as invalid_selection:
+                    opener.open(multi_route + suffix, timeout=2)
+                self.assertEqual(invalid_selection.exception.code, 400)
+                invalid_selection.exception.close()
             with opener.open(orders_route, timeout=2) as response:
                 orders = json.loads(response.read())
             self.assertEqual(orders["orders"][0]["ticket"], "70")
@@ -909,9 +963,10 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
         self.assertIn('id="history-magic"', dashboard)
         self.assertIn('id="history-more"', dashboard)
         self.assertIn('id="history-metrics"', dashboard)
-        self.assertIn('data-trading-scope="current"', dashboard)
-        self.assertIn('data-trading-scope="closed"', dashboard)
-        self.assertIn('data-trading-scope="registry"', dashboard)
+        self.assertIn('data-view="trading"', dashboard)
+        self.assertIn('data-view="financial"', dashboard)
+        self.assertIn('data-view="execution"', dashboard)
+        self.assertNotIn("data-trading-scope=", dashboard)
         self.assertIn('id="history-entity"', dashboard)
         self.assertIn('id="chart-cumulative"', dashboard)
         for metric_id in (
@@ -990,7 +1045,7 @@ if (result.data[0][0] !== timeline[0].at.getTime()) {
                 page = response.read().decode()
                 self.assertIn('id="trading-view"', page)
                 self.assertIn('id="magic-filter"', page)
-                self.assertIn('data-trading-scope="registry"', page)
+                self.assertIn('data-view="execution"', page)
                 self.assertIn('id="activity-view"', page)
 
             request = urllib.request.Request(f"{base_url}/api/state", method="POST")

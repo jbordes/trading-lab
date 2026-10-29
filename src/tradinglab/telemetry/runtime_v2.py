@@ -29,6 +29,7 @@ class V2PilotRuntimeConfig:
     v1_port: int = 8776
     v2_port: int = 8777
     dashboard_port: int = 8775
+    broker_utc_offset_minutes: int = 120
 
     def __post_init__(self) -> None:
         for value in (self.live_source_id, self.activity_source_id, self.account_id):
@@ -40,6 +41,12 @@ class V2PilotRuntimeConfig:
             for port in ports
         ) or len(set(ports)) != len(ports):
             raise ValueError("Los tres puertos del piloto deben ser válidos y distintos")
+        if (
+            isinstance(self.broker_utc_offset_minutes, bool)
+            or not isinstance(self.broker_utc_offset_minutes, int)
+            or not -14 * 60 <= self.broker_utc_offset_minutes <= 14 * 60
+        ):
+            raise ValueError("El offset UTC del broker debe estar entre -840 y 840")
 
 
 def run_v2_pilot(
@@ -159,6 +166,8 @@ def run_v2_pilot(
                 str(config.v2_port),
                 "--port",
                 str(config.dashboard_port),
+                "--broker-utc-offset-minutes",
+                str(config.broker_utc_offset_minutes),
             ],
             cwd=root,
             env=dashboard_environment,

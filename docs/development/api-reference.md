@@ -135,9 +135,9 @@ Calcula las métricas `position-cycle-v1` exclusivamente sobre ciclos cerrados y
 elegibles. Requiere `from_msc` y `to_msc`; admite `magic_number` como filtro del EA
 propietario o `magic_numbers` como lista CSV de hasta 12 Magic explícitos. Los
 valores deben ser enteros signed 64-bit canónicos, únicos; `magic_number` y
-`magic_numbers` no se pueden combinar. No admite paginación explícita y rechaza
-períodos que superen el límite seguro de 500 operaciones inspeccionadas. Si se
-excede, la solicitud se rechaza y no devuelve métricas parciales.
+`magic_numbers` no se pueden combinar. No admite paginación explícita. El backend
+recorre todos los ciclos vigentes del período en orden cronológico y calcula los
+resultados escalares sin el antiguo límite funcional de 500 operaciones.
 
 La respuesta conserva las métricas y series existentes, donde cada punto
 representa una posición completa reconstruida, y agrega `by_ea`. Este campo
@@ -148,9 +148,11 @@ agrupa por `account_id + magic_number` y contiene para cada grupo
 incluye `selected_magics` y `available_magics`; este último enumera los Magic
 propietarios elegibles para el período. La consulta base sigue acotada y el
 backend calcula la selección sobre ella; las métricas agregadas se recalculan
-desde los ciclos seleccionados, sin sumar ratios. Los grupos aplican las mismas
-fórmulas y cobertura del contrato existente. Ciclos incompletos, intervenidos o
-con Magic mixtos quedan fuera sin ser eliminados del historial.
+desde los ciclos seleccionados, sin sumar ratios. El cálculo mantiene memoria
+acotada: conserva como máximo 1.200 puntos deterministas por serie para dibujar,
+pero usa todas las operaciones para los valores escalares. Los grupos aplican las
+mismas fórmulas y cobertura del contrato existente. Ciclos incompletos,
+intervenidos o con Magic mixtos quedan fuera sin ser eliminados del historial.
 
 Respuestas principales: `200`, `400 invalid_cycle_metrics_query`, `401
 authentication_required`, `404 cycle_metrics_unavailable`, `503
@@ -243,6 +245,11 @@ Parámetros opcionales:
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
 - `owner_magics`: lista CSV de hasta 12 Magic Numbers, incompatible con
   `owner_magic`; se filtra antes de paginar.
+- `from_msc` y `to_msc`: período semiabierto opcional; deben aparecer juntos.
+- `closed_only`: `true` limita la consulta a ciclos cerrados.
+- `order`: `asc` o `desc`; predeterminado `desc`.
+- `include_details`: `false` omite el detalle derivado cuando el consumidor solo
+  necesita la identidad y el resultado del ciclo.
 - `limit`: tamaño de página; predeterminado `50`.
 - `cursor`: cursor opaco devuelto como `next_cursor`.
 
@@ -265,8 +272,9 @@ indica ausencia de evidencia. No se afirma disponer de todas las modificaciones
 del TP/SL. Un cierre con niveles cero no prueba que se hayan retirado las
 protecciones. `pips` permanece null hasta definir el tamaño del pip por símbolo.
 Los datos se calculan sobre el mensaje de reconciliación validado que respalda
-el ciclo seleccionado, mediante una consulta acotada a la página. No requiere
-migración ni cargar el historial completo en memoria.
+el ciclo seleccionado, mediante una consulta acotada a la página. Los filtros se
+aplican a la revisión vigente antes de paginar; una observación antigua no reaparece
+porque una revisión posterior haya quedado fuera del rango.
 
 Un ciclo con intervención, mezcla de Magics o evidencia insuficiente puede
 conservarse para auditoría y quedar excluido de las métricas autónomas.

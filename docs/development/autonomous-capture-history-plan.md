@@ -140,10 +140,10 @@ el arranque manual. Activación operativa y nuevo ADR antes del despliegue.
 
 ### 3. Recuperación histórica completa y reanudable
 
-**Estado:** primer incremento preparado en `feature/resumable-complete-history`:
-carriles reciente y profundo con cursores/bloqueos independientes y cola circular
-de avisos mínimos del callback. Heartbeat/progreso consultable, fixtures extensos
-y desempate de ventanas mínimas siguen pendientes.
+**Estado:** preparado en `feature/resumable-complete-history`: carriles reciente y
+profundo independientes, avisos acotados del callback, progreso durable, pausa,
+fixtures extensos y desempate estable de ventanas mínimas. Validado en compilación
+MT5 y con heartbeat real del piloto; resta la comparación con un reporte amplio.
 
 **Implementación:** extender el collector de actividad existente con progreso
 durable por cuenta, fuente, rango y versión de recuperación. Mantener seguimiento
@@ -177,6 +177,13 @@ Comparar por bloques con un reporte MT5 del mismo corte y cuenta; registrar brec
 variables globales ni reiniciar cursores manualmente como procedimiento ordinario.
 
 ### 4. Consultas y métricas sobre años de historia
+
+**Estado:** en preparación en `feature/multi-year-history-queries`: filtros de
+rango/estado/Magic aplicados en SQLite antes de paginar, recorrido cronológico sin
+tope funcional de 500, métricas completas con memoria acotada y series visuales
+de hasta 1.200 puntos. El esquema 5 y su migración verificada agregan índices para
+revisión vigente y consultas por Magic. Falta medir `EXPLAIN QUERY PLAN` y latencia
+con un dataset sintético representativo antes de considerar terminado el paso.
 
 **Implementación:** inventariar consultas reales y diseñar índices para cuenta,
 posición, fecha y Magic. Aplicar filtros sobre la versión vigente de cada entidad

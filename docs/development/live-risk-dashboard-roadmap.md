@@ -404,6 +404,11 @@ Las decisiones y ejemplos pendientes se recopilan en la
 
 ## Seguimiento de robustez
 
+La revisión de solo lectura de PR #48 (commit `a1d6959`) documenta cinco
+hallazgos abiertos, prioridades y criterios de aceptación en
+[Revisión de robustez — 2026-10-28](robustness-review-2026-10-28.md). Las
+soluciones son propuestas y aún no están implementadas.
+
 Se prepararon el [contrato v2 propuesto](../architecture/telemetry-v2-contract.md),
 ADR-0011 y ejemplos sintéticos. El validador y la admisión v2 aislados cubren
 credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia

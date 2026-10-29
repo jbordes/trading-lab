@@ -33,9 +33,9 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "void ResetCandidatePositions", 1
         )[0]
-        self.assertIn("PersistValue(cursor_key, next_cursor)", finalizer)
+        self.assertIn("PersistValue(selected_cursor_key, next_cursor)", finalizer)
         self.assertLess(
-            finalizer.index("PersistValue(cursor_key"),
+            finalizer.index("PersistValue(selected_cursor_key"),
             finalizer.index("confirmed_from_msc ="),
         )
         self.assertIn("pending_body", sender)
@@ -57,14 +57,16 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             reconciler.index("FinalizeConfirmedBatch"),
         )
 
-    def test_saturation_splits_then_blocks_without_advancing(self) -> None:
+    def test_saturation_splits_then_pages_without_early_cursor_advance(self) -> None:
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
         self.assertIn("while(true)", timer)
         self.assertIn("MinimumWindowSeconds", timer)
         self.assertIn("pending_blocks_recovery = truncated", timer)
+        self.assertIn("BuildPagedActivityPayload", timer)
+        self.assertIn("pagination_active", timer)
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
         blocked = sender.split("if(pending_blocks_recovery)", 1)[1].split("else", 1)[0]
-        self.assertIn("PersistValue(blocked_key, pending_from_msc)", blocked)
+        self.assertIn("PersistValue(selected_blocked_key, pending_from_msc)", blocked)
         self.assertIn("recovery_blocked = true", blocked)
         self.assertNotIn("confirmed_from_msc =", blocked)
 
@@ -74,6 +76,91 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn('pending_body = ""', sender.split("bool retryable", 1)[1])
         self.assertIn("StopForSafety()", sender)
         self.assertNotIn("Sleep(", self.source)
+
+    def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
+        self.assertIn('COLLECTOR_VERSION = "activity-0.6.0"', self.source)
+        self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
+        self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("bool recent_due", timer)
+        self.assertIn("bool deep_due", timer)
+        self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
+        self.assertIn("pending_is_recent = recent_due", timer)
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "void ResetCandidatePositions", 1
+        )[0]
+        self.assertIn("selected_cursor_key", finalizer)
+        self.assertIn("recent_confirmed_from_msc = next_cursor", finalizer)
+        self.assertIn("confirmed_from_msc = next_cursor", finalizer)
+
+    def test_trade_callback_only_enqueues_bounded_minimal_hints(self) -> None:
+        callback = self.source.split("void OnTradeTransaction", 1)[1].split(
+            "void EnqueueTransactionHint", 1
+        )[0]
+        self.assertIn("EnqueueTransactionHint(transaction)", callback)
+        for forbidden in ("HistorySelect(", "SendMessage(", "Database", "FileWrite"):
+            self.assertNotIn(forbidden, callback)
+        enqueue = self.source.split("void EnqueueTransactionHint", 1)[1].split(
+            "int DrainTransactionHints", 1
+        )[0]
+        self.assertIn("TRANSACTION_HINT_CAPACITY", enqueue)
+        self.assertIn("transaction_hints_dropped++", enqueue)
+        self.assertNotIn("ArrayResize", enqueue)
+        self.assertIn("DrainTransactionHints()", self.source)
+
+    def test_heartbeat_reports_progress_without_advancing_cursors(self) -> None:
+        self.assertIn("BuildHeartbeatPayload", self.source)
+        self.assertIn('"heartbeat"', self.source)
+        heartbeat = self.source.split("string BuildHeartbeatPayload", 1)[1].split(
+            "string BuildEnvelope", 1
+        )[0]
+        for field in (
+            "recent_cursor_msc",
+            "deep_cursor_msc",
+            "backlog_msc",
+            "recent_blocked",
+            "deep_blocked",
+            "deep_paused",
+            "queued_hints",
+            "dropped_hints",
+            "latest_deal_ticket",
+            "latest_order_ticket",
+            "latest_position_id",
+        ):
+            self.assertIn(field, heartbeat)
+        self.assertNotIn("PersistValue", heartbeat)
+        sender = self.source.split("bool TrySendPending", 1)[1].split("void ResetRetryState", 1)[0]
+        heartbeat_ack = sender.split("if(pending_is_heartbeat)", 1)[1].split(
+            "if(pending_is_position_reconcile)", 1
+        )[0]
+        self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
+        self.assertNotIn("PersistValue", heartbeat_ack)
+
+    def test_deep_recovery_can_pause_without_stopping_recent_capture(self) -> None:
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("EnableDeepRecovery && !recovery_blocked", timer)
+        recent = timer.split("bool recent_due", 1)[1].split("bool deep_due", 1)[0]
+        self.assertNotIn("EnableDeepRecovery", recent)
+        self.assertIn("deep_paused", self.source)
+
+    def test_saturated_pages_use_stable_composite_keys_and_restart_changed_snapshot(self) -> None:
+        pager = self.source.split("string BuildPagedActivityPayload", 1)[1].split(
+            "string BuildHistoricalDeals", 1
+        )[0]
+        self.assertIn("CompareActivityPageKeys", pager)
+        self.assertIn("time_msc", pager)
+        self.assertIn("entity_type", pager)
+        self.assertIn("ticket", pager)
+        self.assertIn("remaining_count > key_count", pager)
+        self.assertIn('page_status = has_more ? "partial" : "paged_complete"', pager)
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("pending_page_snapshot_id != pagination_snapshot_id", timer)
+        self.assertIn("pagination_after.time_msc = 0", timer)
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "int BuildPositionReconcilePayload", 1
+        )[0]
+        partial = finalizer.split("if(pending_is_paged && pending_page_has_more)", 1)[1]
+        self.assertNotIn("PersistValue", partial.split("long next_cursor", 1)[0])
 
 
 if __name__ == "__main__":

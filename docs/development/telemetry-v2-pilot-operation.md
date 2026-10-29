@@ -44,6 +44,10 @@ En el Navegador, refrescar `Asesores Expertos/TradingLab` y adjuntar
 | `MinimumWindowSeconds` | `60` |
 | `OverlapSeconds` | `5` |
 | `MaxItemsPerCollection` | `200` |
+| `RecentLookbackSeconds` | `3600` |
+| `RecentCadenceSeconds` | `60` |
+| `HeartbeatSeconds` | `60` |
+| `EnableDeepRecovery` | `true` durante la recuperación; `false` para pausarla |
 | `ExpectedDemoLogin` | login completo visible localmente en la terminal demo |
 | `ExpectedDemoServer` | `RoboForex-Pro` |
 
@@ -82,6 +86,92 @@ broker. Esa referencia permite mostrar `Broker` y `Local` sin depender del reloj
 de la VPS. Es una configuración fija del piloto: debe revisarse cuando el broker
 cambie su horario; no representa todavía una regla histórica de DST.
 
+## Arranque independiente de receptores y dashboard
+
+El arranque independiente mantiene la captura aunque el dashboard se detenga.
+
+Para no volver a escribir los tokens en cada arranque, copiar `.env.example` como
+`.env.local` en la raíz del repositorio y reemplazar únicamente los valores de
+ejemplo. `.env.local` está ignorado por Git y nunca debe compartirse ni
+versionarse. El proceso usa primero las variables ya definidas en el sistema,
+luego completa las ausentes desde ese archivo y solo pregunta las que todavía
+falten. El archivo admite exclusivamente las cinco variables documentadas en la
+plantilla, una por línea y sin comillas ni espacios alrededor de `=`.
+No instala tareas automáticas todavía. En una consola, iniciar los receptores:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py receivers
+```
+
+Solicita de forma oculta los tokens v1, live v2, activity v2 y lectura v2. Deben
+ser los mismos en cada reinicio de los componentes que los usan; el comando no
+genera credenciales efímeras. Arranca solo los receptores v1/v2, espera su salud
+y detiene únicamente esos dos hijos ante Ctrl+C o fallo de uno de ellos.
+
+En otra consola, iniciar el dashboard cuando sea necesario:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py dashboard
+```
+
+Solicita los tokens v1, humano y de lectura v2, comprueba que ambos receptores
+respondan y arranca solo el dashboard. Ctrl+C no detiene receptores ni modifica
+MT5. Un puerto ocupado se rechaza; el comando nunca adopta ni cierra ese proceso.
+
+### Mantenimiento preparado, todavía no programado
+
+El mantenimiento conjunto de las bases v1/v2 se puede previsualizar sin escribir:
+
+```powershell
+py -3 -m uv run python scripts/run_telemetry_maintenance.py
+```
+
+Agregar `--apply` crea una copia online verificada de cada base sin detener los
+receptores, sobrescribir copias anteriores ni eliminar información. Una guarda del
+sistema operativo rechaza ejecuciones simultáneas y el último resultado queda en
+`_storage/operations/maintenance-status.json`, sin credenciales. También admite
+`--storage-root` para la ubicación local persistente elegida en el arranque.
+
+Este comando es el núcleo que invoca la tarea programada. Ejecutarlo por sí solo no
+instala ni habilita ninguna tarea de Windows y no prueba restauración. Una copia
+local sigue sin proteger frente a la pérdida completa de la VPS.
+
+### Tareas automáticas de Windows
+
+La configuración se inspecciona primero sin modificar Task Scheduler:
+
+```powershell
+py -3 -m uv run python scripts/configure_telemetry_windows_tasks.py
+```
+
+La vista previa prepara `TradingLab Telemetry Receivers`, iniciada al abrir sesión
+con hasta tres reintentos acotados, y `TradingLab Telemetry Maintenance`, diaria a
+las 03:30 y con límite de una hora. Ambas se ejecutan como el usuario actual, con
+privilegios mínimos y política de instancia única. Sus comandos contienen rutas,
+nunca valores de tokens. El receptor guarda salida local rotada y estado bajo
+`_storage/operations/`; el mantenimiento conserva su último resultado allí.
+
+Solo después de revisar rutas, usuario, horario, `.env.local` y espacio disponible,
+agregar `--apply` para registrarlas. El instalador no sobrescribe tareas existentes.
+No inicia ni cierra MT5: una sesión de Windows y la terminal conectada continúan
+siendo dependencias operativas separadas. Antes de aplicar en una cuenta real se
+deben actualizar los ADR de backup, probar restauración y acordar alertas.
+
+Para mantener datos fuera del checkout se puede indicar un directorio local:
+
+```powershell
+py -3 -m uv run python scripts/start_telemetry_v2_component.py receivers `
+  --storage-root "C:\ruta\privada\TradingLabData"
+```
+
+Las dos bases deben existir dentro de esa raíz. SQLite no se ubica en una carpeta
+de red. `TRADINGLAB_STORAGE_ROOT` permite declarar la misma ruta sin repetir el
+argumento; no contiene secretos. Identidades, nombres de base y puertos también
+son configurables, pero otra cuenta requiere provisión previa y operación autorizada.
+
+El arranque único continúa como fallback. No ejecutar ambos modos sobre los
+mismos puertos al mismo tiempo.
+
 ## Comprobación manual
 
 1. Confirmar en la consola `Receptores v1/v2 listos`.
@@ -97,6 +187,12 @@ cambie su horario; no representa todavía una regla histórica de DST.
    en SQLite aunque no incremente trades ni métricas.
 6. Detener con Ctrl+C y volver a iniciar. El cursor debe continuar desde lo
    confirmado, sin duplicar deals ni órdenes.
+
+Para pausar temporalmente una recuperación histórica extensa, reconfigurar únicamente
+`EnableDeepRecovery=false` en `TradingLabActivity 0.6.0`. Esto no borra cursores ni
+detiene la captura reciente. Confirmar `deep_paused=true` en
+`GET /v2/activity-progress`. Para reanudar, volver a `true` conservando la misma
+cuenta, fuente y fecha inicial; no retirar variables globales.
 
 La cobertura ya viaja por la API, pero su indicador visual continúa pendiente. Un
 lote `truncated` no se considera cobertura completa y requiere revisión antes de

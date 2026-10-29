@@ -31,6 +31,7 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     V2TelemetryRegistry,
     create_v2_database,
     migrate_v2_database_v3_to_v4,
+    migrate_v2_database_v4_to_v5,
     open_v2_registry,
 )
 
@@ -95,6 +96,66 @@ def authorized(name: str, sequence: int | None = None) -> AuthorizedEnvelope:
     return directory().authorize(body(name, sequence), f"Bearer {credential}")
 
 
+def authorized_page(
+    sequence: int,
+    *,
+    ticket: str,
+    time_msc: str,
+    after_time: str,
+    after_ticket: str,
+    has_more: bool,
+) -> AuthorizedEnvelope:
+    value = fixture("activity-truncated")
+    value["sequence"] = sequence
+    value["event_id"] = f"synthetic-session-1:{sequence}"
+    deal = value["payload"]["deals"]["items"][0]
+    deal["ticket"] = ticket
+    deal["time_msc"] = time_msc
+    status = "partial" if has_more else "paged_complete"
+    value["payload"]["deals"] = {"status": status, "total": 2, "items": [deal]}
+    value["payload"]["orders"] = {"status": status, "total": 0, "items": []}
+    value["payload"]["pagination"] = {
+        "snapshot_id": "p:1792656000000:1792656060000:2:0",
+        "after": {
+            "time_msc": after_time,
+            "entity_type": "deal",
+            "ticket": after_ticket,
+        },
+        "through": {"time_msc": time_msc, "entity_type": "deal", "ticket": ticket},
+        "has_more": has_more,
+    }
+    encoded = json.dumps(value).encode()
+    return directory().authorize(encoded, f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
+def authorized_order_observation(
+    sequence: int,
+    *,
+    ticket: str,
+    done_at: datetime,
+) -> AuthorizedEnvelope:
+    value = fixture("activity-canceled-order")
+    session_id = "synthetic-long-history"
+    done_msc = int(done_at.timestamp() * 1000)
+    value.update(
+        session_id=session_id,
+        sequence=sequence,
+        event_id=f"{session_id}:{sequence}",
+        captured_at=done_at.isoformat().replace("+00:00", "Z"),
+    )
+    value["payload"]["window"] = {
+        "from_server_msc": str(done_msc - 30_000),
+        "to_server_msc": str(done_msc + 30_000),
+    }
+    order = value["payload"]["orders"]["items"][0]
+    order.update(
+        ticket=ticket,
+        setup_time_msc=str(done_msc - 90_000),
+        done_time_msc=str(done_msc),
+    )
+    return directory().authorize(json.dumps(value).encode(), f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
 class V2SqliteTest(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -125,6 +186,86 @@ class V2SqliteTest(unittest.TestCase):
                 ORDER BY message_id"""
             ).fetchall()
 
+    def insert_synthetic_cycles(self, count: int) -> tuple[int, int]:
+        start_msc = 1704067200000
+        step_msc = 8 * 60 * 60 * 1000
+        captured = "2026-10-29T12:00:00.000000Z"
+        messages: list[tuple[object, ...]] = []
+        cycles: list[tuple[object, ...]] = []
+        for index in range(count):
+            message_id = index + 1
+            position_id = str(1_000_000 + index)
+            ticket = str(2_000_000 + index)
+            magic = ("11122", "22222", "33333")[index % 3]
+            last_event = start_msc + index * step_msc
+            result = str(index % 11 - 5)
+            document = {
+                "account_id": "account-demo",
+                "position_id": position_id,
+                "owner_magic": magic,
+                "observed_magics": [magic],
+                "started_at_msc": last_event - 60_000,
+                "last_event_at_msc": last_event,
+                "lifecycle": "closed",
+                "remaining_signed_volume": "0",
+                "observed_net_result": result,
+                "deal_tickets": [ticket],
+                "exclusions": [],
+            }
+            canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
+            messages.append(
+                (
+                    message_id,
+                    "synthetic-activity",
+                    "multi-year-fixture",
+                    str(message_id),
+                    f"multi-year-fixture:{message_id}",
+                    "activity_batch",
+                    captured,
+                    captured,
+                    "mt5-telemetry-v2",
+                    "synthetic-fixture",
+                    "{}",
+                    "0" * 64,
+                    0,
+                    0,
+                )
+            )
+            cycles.append(
+                (
+                    message_id,
+                    "account-demo",
+                    position_id,
+                    magic,
+                    last_event - 60_000,
+                    last_event,
+                    "closed",
+                    "0",
+                    result,
+                    1,
+                    json.dumps([magic]),
+                    json.dumps([ticket]),
+                    "[]",
+                    canonical,
+                    "synthetic-activity",
+                    captured,
+                )
+            )
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executemany(
+                """INSERT INTO telemetry_v2_messages VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                messages,
+            )
+            connection.executemany(
+                "INSERT INTO position_cycle_observations VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                cycles,
+            )
+            connection.commit()
+        return start_msc, start_msc + count * step_msc
+
     def test_schema_is_isolated_exact_and_never_replaces_files(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
@@ -139,6 +280,50 @@ class V2SqliteTest(unittest.TestCase):
         with self.assertRaises(V2StorageError):
             with open_v2_registry(other):
                 pass
+
+    def test_multi_year_cycles_are_complete_paginated_and_indexed(self) -> None:
+        start_msc, to_msc = self.insert_synthetic_cycles(2500)
+        observed: list[str] = []
+        cursor = None
+        with open_v2_registry(self.path) as registry:
+            while True:
+                page = registry.position_cycles(
+                    "account-demo",
+                    from_msc=start_msc,
+                    to_msc=to_msc,
+                    closed_only=True,
+                    ascending=True,
+                    include_details=False,
+                    limit=500,
+                    cursor=cursor,
+                )
+                observed.extend(item.cycle.position_id for item in page.items)
+                cursor = page.next_cursor
+                if cursor is None:
+                    break
+
+        self.assertEqual(len(observed), 2500)
+        self.assertEqual(observed[0], "1000000")
+        self.assertEqual(observed[-1], "1002499")
+        self.assertGreater((to_msc - start_msc) / 86_400_000, 365 * 2)
+
+        with closing(sqlite3.connect(self.path)) as connection:
+            magic_plan = connection.execute(
+                """EXPLAIN QUERY PLAN SELECT message_id
+                FROM position_cycle_observations
+                WHERE account_id = ? AND owner_magic = ? AND last_event_at_msc >= ?
+                ORDER BY last_event_at_msc, position_id LIMIT 500""",
+                ("account-demo", "11122", start_msc),
+            ).fetchall()
+            revision_plan = connection.execute(
+                """EXPLAIN QUERY PLAN SELECT message_id
+                FROM position_cycle_observations
+                WHERE account_id = ? AND position_id = ?
+                ORDER BY captured_at_utc DESC, message_id DESC LIMIT 1""",
+                ("account-demo", "1000000"),
+            ).fetchall()
+        self.assertIn("position_cycle_observations_magic_query", str(magic_plan))
+        self.assertIn("position_cycle_observations_revision", str(revision_plan))
 
     def test_registration_is_idempotent_but_identity_and_roles_are_immutable(self) -> None:
         with open_v2_registry(self.path) as registry:
@@ -416,6 +601,90 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(deals.incomplete_batches, 1)
         self.assertEqual(orders.incomplete_batches, 0)
 
+    def test_paged_activity_claims_coverage_only_after_durable_chain(self) -> None:
+        first = authorized_page(
+            10,
+            ticket="900000000000000002",
+            time_msc="1792656030000",
+            after_time="0",
+            after_ticket="0",
+            has_more=True,
+        )
+        final = authorized_page(
+            11,
+            ticket="900000000000000003",
+            time_msc="1792656030000",
+            after_time="1792656030000",
+            after_ticket="900000000000000002",
+            has_more=False,
+        )
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(first, received_at=self.now)
+            before = registry.coverage_report(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+        with open_v2_registry(self.path) as registry:
+            duplicate = registry.store_authorized(first, received_at=self.now)
+            self.assertEqual(duplicate.disposition, AdmissionDisposition.DUPLICATE)
+            registry.store_authorized(final, received_at=self.now)
+            after = registry.coverage_report(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+            deals = registry.activity_page(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+
+        self.assertEqual(before.complete_ranges, ())
+        self.assertEqual(before.incomplete_batches, 0)
+        self.assertEqual(after.complete_ranges, (("1792656000000", "1792656060000"),))
+        self.assertEqual(
+            {item.ticket for item in deals.items},
+            {
+                "900000000000000002",
+                "900000000000000003",
+            },
+        )
+
+    def test_final_page_without_durable_prefix_rolls_back(self) -> None:
+        final = authorized_page(
+            12,
+            ticket="900000000000000003",
+            time_msc="1792656030000",
+            after_time="1792656030000",
+            after_ticket="900000000000000002",
+            has_more=False,
+        )
+        with open_v2_registry(self.path) as registry:
+            with self.assertRaises(V2StorageError):
+                registry.store_authorized(final, received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0],
+                0,
+            )
+
+    def test_more_than_twelve_months_survives_restart_without_retention_cutoff(self) -> None:
+        old_at = datetime(2025, 8, 1, 12, tzinfo=UTC)
+        recent_at = datetime(2026, 10, 20, 12, tzinfo=UTC)
+        old = authorized_order_observation(1, ticket="800000000000000001", done_at=old_at)
+        recent = authorized_order_observation(2, ticket="800000000000000002", done_at=recent_at)
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(old, received_at=self.now)
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(recent, received_at=self.now)
+            page = registry.activity_page(
+                "account-demo",
+                "order",
+                from_msc=int(old_at.timestamp() * 1000) - 60_000,
+                to_msc=int(recent_at.timestamp() * 1000) + 60_000,
+            )
+
+        self.assertGreater((recent_at - old_at).days, 365)
+        self.assertEqual(
+            {item.ticket for item in page.items},
+            {"800000000000000001", "800000000000000002"},
+        )
+
     def test_position_reconcile_is_durable_without_claiming_account_range(self) -> None:
         with open_v2_registry(self.path) as registry:
             registry.store_authorized(
@@ -429,7 +698,23 @@ class V2SqliteTest(unittest.TestCase):
             )
             cycles = registry.position_cycles("account-demo")
             filtered_cycles = registry.position_cycles("account-demo", owner_magic="11122")
+            multi_filtered = registry.position_cycles(
+                "account-demo", owner_magics=("11122", "99999")
+            )
+            ranged_cycles = registry.position_cycles(
+                "account-demo",
+                from_msc=1792656000000,
+                to_msc=1792656060001,
+                closed_only=True,
+            )
+            outside_range = registry.position_cycles(
+                "account-demo",
+                from_msc=1792656060001,
+                to_msc=1792656120001,
+                closed_only=True,
+            )
             other_cycles = registry.position_cycles("account-demo", owner_magic="99999")
+            discovered_magics = registry.position_cycle_magics("account-demo")
             coverage = registry.coverage_report(
                 "account-demo",
                 "deal",
@@ -442,7 +727,11 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(coverage.incomplete_batches, 0)
         self.assertEqual(len(cycles.items), 1)
         self.assertEqual(filtered_cycles.items, cycles.items)
+        self.assertEqual(multi_filtered.items, cycles.items)
+        self.assertEqual(ranged_cycles.items, cycles.items)
+        self.assertEqual(outside_range.items, ())
         self.assertEqual(other_cycles.items, ())
+        self.assertEqual(discovered_magics, ("11122",))
         self.assertIsNone(cycles.next_cursor)
         cycle = cycles.items[0].cycle
         self.assertEqual(cycle.position_id, "600000000000000001")
@@ -450,6 +739,9 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(cycle.observed_net_result, Decimal("9.8"))
         self.assertEqual(cycle.deal_tickets, ("700000000000000001", "700000000000000002"))
         self.assertTrue(cycle.eligible_for_autonomous_metrics)
+        with self.assertRaisesRegex(ValueError, "período"):
+            with open_v2_registry(self.path) as registry:
+                registry.position_cycles("account-demo", from_msc=1792656000000)
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0
@@ -485,10 +777,39 @@ class V2SqliteTest(unittest.TestCase):
                 ).fetchone()
             )
             self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+        backup_v4 = self.path.with_name("telemetry-v2-before-v5.sqlite3")
+        migrate_v2_database_v4_to_v5(self.path, backup_v4)
+        with closing(sqlite3.connect(backup_v4)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
         with open_v2_registry(self.path) as registry:
             cycles = registry.position_cycles("account-demo")
         self.assertEqual(len(cycles.items), 1)
         self.assertEqual(cycles.items[0].cycle.position_id, "600000000000000001")
+
+    def test_v4_migration_adds_verified_multi_year_query_indexes(self) -> None:
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("DROP INDEX position_cycle_observations_revision")
+            connection.execute("DROP INDEX position_cycle_observations_magic_query")
+            connection.execute("PRAGMA user_version = 4")
+        backup = self.path.with_name("telemetry-v2-v4-backup.sqlite3")
+
+        migrate_v2_database_v4_to_v5(self.path, backup)
+
+        with closing(sqlite3.connect(backup)) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+        with open_v2_registry(self.path) as registry:
+            self.assertEqual(registry.position_cycles("account-demo").items, ())
+        with closing(sqlite3.connect(self.path)) as connection:
+            indexes = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                ).fetchall()
+            }
+        self.assertIn("position_cycle_observations_revision", indexes)
+        self.assertIn("position_cycle_observations_magic_query", indexes)
 
     def test_position_cycles_use_stable_keyset_pagination(self) -> None:
         second = fixture("activity-position-reconcile")
@@ -518,11 +839,21 @@ class V2SqliteTest(unittest.TestCase):
                 limit=1,
                 cursor=first.next_cursor,
             )
+            oldest = registry.position_cycles("account-demo", ascending=True, limit=1)
+            newer = registry.position_cycles(
+                "account-demo",
+                ascending=True,
+                limit=1,
+                cursor=oldest.next_cursor,
+            )
 
         self.assertEqual(first.items[0].cycle.position_id, position_id)
         self.assertIsNotNone(first.next_cursor)
         self.assertEqual(following.items[0].cycle.position_id, "600000000000000001")
         self.assertIsNone(following.next_cursor)
+        self.assertEqual(oldest.items[0].cycle.position_id, "600000000000000001")
+        self.assertEqual(newer.items[0].cycle.position_id, position_id)
+        self.assertIsNone(newer.next_cursor)
 
     def test_newer_conflict_preserves_last_unambiguous_order(self) -> None:
         def observation(session: str, captured: str, price: int) -> AuthorizedEnvelope:

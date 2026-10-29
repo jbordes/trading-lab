@@ -1,6 +1,7 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados; piloto pendiente.
+Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados;
+recuperación reciente prioritaria preparada, piloto pendiente.
 
 ## Evidencia del piloto
 
@@ -76,9 +77,10 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 3. **Implementado en código:** collector de actividad con inicio histórico
    explícito, cursor durable local por fuente/identidad, confirmación después del
    commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
-   Conserva deals y órdenes finalizadas. Un rango mínimo saturado queda
-   `truncated`, persiste un bloqueo y no entra en un ciclo de reenvíos. Compila
-   con 0 errores y 0 warnings; falta instalarlo y validarlo contra MT5 real.
+   Conserva deals y órdenes finalizadas. Un rango mínimo saturado usa páginas
+   compuestas y solo avanza después de confirmar su cadena durable. La versión
+   `activity-0.6.0` compiló en el MetaEditor de Juampi con 0 errores y 0 warnings;
+   todavía requiere validación operativa en esa terminal.
 4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
    la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
    con cursor estable; la cobertura completa y los lotes incompletos se informan
@@ -89,6 +91,51 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 5. Validar reinicio, desorden, duplicados, error, truncamiento y caída prolongada.
    Probar que un lote antiguo no cambia balance/equity actuales y que una orden
    cancelada sin deal se conserva sin incrementar trades. Contrastar con MT5.
+
+## Evolución 0.3: actividad reciente independiente del backfill
+
+`TradingLabActivity` conserva un solo productor, una secuencia y como máximo un
+lote sin confirmar, pero separa dos cursores durables. El carril reciente comienza
+con una relectura acotada de la última hora y se atiende al iniciar, ante actividad
+de trading o al vencer su cadencia. El carril profundo continúa desde
+`HistoryStartServerTime` únicamente cuando el reciente está al día. Ambos conservan
+solapamiento, confirmación posterior al commit y deduplicación del receptor.
+
+Una ventana mínima saturada se pagina mediante una clave estable compuesta por
+timestamp, tipo de entidad y ticket. El cursor principal del carril no avanza
+hasta confirmar la cadena completa; una página parcial no declara cobertura. Si
+el conjunto histórico cambia durante el proceso, se reinicia la ventana y las
+observaciones repetidas se resuelven de forma idempotente. Los parámetros nuevos son
+`RecentLookbackSeconds` y `RecentCadenceSeconds`; sus valores iniciales son una hora
+y un minuto. El cursor histórico anterior se reutiliza y el cursor reciente nuevo
+se inicializa sin borrar variables globales.
+
+El callback `OnTradeTransaction` conserva además hasta 128 avisos mínimos en una
+cola circular preasignada. Solo copia tipo, tickets, posición, símbolo y reloj
+monotónico de recepción; no consulta historia ni realiza red, archivos o SQLite.
+El timer drena esos avisos para priorizar la relectura reciente. Si la cola se
+completa, incrementa un contador de descartes y la recuperación autoritativa por
+historial continúa siendo la protección contra huecos. Los avisos aceleran y
+diagnostican; no se convierten en una segunda fuente de verdad.
+
+La versión `activity-0.6.0` emite además un heartbeat operativo cada minuto. El
+mensaje informa por separado los cursores reciente y profundo, atraso pendiente,
+bloqueos, avisos en cola o descartados y los últimos tickets observados. Un heartbeat
+confirmado no mueve cursores, no confirma cobertura y no desencadena reconciliación
+de posiciones. Su esquema es opcional dentro del contrato de heartbeat para que
+los productores existentes sigan siendo compatibles. Un bloqueo o un descarte
+de avisos degrada explícitamente su estado.
+
+El progreso se consulta mediante `GET /v2/activity-progress`, leyendo el último
+heartbeat durable sin crear una proyección creciente en memoria. `EnableDeepRecovery`
+permite pausar solo el backfill profundo conservando sus cursores; la captura reciente
+y los heartbeats continúan y exponen `deep_paused`. La persistencia se validó con un
+dataset sintético reproducible que abarca más de 12 meses, cierre/reapertura de SQLite
+y repetición idempotente de una página antes de completar su cadena. `activity-0.6.0`
+compiló con 0 errores y 0 warnings. La validación operativa del 29 de octubre de 2026
+persistió un heartbeat real de Juampi con estado `ok`, sin avisos descartados ni
+bloqueos, recuperación profunda activa y ambos cursores separados por cinco segundos.
+El collector no registra cada ACK exitoso para evitar ruido en la pestaña Expertos.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

@@ -42,7 +42,12 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=port, default=8777, help="Puerto local de ingesta v2.")
-    parser.add_argument("--sqlite-db", type=Path, required=True, help="Base v2 bajo _storage/.")
+    parser.add_argument("--sqlite-db", type=Path, required=True, help="Base v2 existente.")
+    parser.add_argument(
+        "--storage-root",
+        type=Path,
+        help="Directorio local autorizado que contiene la base; por defecto _storage/.",
+    )
     parser.add_argument("--account-id", required=True, help="Cuenta interna provisionada.")
     parser.add_argument("--max-connections", type=int, default=8)
     parser.add_argument("--request-timeout", type=float, default=5.0)
@@ -55,10 +60,12 @@ def main(argv: list[str] | None = None) -> int:
         credentials = (live_authorization, activity_authorization, read_authorization)
         if len(set(credentials)) != len(credentials):
             raise ValueError("Las credenciales live, activity y lectura deben ser distintas")
-        storage_root = (ROOT / "_storage").resolve()
+        storage_root = (args.storage_root or ROOT / "_storage").resolve(strict=True)
+        if not storage_root.is_dir():
+            raise ValueError("El directorio de almacenamiento no es válido")
         database = args.sqlite_db.resolve(strict=True)
         if not database.is_relative_to(storage_root):
-            raise ValueError("La base SQLite debe estar bajo _storage/")
+            raise ValueError("La base SQLite debe estar bajo --storage-root")
         receiver = PersistentV2TelemetryReceiver(
             database,
             account_id=args.account_id,

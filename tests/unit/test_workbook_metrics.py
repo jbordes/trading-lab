@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from tradinglab.metrics.workbook_v1 import (
     FORMULA_VERSION,
+    StreamingWorkbookMetrics,
     calculate_closed_deal_metrics,
     calculate_workbook_metrics,
 )
@@ -105,6 +106,35 @@ class WorkbookMetricsTest(unittest.TestCase):
         self.assertIsNone(single.profit_factor)
         self.assertIsNone(single.standard_deviation)
         self.assertEqual(single.winning_percentage, Decimal(1))
+
+    def test_streaming_metrics_match_exact_formulas_with_bounded_series(self) -> None:
+        values = tuple(Decimal(index % 17 - 8) for index in range(2500))
+        expected = calculate_workbook_metrics(values)
+        stream = StreamingWorkbookMetrics(series_capacity=64)
+        for index, value in enumerate(values):
+            stream.add(value, ticket=str(index + 1), time_msc=1000 + index)
+        actual = stream.snapshot()
+
+        for field in (
+            "trade_count",
+            "net_profit",
+            "profit_factor",
+            "winning_percentage",
+            "average_trade",
+            "maximum_drawdown",
+            "maximum_drawdown_percentage",
+            "current_drawdown",
+            "current_drawdown_percentage",
+            "return_drawdown_ratio",
+            "expectancy_r",
+        ):
+            self.assertEqual(getattr(actual, field), getattr(expected, field))
+        self.assertAlmostEqual(
+            float(actual.standard_deviation), float(expected.standard_deviation), places=12
+        )
+        self.assertLessEqual(len(actual.series), 64)
+        self.assertEqual(actual.series[0].index, 1)
+        self.assertEqual(actual.series[-1].index, len(values))
 
     def test_rejects_invalid_results_and_parameters(self) -> None:
         for value in (Decimal("NaN"), Decimal("Infinity")):

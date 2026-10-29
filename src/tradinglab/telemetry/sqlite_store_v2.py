@@ -36,7 +36,7 @@ from tradinglab.telemetry.contract import (
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 
 _POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
     message_id INTEGER PRIMARY KEY REFERENCES telemetry_v2_messages(message_id),
@@ -60,7 +60,15 @@ _POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
 ) STRICT;"""
 _POSITION_CYCLE_INDEX = """CREATE INDEX position_cycle_observations_query
 ON position_cycle_observations(account_id, last_event_at_msc, position_id);"""
-_POSITION_CYCLE_DDL = _POSITION_CYCLE_TABLE + "\n" + _POSITION_CYCLE_INDEX
+_POSITION_CYCLE_REVISION_INDEX = """CREATE INDEX position_cycle_observations_revision
+ON position_cycle_observations(
+    account_id, position_id, captured_at_utc DESC, message_id DESC
+);"""
+_POSITION_CYCLE_MAGIC_INDEX = """CREATE INDEX position_cycle_observations_magic_query
+ON position_cycle_observations(account_id, owner_magic, last_event_at_msc, position_id);"""
+_POSITION_CYCLE_EXTRA_INDEXES = _POSITION_CYCLE_REVISION_INDEX + "\n" + _POSITION_CYCLE_MAGIC_INDEX
+_POSITION_CYCLE_DDL_V4 = _POSITION_CYCLE_TABLE + "\n" + _POSITION_CYCLE_INDEX
+_POSITION_CYCLE_DDL = _POSITION_CYCLE_DDL_V4 + "\n" + _POSITION_CYCLE_EXTRA_INDEXES
 
 _SCHEMA = f"""
 BEGIN IMMEDIATE;
@@ -155,10 +163,13 @@ CREATE TABLE activity_coverage (
 CREATE INDEX activity_coverage_query
 ON activity_coverage(account_id, entity_type, from_server_msc, to_server_msc);
 {_POSITION_CYCLE_DDL}
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 COMMIT;
 """
-_SCHEMA_V3 = _SCHEMA.replace(_POSITION_CYCLE_DDL, "").replace(
+_SCHEMA_V4 = _SCHEMA.replace("\n" + _POSITION_CYCLE_EXTRA_INDEXES, "").replace(
+    "PRAGMA user_version = 5", "PRAGMA user_version = 4"
+)
+_SCHEMA_V3 = _SCHEMA_V4.replace(_POSITION_CYCLE_DDL_V4, "").replace(
     "PRAGMA user_version = 4", "PRAGMA user_version = 3"
 )
 
@@ -235,12 +246,25 @@ class V2CoverageReport:
 
 
 @dataclass(frozen=True, slots=True)
+class V2ActivityProgress:
+    account_id: str
+    source_id: str
+    session_id: str
+    sequence: int
+    collector_version: str
+    captured_at: str
+    received_at: str
+    status: str
+    values: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class V2PositionCycleItem:
     message_id: int
     cycle: PositionCycle
     source_id: str
     captured_at: str
-    details: dict[str, object]
+    details: dict[str, object] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,12 +564,29 @@ class V2TelemetryRegistry:
     ) -> None:
         payload = envelope.payload
         window = payload["window"]
+        pagination = payload.get("pagination")
+        paged_complete = pagination is not None and not pagination["has_more"]
+        if paged_complete and not V2TelemetryRegistry._has_complete_pagination_chain(
+            connection,
+            account_id,
+            envelope.source_id,
+            int(window["from_server_msc"]),
+            int(window["to_server_msc"]),
+            pagination["snapshot_id"],
+            payload["deals"]["total"],
+            payload["orders"]["total"],
+        ):
+            raise V2StorageError("La página final no tiene una cadena durable completa")
         for collection, entity_type, time_field in (
             ("deals", "deal", "time_msc"),
             ("orders", "order", "done_time_msc"),
         ):
             evidence = payload[collection]
-            if payload["reason"] != "position_reconcile":
+            records_coverage = payload["reason"] != "position_reconcile" and (
+                pagination is None or paged_complete
+            )
+            if records_coverage:
+                coverage_status = "complete" if paged_complete else evidence["status"]
                 connection.execute(
                     """INSERT INTO activity_coverage
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -555,7 +596,7 @@ class V2TelemetryRegistry:
                         entity_type,
                         int(window["from_server_msc"]),
                         int(window["to_server_msc"]),
-                        evidence["status"],
+                        coverage_status,
                         evidence["total"],
                         captured,
                         envelope.source_id,
@@ -600,6 +641,58 @@ class V2TelemetryRegistry:
                 captured,
                 payload["deals"]["items"],
             )
+
+    @staticmethod
+    def _has_complete_pagination_chain(
+        connection: sqlite3.Connection,
+        account_id: str,
+        source_id: str,
+        from_msc: int,
+        to_msc: int,
+        snapshot_id: str,
+        deal_total: int,
+        order_total: int,
+    ) -> bool:
+        rows = connection.execute(
+            """SELECT m.payload_json
+               FROM telemetry_v2_messages m
+               JOIN sources s ON s.source_id = m.source_id
+               WHERE s.account_id = ? AND m.source_id = ? AND m.kind = 'activity_batch'
+                 AND json_extract(m.payload_json, '$.payload.window.from_server_msc') = ?
+                 AND json_extract(m.payload_json, '$.payload.window.to_server_msc') = ?
+                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?""",
+            (account_id, source_id, str(from_msc), str(to_msc), snapshot_id),
+        ).fetchall()
+        edges: dict[tuple[int, int, int], list[tuple[tuple[int, int, int], bool]]] = {}
+        for (encoded,) in rows:
+            payload = json.loads(encoded)["payload"]
+            if payload["deals"]["total"] != deal_total or payload["orders"]["total"] != order_total:
+                continue
+            pagination = payload["pagination"]
+            after = V2TelemetryRegistry._stored_page_key(pagination["after"])
+            through = V2TelemetryRegistry._stored_page_key(pagination["through"])
+            edges.setdefault(after, []).append((through, pagination["has_more"]))
+
+        frontier = [(0, 0, 0)]
+        visited: set[tuple[int, int, int]] = set()
+        while frontier:
+            current = frontier.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            for through, has_more in edges.get(current, ()):
+                if not has_more:
+                    return True
+                frontier.append(through)
+        return False
+
+    @staticmethod
+    def _stored_page_key(value: dict[str, object]) -> tuple[int, int, int]:
+        return (
+            int(value["time_msc"]),
+            0 if value["entity_type"] == "deal" else 1,
+            int(value["ticket"]),
+        )
 
     @staticmethod
     def _project_position_cycle(
@@ -832,11 +925,47 @@ class V2TelemetryRegistry:
             incomplete,
         )
 
+    def latest_activity_progress(self, account_id: str) -> V2ActivityProgress | None:
+        """Return the latest durable activity heartbeat carrying progress."""
+
+        account = _identifier(account_id, "account_id")
+        row = self._connection.execute(
+            """SELECT m.source_id, m.session_id, m.sequence, m.collector_version,
+                      m.captured_at_utc, m.received_at_utc, m.payload_json
+               FROM telemetry_v2_messages m
+               JOIN sources s ON s.source_id = m.source_id
+               WHERE s.account_id = ? AND s.role = 'activity' AND m.kind = 'heartbeat'
+                 AND json_type(m.payload_json, '$.payload.activity_progress') = 'object'
+               ORDER BY m.message_id DESC LIMIT 1""",
+            (account,),
+        ).fetchone()
+        if row is None:
+            return None
+        document = json.loads(row[6])
+        payload = document["payload"]
+        return V2ActivityProgress(
+            account,
+            row[0],
+            row[1],
+            int(row[2]),
+            row[3],
+            row[4],
+            row[5],
+            payload["status"],
+            payload["activity_progress"],
+        )
+
     def position_cycles(
         self,
         account_id: str,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -845,13 +974,33 @@ class V2TelemetryRegistry:
         account = _identifier(account_id, "account_id")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
             raise ValueError("limit debe estar entre 1 y 500")
-        if owner_magic is not None:
-            if not isinstance(owner_magic, str) or not owner_magic:
+        if owner_magic is not None and owner_magics:
+            raise ValueError("Los filtros owner_magic y owner_magics son incompatibles")
+        if (from_msc is None) != (to_msc is None):
+            raise ValueError("El período de ciclos debe estar completo")
+        if from_msc is not None and (
+            isinstance(from_msc, bool)
+            or isinstance(to_msc, bool)
+            or not isinstance(from_msc, int)
+            or not isinstance(to_msc, int)
+            or not 0 <= from_msc < to_msc < 2**63
+        ):
+            raise ValueError("Período de ciclos inválido")
+        if not isinstance(closed_only, bool):
+            raise ValueError("closed_only inválido")
+        if not isinstance(ascending, bool) or not isinstance(include_details, bool):
+            raise ValueError("Opciones de ciclos inválidas")
+        if len(owner_magics) > 12 or len(set(owner_magics)) != len(owner_magics):
+            raise ValueError("owner_magics inválido")
+        for magic in (owner_magic,) if owner_magic is not None else owner_magics:
+            if not isinstance(magic, str) or not magic:
                 raise ValueError("owner_magic inválido")
             try:
-                int(owner_magic)
+                parsed_magic = int(magic)
             except ValueError as exc:
                 raise ValueError("owner_magic inválido") from exc
+            if str(parsed_magic) != magic or not -(2**63) <= parsed_magic < 2**63:
+                raise ValueError("owner_magic inválido")
         cursor_event, cursor_position = self._decode_activity_cursor(cursor)
         if cursor_position is not None and (
             cursor_position == "0" or str(int(cursor_position)) != cursor_position
@@ -862,11 +1011,21 @@ class V2TelemetryRegistry:
         if owner_magic is not None:
             filters.append("owner_magic = ?")
             parameters.append(owner_magic)
+        elif owner_magics:
+            placeholders = ",".join("?" for _ in owner_magics)
+            filters.append(f"owner_magic IN ({placeholders})")
+            parameters.extend(owner_magics)
         result_filter = "capture_rank = 1"
+        if from_msc is not None and to_msc is not None:
+            result_filter += " AND last_event_at_msc >= ? AND last_event_at_msc < ?"
+            parameters.extend((from_msc, to_msc))
+        if closed_only:
+            result_filter += " AND lifecycle = 'closed'"
         if cursor_event is not None and cursor_position is not None:
-            result_filter += """ AND (last_event_at_msc < ? OR
-                (last_event_at_msc = ? AND (length(position_id) < ? OR
-                (length(position_id) = ? AND position_id < ?))))"""
+            comparator = ">" if ascending else "<"
+            result_filter += f""" AND (last_event_at_msc {comparator} ? OR
+                (last_event_at_msc = ? AND (length(position_id) {comparator} ? OR
+                (length(position_id) = ? AND position_id {comparator} ?))))"""
             parameters.extend(
                 (
                     cursor_event,
@@ -877,6 +1036,7 @@ class V2TelemetryRegistry:
                 )
             )
         parameters.append(limit + 1)
+        direction = "ASC" if ascending else "DESC"
         rows = self._connection.execute(
             f"""WITH filtered AS (
                 SELECT * FROM position_cycle_observations
@@ -901,14 +1061,15 @@ class V2TelemetryRegistry:
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
                    observed_magics_json, deal_tickets_json, exclusions_json
             FROM eligible WHERE {result_filter}
-            ORDER BY last_event_at_msc DESC, length(position_id) DESC, position_id DESC
+            ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
+                     position_id {direction}
             LIMIT ?""",
             parameters,
         ).fetchall()
         items: list[V2PositionCycleItem] = []
         message_ids = [int(row[0]) for row in rows[:limit]]
         evidence = {}
-        if message_ids:
+        if include_details and message_ids:
             placeholders = ",".join("?" for _ in message_ids)
             evidence = {
                 row[0]: row[1:]
@@ -950,7 +1111,7 @@ class V2TelemetryRegistry:
             )
             if actual != expected:
                 raise V2StorageError("Columnas y ciclo de posición guardado no coinciden")
-            details = {}
+            details = None
             if int(row[0]) in evidence:
                 canonical, digest = evidence[int(row[0])]
                 try:
@@ -966,7 +1127,7 @@ class V2TelemetryRegistry:
                     details = trade_details(cycle, envelope.payload)
                 except (ValueError, TypeError, KeyError) as exc:
                     raise V2StorageError("Detalle de operación inválido") from exc
-            elif len(items) < limit:
+            elif include_details and len(items) < limit:
                 raise V2StorageError("Falta la evidencia del ciclo")
             items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3], details))
         page_items = tuple(items[:limit])
@@ -978,6 +1139,21 @@ class V2TelemetryRegistry:
                 cycle.position_id,
             )
         return V2PositionCyclePage(account, owner_magic, page_items, next_cursor)
+
+    def position_cycle_magics(self, account_id: str, *, limit: int = 100) -> tuple[str, ...]:
+        """Return a bounded discovery list without loading position cycles."""
+        account = _identifier(account_id, "account_id")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("limit debe estar entre 1 y 100")
+        rows = self._connection.execute(
+            """SELECT DISTINCT owner_magic FROM position_cycle_observations
+               WHERE account_id = ? AND owner_magic IS NOT NULL
+               ORDER BY length(owner_magic), owner_magic LIMIT ?""",
+            (account, limit + 1),
+        ).fetchall()
+        if len(rows) > limit:
+            raise V2StorageError("La cuenta supera el límite seguro de Magic Numbers")
+        return tuple(str(row[0]) for row in rows)
 
     @staticmethod
     def _encode_activity_cursor(event_msc: int, ticket: str) -> str:
@@ -1280,12 +1456,70 @@ def migrate_v2_database_v3_to_v4(path: Path, backup_path: Path) -> int:
             )
             projected += 1
         connection.execute("PRAGMA user_version = 4")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
             raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise V2StorageError("La migración produjo relaciones inválidas")
         connection.commit()
         return projected
+    except sqlite3.Error as exc:
+        connection.rollback()
+        raise V2StorageError("No se pudo migrar la base v2") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        if backup_connection is not None:
+            backup_connection.close()
+        connection.close()
+
+
+def migrate_v2_database_v4_to_v5(path: Path, backup_path: Path) -> None:
+    """Back up and atomically add the indexes used by multi-year cycle queries."""
+
+    if path.suffix != ".sqlite3" or backup_path.suffix != ".sqlite3":
+        raise ValueError("La base y su copia deben usar extensión .sqlite3")
+    source = path.resolve(strict=True)
+    backup = backup_path.resolve(strict=False)
+    if source == backup:
+        raise ValueError("La copia debe usar otro archivo")
+    if backup.exists():
+        raise FileExistsError(f"La copia ya existe: {backup}")
+    backup.parent.resolve(strict=True)
+
+    connection = sqlite3.connect(source, timeout=5.0)
+    backup_connection: sqlite3.Connection | None = None
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA synchronous = FULL")
+        if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
+            raise V2StorageError("La migración exige una base v2 con esquema 4")
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
+            raise V2StorageError("El esquema 4 no coincide con TradingLab v2")
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            raise V2StorageError("Falló la comprobación previa de SQLite v2")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise V2StorageError("La base v2 contiene relaciones inválidas")
+
+        backup_connection = sqlite3.connect(backup, timeout=5.0)
+        connection.backup(backup_connection)
+        backup_connection.commit()
+        if backup_connection.execute("PRAGMA quick_check").fetchall() != [
+            ("ok",)
+        ] or _schema_objects(backup_connection) != _expected_schema_objects(_SCHEMA_V4):
+            raise V2StorageError("La copia previa a la migración no quedó verificada")
+        backup_connection.close()
+        backup_connection = None
+
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_POSITION_CYCLE_REVISION_INDEX)
+        connection.execute(_POSITION_CYCLE_MAGIC_INDEX)
+        connection.execute("PRAGMA user_version = 5")
+        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
+            raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise V2StorageError("La migración produjo relaciones inválidas")
+        connection.commit()
     except sqlite3.Error as exc:
         connection.rollback()
         raise V2StorageError("No se pudo migrar la base v2") from exc

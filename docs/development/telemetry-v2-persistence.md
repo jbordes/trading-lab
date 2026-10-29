@@ -109,23 +109,29 @@ El receptor también expone `GET /v2/activity` solo en loopback. Exige
 resuelta con cobertura completa e indicador de lotes incompletos. El endpoint de
 salud continúa sin revelar cuenta ni requerir credenciales.
 
+`GET /v2/activity-progress` reutiliza la credencial de lectura y consulta el último
+heartbeat de progreso directamente en SQLite. Devuelve null mientras el collector
+no haya enviado uno. No conserva una proyección creciente en memoria y un heartbeat
+no se interpreta como cobertura confirmada.
+
 `GET /v2/position-cycles` reutiliza esa credencial de lectura y devuelve una
-página acotada de ciclos reconciliados. Admite `owner_magic`, `limit` y cursor
-keyset; autentica antes de validar parámetros. Cada fila conserva procedencia,
+página acotada de ciclos reconciliados. Admite Magic, período, estado cerrado,
+orden, inclusión de detalle, `limit` y cursor keyset; autentica antes de validar
+parámetros. Cada fila conserva procedencia,
 clasificación, resultado observado, Magic relacionados, exclusiones y elegibilidad.
 No calcula métricas ni devuelve posiciones inferidas desde rangos incompletos.
 
 El adaptador `LoopbackV2HistoryClient` valida estrictamente las respuestas antes
 de convertir deals, órdenes o ciclos a modelos del dashboard. Deals y órdenes se
-exponen mediante `/api/deals` y `/api/orders`; solo los deals continúan alimentando
-las métricas provisionales de `/api/metrics`. Los ciclos se exponen de manera
-acotada por `/api/position-cycles`, pero todavía no alteran esas fórmulas ni tienen
-una vista visual. El navegador solo accede mediante la sesión autenticada del
+exponen mediante `/api/deals` y `/api/orders`; los deals continúan alimentando
+las métricas provisionales de `/api/metrics`. Los ciclos se exponen mediante
+`/api/position-cycles` y alimentan `position-cycle-v1` en `/api/cycle-metrics`.
+El navegador solo accede mediante la sesión autenticada del
 dashboard; nunca recibe la credencial interna de lectura ni las de los collectors.
 
 ## Próximos pasos seguros
 
-1. La provisión piloto aislada y la migración v2 de esquema 3 a 4 están
+1. La provisión piloto aislada y las migraciones incrementales v2 están
    implementadas con vista previa, copia verificada y aplicación explícita.
 2. Las proyecciones paginadas de actividad ya están implementadas y validadas con
    datos sintéticos. Falta medirlas con volumen y operaciones reales anonimizadas.
@@ -133,11 +139,11 @@ dashboard; nunca recibe la credencial interna de lectura ni las de los collector
    credenciales separadas en variables de entorno y sin modificar el receptor v1.
    Falta conectarlo a collectors v2. La lectura autenticada y el adaptador del
    dashboard ya están implementados de forma opt-in.
-4. Validar observaciones `position_reconcile` reales en demo y contrastarlas con
-   MT5 antes de consumir ciclos en métricas.
-5. La consulta interna de ciclos, su cliente validado y el proxy autenticado del
-   dashboard están implementados. Falta validar evidencia real y aprobar el
-   contrato de métricas/vista antes de presentarlos o calcular rendimiento.
+4. Continuar contrastando observaciones `position_reconcile` reales en demo con
+   reportes MT5 y registrar cualquier brecha de cobertura.
+5. Las consultas y métricas recorren historia extensa con memoria visual acotada.
+   Un fixture de 2.500 ciclos, tres EAs y más de dos años verifica paginación
+   completa y uso de índices. Falta observar latencia real tras migrar el piloto.
 
 ## Operación piloto
 
@@ -160,8 +166,9 @@ uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <
 ```
 
 La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
-`/health`. La consulta vive en `/v2/activity`. Este procedimiento prepara el
-backend; no instala collectors ni genera actividad por sí solo.
+`/health`. Las consultas viven en `/v2/activity`, `/v2/activity-progress` y las
+rutas de ciclos documentadas. Este procedimiento prepara el backend; no instala
+collectors ni genera actividad por sí solo.
 
 Para actualizar una base v2 existente, detener primero el supervisor y revisar la
 vista previa. El nombre de copia debe ser nuevo:
@@ -169,13 +176,14 @@ vista previa. El nombre de copia debe ser nuevo:
 ```text
 uv run python scripts/migrate_telemetry_v2_db.py \
   --filename piloto-v2.sqlite3 \
-  --backup-filename piloto-v2-before-schema-4.sqlite3
+  --backup-filename piloto-v2-before-next-schema.sqlite3
 ```
 
 Solo después de revisar rutas se repite con `--apply`. El comando rechaza otra
-versión, un esquema alterado o una copia ya existente; crea la copia mediante la
-API de backup de SQLite, verifica integridad, migra atómicamente y reproyecta los
-`position_reconcile` que ya estuvieran guardados. No restaura automáticamente: la
+versión, un esquema alterado o una copia ya existente; detecta el siguiente paso,
+crea la copia mediante la API de backup de SQLite, verifica integridad y migra
+atómicamente. El paso 3 a 4 reproyecta los `position_reconcile`; el paso 4 a 5
+agrega los índices de revisión y Magic usados por consultas extensas. No restaura automáticamente: la
 copia queda disponible para una recuperación humana si la validación posterior
 fallara.
 

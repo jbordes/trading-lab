@@ -1,7 +1,7 @@
 # Revisión de robustez — 2026-10-28
 
-**Alcance:** lectura de PR #48, commit `a1d6959`. Hallazgos abiertos; este
-documento registra propuestas, no cambios implementados.
+**Alcance:** lectura de PR #48, commit `a1d6959`. El documento conserva los
+hallazgos y propuestas originales; su resolución se registra al final.
 
 ## ROB-01 — Alta: plazo efectivo de consulta de historial
 
@@ -83,12 +83,31 @@ conoce, sin agrandar la fila principal.
 **Aceptación:** un caso que cruza medianoche muestra ambas fechas y referencias;
 si falta el offset, queda indicado sin inferirlo.
 
+## Resolución implementada — 2026-10-29
+
+- **ROB-01:** lector SQLite `mode=ro` independiente, `busy_timeout`,
+  `progress_handler` y admisión acotada; la ingesta ya no comparte el lock de
+  la consulta histórica.
+- **ROB-02:** `owner_magics` llega hasta SQLite y se aplica antes del cursor y el
+  límite. El descubrimiento usa una consulta `DISTINCT` autenticada y acotada a
+  100 Magic Numbers.
+- **ROB-03:** el detalle muestra `fee` junto a Swap y Comisión, incluso cuando
+  vale cero, sin recalcular ni duplicar el resultado neto.
+- **ROB-04:** el servidor publica cadencia de captura, tolerancia y edad. El
+  navegador incrementa esa edad con reloj monotónico y ya no usa su reloj civil.
+- **ROB-05:** la fila conserva la hora del broker y el detalle agrega hora local
+  de apertura y cierre, con fallback explícito cuando falta el offset.
+
+Validación específica: 67 pruebas unitarias afectadas, smoke test de navegación
+y filas expandibles, sintaxis JavaScript y Ruff. La suite completa queda en el
+CI del pull request según el harness 0.2.
+
 ## Cobertura y siguiente paso
 
 En las rutas revisadas no se identificó bypass de autenticación, inyección SQL
 ni exposición del token. Esto no equivale a una auditoría de CVEs, dependencias,
 carga exhaustiva o de toda la aplicación.
 
-Orden propuesto: ROB-01, ROB-02, ROB-03, ROB-04 y ROB-05. Retomar las
-correcciones tras aprobación; ninguna de las propuestas anteriores está
-implementada por esta revisión.
+Los cinco hallazgos quedaron implementados en
+`fix/pr48-robustness-findings`. La revisión de CVEs, carga exhaustiva y
+exposición fuera de loopback continúa fuera del alcance de esta tanda.

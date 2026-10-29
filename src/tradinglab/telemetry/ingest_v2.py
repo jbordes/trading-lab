@@ -21,6 +21,7 @@ from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
+    V2ActivityProgress,
     V2CoverageReport,
     V2PositionCycleItem,
     V2PositionCyclePage,
@@ -48,9 +49,19 @@ class V2TelemetryBackend(Protocol):
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
+        from_msc: int | None = None,
+        to_msc: int | None = None,
+        closed_only: bool = False,
+        ascending: bool = False,
+        include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage: ...
+
+    def position_cycle_magics(self) -> tuple[str, ...]: ...
+
+    def activity_progress(self) -> V2ActivityProgress | None: ...
 
 
 def create_v2_telemetry_server(
@@ -115,11 +126,47 @@ def create_v2_telemetry_server(
                 state.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, state)
                 return
-            if target.path not in {"/v2/activity", "/v2/position-cycles"}:
+            if target.path not in {
+                "/v2/activity",
+                "/v2/activity-progress",
+                "/v2/position-cycles",
+                "/v2/position-cycle-magics",
+            }:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not self._is_read_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if target.path == "/v2/activity-progress":
+                if target.query:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
+                    return
+                try:
+                    progress = backend.activity_progress()
+                except V2StorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "storage_unavailable"},
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"activity_progress": asdict(progress) if progress is not None else None},
+                )
+                return
+            if target.path == "/v2/position-cycle-magics":
+                if target.query:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
+                    return
+                try:
+                    magics = backend.position_cycle_magics()
+                except V2StorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "storage_unavailable"},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, {"magics": list(magics)})
                 return
             if target.path == "/v2/position-cycles":
                 try:
@@ -303,17 +350,70 @@ def create_v2_telemetry_server(
                 query,
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=3,
+                max_num_fields=9,
             )
-            if not set(values) <= {"owner_magic", "limit", "cursor"}:
+            if not set(values) <= {
+                "owner_magic",
+                "owner_magics",
+                "from_msc",
+                "to_msc",
+                "closed_only",
+                "order",
+                "include_details",
+                "limit",
+                "cursor",
+            }:
                 raise ValueError("Parámetros de ciclos inválidos")
             if any(len(items) != 1 for items in values.values()):
                 raise ValueError("Parámetros de ciclos repetidos")
             limit = values.get("limit", ["50"])[0]
             if not limit.isascii() or not limit.isdecimal() or str(int(limit)) != limit:
                 raise ValueError("Límite de ciclos inválido")
+            owner_magic = values.get("owner_magic", [None])[0]
+            owner_magics_text = values.get("owner_magics", [None])[0]
+            if owner_magic is not None and owner_magics_text is not None:
+                raise ValueError("Filtros Magic incompatibles")
+            owner_magics = () if owner_magics_text is None else tuple(owner_magics_text.split(","))
+            if (
+                len(owner_magics) > 12
+                or len(set(owner_magics)) != len(owner_magics)
+                or any(not item for item in owner_magics)
+            ):
+                raise ValueError("Selección Magic inválida")
+            from_text = values.get("from_msc", [None])[0]
+            to_text = values.get("to_msc", [None])[0]
+            if (from_text is None) != (to_text is None):
+                raise ValueError("El período de ciclos debe estar completo")
+            if from_text is not None and to_text is not None:
+                if any(
+                    not value.isascii() or not value.isdecimal() or str(int(value)) != value
+                    for value in (from_text, to_text)
+                ):
+                    raise ValueError("Período de ciclos inválido")
+                from_msc = int(from_text)
+                to_msc = int(to_text)
+                if not 0 <= from_msc < to_msc < 2**63:
+                    raise ValueError("Período de ciclos inválido")
+            else:
+                from_msc = None
+                to_msc = None
+            closed_text = values.get("closed_only", ["false"])[0]
+            if closed_text not in {"true", "false"}:
+                raise ValueError("closed_only inválido")
+            order = values.get("order", ["desc"])[0]
+            if order not in {"asc", "desc"}:
+                raise ValueError("Orden de ciclos inválido")
+            details_text = values.get("include_details", ["true"])[0]
+            if details_text not in {"true", "false"}:
+                raise ValueError("include_details inválido")
             return {
-                "owner_magic": values.get("owner_magic", [None])[0],
+                "owner_magic": owner_magic,
+                "owner_magics": owner_magics,
+                "from_msc": from_msc,
+                "to_msc": to_msc,
+                "closed_only": closed_text == "true",
+                "ascending": order == "asc",
+                "include_details": details_text == "true",
                 "limit": int(limit),
                 "cursor": values.get("cursor", [None])[0],
             }

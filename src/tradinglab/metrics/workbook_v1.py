@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -71,6 +72,149 @@ class WorkbookMetrics:
     drawdown_curve: tuple[Decimal, ...]
     profit_per_trade: tuple[Decimal, ...]
     rolling_average_20: tuple[Decimal, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MetricSeriesPoint:
+    """One bounded chart point backed by an exact streaming calculation."""
+
+    index: int
+    ticket: str
+    time_msc: int
+    net_profit: Decimal
+    cumulative_profit: Decimal
+    drawdown: Decimal
+    rolling_average_20: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class StreamingWorkbookSnapshot:
+    """Complete scalar metrics plus a bounded, deterministic visual series."""
+
+    formula_version: str
+    reference_capital: Decimal
+    risk_amount: Decimal
+    trade_count: int
+    net_profit: Decimal
+    profit_factor: Decimal | None
+    winning_percentage: Decimal | None
+    average_trade: Decimal | None
+    maximum_drawdown: Decimal
+    maximum_drawdown_percentage: Decimal
+    current_drawdown: Decimal
+    current_drawdown_percentage: Decimal
+    return_drawdown_ratio: Decimal | None
+    expectancy_r: Decimal | None
+    standard_deviation: Decimal | None
+    series: tuple[MetricSeriesPoint, ...]
+
+
+class StreamingWorkbookMetrics:
+    """Apply workbook-v1 formulas in order without retaining every trade."""
+
+    def __init__(
+        self,
+        *,
+        reference_capital: Decimal = DEFAULT_REFERENCE_CAPITAL,
+        risk_amount: Decimal = DEFAULT_RISK_AMOUNT,
+        series_capacity: int = 1200,
+    ) -> None:
+        _positive_finite(reference_capital, "capital de referencia")
+        _positive_finite(risk_amount, "riesgo de referencia")
+        if (
+            isinstance(series_capacity, bool)
+            or not isinstance(series_capacity, int)
+            or series_capacity < 2
+        ):
+            raise ValueError("La capacidad de la serie debe ser un entero mayor a uno")
+        self.reference_capital = reference_capital
+        self.risk_amount = risk_amount
+        self.series_capacity = series_capacity
+        self._count = 0
+        self._net_profit = Decimal(0)
+        self._positive = Decimal(0)
+        self._negative = Decimal(0)
+        self._wins = 0
+        self._mean = Decimal(0)
+        self._m2 = Decimal(0)
+        self._peak = reference_capital
+        self._maximum_drawdown = Decimal(0)
+        self._rolling: deque[Decimal] = deque(maxlen=ROLLING_WINDOW)
+        self._sample_stride = 1
+        self._series: list[MetricSeriesPoint] = []
+        self._last_point: MetricSeriesPoint | None = None
+
+    def add(self, value: Decimal, *, ticket: str, time_msc: int) -> None:
+        amount = _finite(value)
+        if not isinstance(ticket, str) or not ticket:
+            raise ValueError("El ticket de la métrica es inválido")
+        if isinstance(time_msc, bool) or not isinstance(time_msc, int) or time_msc < 0:
+            raise ValueError("La fecha de la métrica es inválida")
+
+        self._count += 1
+        self._net_profit += amount
+        if amount > 0:
+            self._positive += amount
+            self._wins += 1
+        elif amount < 0:
+            self._negative += amount
+
+        delta = amount - self._mean
+        self._mean += delta / self._count
+        self._m2 += delta * (amount - self._mean)
+        equity = self.reference_capital + self._net_profit
+        self._peak = max(self._peak, equity)
+        drawdown = self._peak - equity
+        self._maximum_drawdown = max(self._maximum_drawdown, drawdown)
+        self._rolling.append(amount)
+        point = MetricSeriesPoint(
+            self._count,
+            ticket,
+            time_msc,
+            amount,
+            self._net_profit,
+            drawdown,
+            sum(self._rolling, Decimal(0)) / len(self._rolling),
+        )
+        self._last_point = point
+        if (self._count - 1) % self._sample_stride == 0:
+            self._series.append(point)
+        while len(self._series) > self.series_capacity:
+            self._sample_stride *= 2
+            self._series = [
+                item for item in self._series if (item.index - 1) % self._sample_stride == 0
+            ]
+
+    def snapshot(self) -> StreamingWorkbookSnapshot:
+        average = self._net_profit / self._count if self._count else None
+        current_drawdown = self._peak - (self.reference_capital + self._net_profit)
+        series = list(self._series)
+        if self._last_point is not None and (
+            not series or series[-1].index != self._last_point.index
+        ):
+            if len(series) >= self.series_capacity:
+                series.pop()
+            series.append(self._last_point)
+        return StreamingWorkbookSnapshot(
+            formula_version=FORMULA_VERSION,
+            reference_capital=self.reference_capital,
+            risk_amount=self.risk_amount,
+            trade_count=self._count,
+            net_profit=self._net_profit,
+            profit_factor=(self._positive / abs(self._negative) if self._negative else None),
+            winning_percentage=(Decimal(self._wins) / self._count if self._count else None),
+            average_trade=average,
+            maximum_drawdown=self._maximum_drawdown,
+            maximum_drawdown_percentage=self._maximum_drawdown / self.reference_capital,
+            current_drawdown=current_drawdown,
+            current_drawdown_percentage=current_drawdown / self._peak,
+            return_drawdown_ratio=(
+                self._net_profit / self._maximum_drawdown if self._maximum_drawdown else None
+            ),
+            expectancy_r=average / self.risk_amount if average is not None else None,
+            standard_deviation=((self._m2 / (self._count - 1)).sqrt() if self._count > 1 else None),
+            series=tuple(series),
+        )
 
 
 def calculate_closed_deal_metrics(

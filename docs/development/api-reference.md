@@ -38,6 +38,10 @@ rellena huecos ni cambia la retención. La respuesta refleja capturas existentes
 
 Devuelve la muestra actual de la cuenta, operaciones abiertas, actividad
 reciente, salud de la fuente y el historial ligero utilizado por la interfaz.
+`interval_seconds` describe el polling del dashboard;
+`capture_interval_seconds`, `freshness_tolerance_seconds` y
+`latest_age_seconds` forman el contrato de frescura de la captura y no dependen
+del reloj civil del navegador.
 
 Parámetro opcional:
 
@@ -110,6 +114,8 @@ dashboard, sin entregar al navegador la credencial interna del receptor v2.
 Parámetros opcionales:
 
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `owner_magics`: lista CSV de hasta 12 Magic Numbers, incompatible con
+  `owner_magic`; se aplica en SQLite antes del cursor y el límite.
 - `from_msc` y `to_msc`: período semiabierto opcional; deben aparecer juntos.
 - `closed=true`: limita el resultado a ciclos cerrados.
 - `limit`: tamaño de página `1..100`; valor predeterminado `50`.
@@ -127,11 +133,11 @@ position_cycles_unavailable`.
 
 Calcula las métricas `position-cycle-v1` exclusivamente sobre ciclos cerrados y
 elegibles. Requiere `from_msc` y `to_msc`; admite `magic_number` como filtro del EA
-propietario o `magic_numbers` como lista CSV de 1 a 5 Magic explícitos. Los
+propietario o `magic_numbers` como lista CSV de hasta 12 Magic explícitos. Los
 valores deben ser enteros signed 64-bit canónicos, únicos; `magic_number` y
-`magic_numbers` no se pueden combinar. No admite paginación explícita y rechaza
-períodos que superen el límite seguro de 500 operaciones inspeccionadas. Si se
-excede, la solicitud se rechaza y no devuelve métricas parciales.
+`magic_numbers` no se pueden combinar. No admite paginación explícita. El backend
+recorre todos los ciclos vigentes del período en orden cronológico y calcula los
+resultados escalares sin el antiguo límite funcional de 500 operaciones.
 
 La respuesta conserva las métricas y series existentes, donde cada punto
 representa una posición completa reconstruida, y agrega `by_ea`. Este campo
@@ -142,9 +148,11 @@ agrupa por `account_id + magic_number` y contiene para cada grupo
 incluye `selected_magics` y `available_magics`; este último enumera los Magic
 propietarios elegibles para el período. La consulta base sigue acotada y el
 backend calcula la selección sobre ella; las métricas agregadas se recalculan
-desde los ciclos seleccionados, sin sumar ratios. Los grupos aplican las mismas
-fórmulas y cobertura del contrato existente. Ciclos incompletos, intervenidos o
-con Magic mixtos quedan fuera sin ser eliminados del historial.
+desde los ciclos seleccionados, sin sumar ratios. El cálculo mantiene memoria
+acotada: conserva como máximo 1.200 puntos deterministas por serie para dibujar,
+pero usa todas las operaciones para los valores escalares. Los grupos aplican las
+mismas fórmulas y cobertura del contrato existente. Ciclos incompletos,
+intervenidos o con Magic mixtos quedan fuera sin ser eliminados del historial.
 
 Respuestas principales: `200`, `400 invalid_cycle_metrics_query`, `401
 authentication_required`, `404 cycle_metrics_unavailable`, `503
@@ -160,6 +168,12 @@ la cuenta. Se usa para salud local, no para descubrir el resto de la API.
 - `GET /login`: formulario o redirección al dashboard si ya hay sesión.
 - `POST /login`: valida el token humano y crea una cookie local de sesión.
 - `POST /logout`: invalida la sesión; el cuerpo debe estar vacío.
+
+### `GET /api/cycle-magics`
+
+Descubre hasta 100 Magic Numbers con ciclos persistidos mediante una consulta
+separada y acotada. No recibe parámetros y evita cargar ciclos completos para
+armar el selector. Requiere sesión del dashboard.
 
 ## Receptor de telemetría v2
 
@@ -204,6 +218,22 @@ rangos, Magic Number y cursores se aplica en la capa de persistencia.
 Respuestas principales: `200`, `400 invalid_activity_query`, `401 unauthorized`,
 `503 storage_unavailable`.
 
+### `GET /v2/activity-progress`
+
+Devuelve el último heartbeat durable del productor `activity` que incluya progreso
+de recuperación. No admite parámetros y requiere la credencial de lectura v2.
+La respuesta contiene `activity_progress: null` hasta recibir el primero. Luego
+identifica cuenta, fuente, sesión, secuencia y versión del collector, junto con:
+
+- cursores reciente y profundo y atraso entre ambos;
+- bloqueo independiente de cada carril;
+- avisos de transacciones en cola o descartados;
+- antigüedad de la última transacción observada y últimos tickets conocidos.
+
+Es diagnóstico operativo: no demuestra cobertura completa ni modifica cursores.
+Respuestas principales: `200`, `400 invalid_query`, `401 unauthorized`, `503
+storage_unavailable`.
+
 ### `GET /v2/position-cycles`
 
 Consulta ciclos de posición cerrados y reconciliados. Un ciclo agrupa los deals
@@ -213,6 +243,13 @@ completo. Es una proyección durable; no es una colección mantenida en memoria.
 Parámetros opcionales:
 
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `owner_magics`: lista CSV de hasta 12 Magic Numbers, incompatible con
+  `owner_magic`; se filtra antes de paginar.
+- `from_msc` y `to_msc`: período semiabierto opcional; deben aparecer juntos.
+- `closed_only`: `true` limita la consulta a ciclos cerrados.
+- `order`: `asc` o `desc`; predeterminado `desc`.
+- `include_details`: `false` omite el detalle derivado cuando el consumidor solo
+  necesita la identidad y el resultado del ciclo.
 - `limit`: tamaño de página; predeterminado `50`.
 - `cursor`: cursor opaco devuelto como `next_cursor`.
 
@@ -235,14 +272,21 @@ indica ausencia de evidencia. No se afirma disponer de todas las modificaciones
 del TP/SL. Un cierre con niveles cero no prueba que se hayan retirado las
 protecciones. `pips` permanece null hasta definir el tamaño del pip por símbolo.
 Los datos se calculan sobre el mensaje de reconciliación validado que respalda
-el ciclo seleccionado, mediante una consulta acotada a la página. No requiere
-migración ni cargar el historial completo en memoria.
+el ciclo seleccionado, mediante una consulta acotada a la página. Los filtros se
+aplican a la revisión vigente antes de paginar; una observación antigua no reaparece
+porque una revisión posterior haya quedado fuera del rango.
 
 Un ciclo con intervención, mezcla de Magics o evidencia insuficiente puede
 conservarse para auditoría y quedar excluido de las métricas autónomas.
 
 Respuestas principales: `200`, `400 invalid_position_cycles_query`, `401
 unauthorized`, `503 storage_unavailable`.
+
+### `GET /v2/position-cycle-magics`
+
+Devuelve `{"magics": [...]}` con hasta 100 Magic Numbers distintos existentes
+en la proyección durable. No admite parámetros y requiere la credencial de
+lectura v2.
 
 ### `GET /health`
 

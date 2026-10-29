@@ -118,7 +118,8 @@ comando pedirá de forma oculta un segundo token para el acceso humano:
 
 ```text
 uv run python scripts/live_dashboard.py --telemetry --telemetry-source <source_id> \
-  --broker-utc-offset-minutes <offset_broker>
+  --broker-utc-offset-minutes <offset_broker> \
+  --telemetry-capture-interval <segundos_del_collector>
 ```
 
 Abrir `http://127.0.0.1:8765/dashboard` e ingresar el segundo token en `/login`.
@@ -126,6 +127,8 @@ No ingresar allí el token del EA. No seleccionar una fuente modificando el coll
 ni abriendo terminales en otro orden.
 `offset_broker` se expresa en minutos respecto de UTC (`120` equivale a UTC+02:00).
 Debe confirmarse para cada servidor y revisarse si el broker cambia su horario.
+La cadencia debe coincidir con la configurada en el collector; el valor
+predeterminado es 20 segundos y no cambia el polling del dashboard.
 
 ## Verificación de aceptación
 

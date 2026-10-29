@@ -1,5 +1,23 @@
 # Roadmap — Dashboard local de riesgo
 
+## Prioridad acordada — 29 de octubre de 2026
+
+El [plan de captura autónoma, historial completo y rendimiento](autonomous-capture-history-plan.md)
+define la siguiente tanda, pendiente de aprobación para implementar:
+
+1. **Implementación preparada:** separar receptores y dashboard, incluyendo
+   configuración y credenciales; pendiente de validación manual, CI y merge.
+2. Preparar arranque autónomo y mantenimiento programado con guardas.
+3. Ampliar la recuperación reanudable a toda la historia disponible sin frenar
+   datos recientes.
+4. Preparar consultas y métricas para años de actividad; índices justificados por
+   consultas y validación sintética, sin esperar a acumular años en el piloto.
+5. Definir retención por clase de dato manteniendo entretanto la política sin TTL.
+
+SQLite continúa para estos incrementos. Servidor central y PostgreSQL se evalúan
+en una etapa posterior. Cada paso del plan detalla implementación, aceptación y
+reversión; esta actualización no activa tareas, migraciones ni cambios en MT5.
+
 **Fecha:** 2026-10-14
 
 **Estado:** piloto MT5 operativo; validación de exactitud con reporte en curso
@@ -447,3 +465,12 @@ Ningún control actual autoriza ampliar la exposición del piloto.
 - autenticación multiusuario;
 - fórmulas inferidas de ejemplos de Gemini;
 - Excel como salida principal.
+
+Después de completar el plan vigente de captura autónoma, historia, consultas y
+retención, se analizará una API central de ingesta para separar receptor, base y
+dashboard de la VPS de MT5. Los collectors seguirán publicando contratos HTTP; no
+accederán directamente a la base. El análisis deberá decidir entre envío remoto
+directo y un relay local con cola durable, además de seguridad, idempotencia,
+autorización por cuenta/fuente y estrategia de migración. Esta línea futura está
+detallada en el
+[plan de captura autónoma e historial](autonomous-capture-history-plan.md#análisis-posterior-a-los-cinco-pasos-api-central-de-ingesta).

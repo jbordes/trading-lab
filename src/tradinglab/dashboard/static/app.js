@@ -66,6 +66,10 @@ let latestOperationsTruncated = false;
 let latestCurrency = "USD";
 let latestActivity = [];
 let latestIntervalSeconds = 5;
+let latestCaptureIntervalSeconds = 20;
+let latestFreshnessToleranceSeconds = 10;
+let latestAgeAtResponse = null;
+let latestAgeMarkedAt = 0;
 let lastObservedAt = null;
 let latestOperationsSignature = "";
 let latestMagicKey = "";
@@ -355,6 +359,13 @@ function renderSummary(value, currency, status) {
 function renderState(state) {
   latestHealthState = state;
   latestStatus = state.status;
+  latestIntervalSeconds = state.interval_seconds || 5;
+  latestCaptureIntervalSeconds = state.capture_interval_seconds || latestIntervalSeconds;
+  latestFreshnessToleranceSeconds = state.freshness_tolerance_seconds
+    || Math.max(5, latestIntervalSeconds * 2);
+  latestAgeAtResponse = Number.isFinite(state.latest_age_seconds)
+    ? Math.max(0, state.latest_age_seconds) : null;
+  latestAgeMarkedAt = performance.now();
   setText(elements.status, statusLabels[state.status] || "Lectura degradada");
   statusDot.className = `status-dot ${state.status}`;
   const errorText = state.error || "";
@@ -374,7 +385,6 @@ function renderState(state) {
   }
 
   const value = state.latest;
-  latestIntervalSeconds = state.interval_seconds || 5;
   const observedAt = toDate(value.observed_at);
   latestObservedDate = observedAt;
   updateFreshness();
@@ -487,8 +497,9 @@ function renderHealthOverview(state) {
     message = "La lectura está degradada. Se muestran los últimos datos válidos.";
     tone = "warning";
   }
-  const outdated = state.latest && toDate(state.latest.observed_at)
-    && Date.now() - toDate(state.latest.observed_at).getTime() > 2 * latestIntervalSeconds * 1000;
+  const ageSeconds = currentFreshnessAge();
+  const outdated = ageSeconds !== null
+    && ageSeconds > latestCaptureIntervalSeconds + latestFreshnessToleranceSeconds;
   if (!serviceReachable || outdated) {
     message = !serviceReachable
       ? "Sin conexión con el servicio local. No se están recibiendo datos nuevos."
@@ -813,6 +824,7 @@ async function loadClosedOperations({ append }) {
   const parameters = historyParameters(historyQuery, append ? historyNextCursor : null);
   parameters.delete("magic_number");
   if (historyQuery.magic !== null) parameters.set("owner_magic", historyQuery.magic);
+  if (historyQuery.magics?.length) parameters.set("owner_magics", historyQuery.magics.join(","));
   parameters.set("closed", "true");
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
@@ -937,6 +949,18 @@ async function loadHistoryMetrics(query, requestNumber) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
+    const discovery = await fetch("/api/cycle-magics", {
+      cache: "no-store", signal: controller.signal,
+    });
+    if (discovery.status === 401) {
+      window.location.assign("/login");
+      return;
+    }
+    if (discovery.ok) {
+      const discovered = await discovery.json();
+      if (requestNumber !== metricsRequest) return;
+      if (Array.isArray(discovered.magics)) renderEaSelector(discovered.magics);
+    }
     const response = await fetch(`/api/cycle-metrics?${parameters}`, {
       cache: "no-store", signal: controller.signal,
     });
@@ -951,7 +975,9 @@ async function loadHistoryMetrics(query, requestNumber) {
       throw new Error("El servicio devolvió métricas en un formato desconocido.");
     }
     historyMetrics = payload;
-    renderEaSelector(payload.available_magics || payload.by_ea.map((ea) => ea.magic_number));
+    if (!query.magics?.length) {
+      renderEaSelector(payload.available_magics || payload.by_ea.map((ea) => ea.magic_number));
+    }
     historyCoverageByEntity.deals = payload.coverage;
     renderHistoryMetrics();
     renderHistoryCoverage();
@@ -1446,8 +1472,13 @@ function positionCycleRow(item) {
     list.appendChild(group);
   };
   add("Deals", cycle.deal_tickets.join(" · "));
+  const opened = operationalTime(cycle.started_at_msc);
+  const closed = operationalTime(cycle.last_event_at_msc);
+  add("Open · hora local", opened?.local || "No informada");
+  add("Close · hora local", closed?.local || "No informada");
   add("Swap", money(facts.swap, latestCurrency, true));
   add("Comisión", money(facts.commission, latestCurrency, true));
+  add("Fee", money(facts.fee, latestCurrency, true));
   add("PnL bruto", money(facts.gross_profit, latestCurrency, true));
   add("Pips", "— · tamaño de pip pendiente para este símbolo");
   add("Duración (horas)", decimal(facts.duration_hours));
@@ -1585,15 +1616,23 @@ function elapsed(seconds) {
   return `${Math.round(seconds / 3600)} h`;
 }
 
+function currentFreshnessAge() {
+  if (latestAgeAtResponse === null) return null;
+  return Math.max(0, latestAgeAtResponse + (performance.now() - latestAgeMarkedAt) / 1000);
+}
+
 function updateFreshness() {
   if (latestHealthState) renderHealthOverview(latestHealthState);
   if (!latestObservedDate) {
     setText(elements.freshness, serviceReachable ? "Esperando primera captura" : "Sin una lectura válida todavía");
     return;
   }
-  const ageSeconds = Math.max(0, (Date.now() - latestObservedDate.getTime()) / 1000);
-  const staleData = !serviceReachable || latestStatus !== "connected" || ageSeconds > 2 * latestIntervalSeconds;
-  const criticalAge = !serviceReachable || ageSeconds > 10 * latestIntervalSeconds;
+  const ageSeconds = currentFreshnessAge();
+  if (ageSeconds === null) return;
+  const staleAfter = latestCaptureIntervalSeconds + latestFreshnessToleranceSeconds;
+  const criticalAfter = 3 * latestCaptureIntervalSeconds + latestFreshnessToleranceSeconds;
+  const staleData = !serviceReachable || latestStatus !== "connected" || ageSeconds > staleAfter;
+  const criticalAge = !serviceReachable || ageSeconds > criticalAfter;
   setText(
     elements.freshness,
     serviceReachable

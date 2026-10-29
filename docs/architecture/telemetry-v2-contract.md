@@ -54,7 +54,8 @@ marca conflicto hasta una observación posterior no ambigua.
 
 ## Actividad: `activity_batch` (rol activity)
 
-Payload exacto: `reason`, `identity`, `window`, `deals`, `orders`.
+Payload exacto base: `reason`, `identity`, `window`, `deals`, `orders`. Puede
+agregar `pagination` únicamente para una ventana mínima paginada.
 Reason: `startup`, `trade_activity`, `reconcile`, `recovery`,
 `position_reconcile`.
 Window contiene `from_server_msc`, `to_server_msc`, como enteros decimales en
@@ -68,6 +69,22 @@ Cada colección contiene exactamente `status`, `total`, `items`:
 | complete | entero >=0, igual a longitud | hasta 200 filas | Confirma el rango solo para esa entidad |
 | truncated | entero mayor que longitud | 1..200 filas | No confirma el rango |
 | error | null | vacía | Conserva evidencia anterior; no confirma el rango |
+
+Cuando subdividir el tiempo ya no alcanza, ambas colecciones usan `partial` o
+`paged_complete` y pueden contener solo las filas de la página. `pagination`
+identifica un `snapshot_id` derivado del rango, conteos y huellas conmutativas de
+las claves observadas, la clave compuesta exclusiva `after`, la clave
+inclusiva `through` y `has_more`. Cada clave está formada por `time_msc`, tipo de
+entidad (`deal` antes de `order`) y ticket. La página contiene como máximo 200
+filas entre ambas colecciones y todas sus claves son mayores que `after`; la
+última coincide con `through`.
+
+El receptor persiste las páginas parciales sin confirmar cobertura. Solo proyecta
+el rango como completo al recibir `paged_complete` y verificar en SQLite una
+cadena continua desde la clave inicial hasta esa página con el mismo productor,
+ventana y `snapshot_id`. Si cambia el conjunto seleccionado mientras se pagina,
+el collector inicia una cadena nueva desde el principio. Repetir páginas es seguro;
+saltar una no lo es.
 
 Deals conserva todos los campos v1, con `time_msc` dentro de la ventana. Incluye
 operaciones monetarias y ejecuciones; no todo deal es un trade. No exige que su
@@ -103,12 +120,16 @@ su ventana y por eso no genera un rango en `activity_coverage`.
 
 ## Heartbeat y diagnóstico
 
-`heartbeat` está permitido para ambos roles. Payload exacto: `identity`, `status`,
+`heartbeat` está permitido para ambos roles. Payload base exacto: `identity`, `status`,
 `queued_messages`, `dropped_messages`. Status es `ok` o `degraded`; contadores
 enteros no negativos dentro de int64, referidos a la sesión del productor.
 Informa conectividad/estado del productor; no actualiza frescura de datos ni
 confirma rangos de actividad. La ausencia de heartbeat no prueba que un EA de
 trading esté detenido. Cadencia y presentación quedan para la implementación.
+
+El productor `activity` puede agregar `activity_progress` con cursores reciente y
+profundo, atraso, bloqueos, pausa intencional del carril profundo, avisos en cola/descartados, antigüedad de la última
+transacción y últimos tickets observados. Es diagnóstico durable, no cobertura.
 
 ## Persistencia, reenvíos y recuperación
 
@@ -128,9 +149,8 @@ trading esté detenido. Cadencia y presentación quedan para la implementación.
   tombstones; discrepancias se señalan para reconciliación. Protocolo de borrado
   de registros históricos queda fuera de esta versión propuesta.
 - Fallo/truncamiento: reconsultar con solapamiento y rangos más pequeños. Si más
-  de 200 registros caen en el mismo milisegundo, subdividir tiempo no alcanza:
-  marcar cobertura incompleta. No se promete paginación ni recuperación completa
-  de ese caso hasta definir un protocolo adicional de páginas consistente.
+  de 200 registros permanecen en una ventana mínima, usar la cadena paginada por
+  `(timestamp, entity_type, ticket)`. Ninguna página parcial confirma cobertura.
 - Al reiniciar, recuperar rangos no confirmados desde evidencia durable. El
   mecanismo para transmitir esa cobertura al collector se define en el siguiente
   paso; nunca enviar comandos de trading. Sin cursor durable no se afirma

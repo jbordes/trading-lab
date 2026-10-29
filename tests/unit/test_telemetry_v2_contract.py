@@ -296,6 +296,73 @@ class TelemetryV2ContractTest(unittest.TestCase):
         with self.assertRaises(TelemetryValidationError):
             parse_envelope_v2(encoded(value))
 
+    def test_activity_heartbeat_accepts_strict_progress(self) -> None:
+        value = fixture("heartbeat")
+        value["payload"]["activity_progress"] = {
+            "recent_cursor_msc": "1793260800000",
+            "deep_cursor_msc": "1767225600000",
+            "backlog_msc": "26035200000",
+            "recent_blocked": False,
+            "deep_blocked": False,
+            "deep_paused": True,
+            "queued_hints": 0,
+            "dropped_hints": 0,
+            "last_transaction_age_ms": "2500",
+            "latest_deal_ticket": "2690316619",
+            "latest_order_ticket": "2690316618",
+            "latest_position_id": "12345",
+        }
+        parsed = parse_envelope_v2(encoded(value))
+        self.assertEqual(parsed.payload["activity_progress"]["latest_position_id"], "12345")
+
+        for field, invalid in (
+            ("recent_blocked", 0),
+            ("deep_paused", 0),
+            ("queued_hints", True),
+            ("deep_cursor_msc", 1),
+        ):
+            candidate = copy.deepcopy(value)
+            candidate["payload"]["activity_progress"][field] = invalid
+            with self.subTest(field=field), self.assertRaises(TelemetryValidationError):
+                parse_envelope_v2(encoded(candidate))
+
+    def test_activity_pagination_uses_strict_composite_cursors(self) -> None:
+        value = fixture("activity-truncated")
+        deal = value["payload"]["deals"]["items"][0]
+        value["payload"]["deals"] = {
+            "status": "partial",
+            "total": 2,
+            "items": [deal],
+        }
+        value["payload"]["orders"] = {
+            "status": "partial",
+            "total": 0,
+            "items": [],
+        }
+        value["payload"]["pagination"] = {
+            "snapshot_id": "p:1792656000000:1792656060000:2:0",
+            "after": {"time_msc": "0", "entity_type": "deal", "ticket": "0"},
+            "through": {
+                "time_msc": deal["time_msc"],
+                "entity_type": "deal",
+                "ticket": deal["ticket"],
+            },
+            "has_more": True,
+        }
+        parsed = parse_envelope_v2(encoded(value))
+        self.assertTrue(parsed.payload["pagination"]["has_more"])
+
+        for mutation in ("bad_status", "bad_through", "bad_boolean"):
+            candidate = copy.deepcopy(value)
+            if mutation == "bad_status":
+                candidate["payload"]["orders"]["status"] = "paged_complete"
+            elif mutation == "bad_through":
+                candidate["payload"]["pagination"]["through"]["ticket"] = "1"
+            else:
+                candidate["payload"]["pagination"]["has_more"] = 1
+            with self.subTest(mutation=mutation), self.assertRaises(TelemetryValidationError):
+                parse_envelope_v2(encoded(candidate))
+
 
 if __name__ == "__main__":
     unittest.main()

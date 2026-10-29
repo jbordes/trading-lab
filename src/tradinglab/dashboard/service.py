@@ -24,6 +24,7 @@ class LiveDashboardService:
         source: SnapshotSource,
         *,
         interval_seconds: float = 5.0,
+        capture_interval_seconds: float | None = None,
         history_limit: int = 720,
         clock: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
@@ -31,10 +32,13 @@ class LiveDashboardService:
     ) -> None:
         if interval_seconds < 2.0:
             raise ValueError("El intervalo mínimo es de 2 segundos")
+        if capture_interval_seconds is not None and capture_interval_seconds < 2.0:
+            raise ValueError("El intervalo de captura mínimo es de 2 segundos")
         if history_limit < 2:
             raise ValueError("El historial debe admitir al menos dos muestras")
         self._source = source
         self._interval_seconds = interval_seconds
+        self._capture_interval_seconds = capture_interval_seconds or interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._timer = timer or time.perf_counter
         self._health_provider = health_provider
@@ -48,6 +52,7 @@ class LiveDashboardService:
         )
         self._history: deque[dict[str, object]] = deque(maxlen=history_limit)
         self._latest: LiveSnapshot | None = None
+        self._latest_age_seconds: float | None = None
         self._status = "starting"
         self._error: str | None = None
         self._attempt_count = 0
@@ -75,6 +80,7 @@ class LiveDashboardService:
                 self._status = "degraded"
                 self._error = _safe_message(exc)
                 self._record_attempt(attempted_at, duration_ms, succeeded=False)
+                self._refresh_latest_age(attempted_at)
         else:
             duration_ms = _milliseconds(self._timer() - started)
             with self._lock:
@@ -82,6 +88,7 @@ class LiveDashboardService:
                 if not self._history or self._history[-1] != history_sample:
                     self._history.append(history_sample)
                 self._latest = snapshot
+                self._refresh_latest_age(attempted_at)
                 self._status = "connected"
                 self._error = None
                 self._record_attempt(attempted_at, duration_ms, succeeded=True)
@@ -141,6 +148,9 @@ class LiveDashboardService:
                 "history_truncated": truncated,
                 "source_health": self._source_health.as_dict(),
                 "interval_seconds": self._interval_seconds,
+                "capture_interval_seconds": self._capture_interval_seconds,
+                "freshness_tolerance_seconds": max(5.0, self._interval_seconds * 2),
+                "latest_age_seconds": self._latest_age_seconds,
                 "capture": {
                     "attempt_count": self._attempt_count,
                     "success_count": self._success_count,
@@ -152,6 +162,13 @@ class LiveDashboardService:
                     "max_duration_ms": self._max_duration_ms,
                 },
             }
+
+    def _refresh_latest_age(self, now: datetime) -> None:
+        if self._latest is None:
+            self._latest_age_seconds = None
+            return
+        observed = _parse_instant(self._latest.observed_at, "observed_at")
+        self._latest_age_seconds = max(0.0, (now.astimezone(UTC) - observed).total_seconds())
 
     def _record_attempt(
         self, attempted_at: datetime, duration_ms: float, *, succeeded: bool

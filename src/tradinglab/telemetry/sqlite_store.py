@@ -426,7 +426,14 @@ class TelemetryRegistry:
             raise MessageAdmissionError("Fuente no registrada")
         return str(row[0])
 
-    def account_history(self, source_id: str, *, from_msc: int, to_msc: int) -> dict[str, Any]:
+    def account_history(
+        self,
+        source_id: str,
+        *,
+        from_msc: int,
+        to_msc: int,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
         """Return at most 480 verified end-of-bucket snapshots using indexed seeks.
 
         Reads existing evidence only; empty buckets stay empty and no equity is
@@ -442,10 +449,10 @@ class TelemetryRegistry:
         account_id = self.account_for_source(source_id)
         bucket_msc = max(60000, (to_msc - from_msc + 479) // 480)
         points: list[dict[str, object]] = []
-        deadline = time.monotonic() + 2.0
+        deadline = deadline if deadline is not None else time.monotonic() + 2.0
         try:
             for start in range(from_msc, to_msc, bucket_msc):
-                if time.monotonic() > deadline:
+                if time.monotonic() >= deadline:
                     raise TelemetryStorageError("La consulta histórica superó el plazo seguro")
                 end = min(to_msc, start + bucket_msc)
                 row = self._connection.execute(
@@ -462,6 +469,8 @@ class TelemetryRegistry:
                         _timestamp(datetime.fromtimestamp(end / 1000, UTC)),
                     ),
                 ).fetchone()
+                if time.monotonic() >= deadline:
+                    raise TelemetryStorageError("La consulta histórica superó el plazo seguro")
                 if row is None:
                     continue
                 restored = self._restore_snapshot_row(row, source_id=source_id)
@@ -699,6 +708,52 @@ class TelemetryRegistry:
                 yield self._connection
         except sqlite3.Error as exc:
             raise TelemetryStorageError("No se pudo completar la transacción local") from exc
+
+
+def read_account_history(
+    path: Path,
+    source_id: str,
+    *,
+    from_msc: int,
+    to_msc: int,
+    timeout_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Read history through an isolated, interruptible, read-only connection."""
+    if path.suffix != ".sqlite3":
+        raise ValueError("La base debe usar extensión .sqlite3")
+    if timeout_seconds <= 0:
+        raise ValueError("El plazo de historial debe ser positivo")
+    resolved = path.resolve(strict=True)
+    deadline = time.monotonic() + timeout_seconds
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            resolved.as_uri() + "?mode=ro",
+            uri=True,
+            timeout=min(0.1, timeout_seconds),
+        )
+        connection.execute("PRAGMA query_only = ON")
+        busy_timeout_ms = max(1, int(min(0.1, timeout_seconds) * 1000))
+        connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+        if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+            raise TelemetryStorageError("Versión de esquema no admitida")
+        connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        return TelemetryRegistry(connection).account_history(
+            source_id,
+            from_msc=from_msc,
+            to_msc=to_msc,
+            deadline=deadline,
+        )
+    except TelemetryStorageError:
+        raise
+    except sqlite3.Error as exc:
+        if time.monotonic() >= deadline or "interrupted" in str(exc).lower():
+            raise TelemetryStorageError("La consulta histórica superó el plazo seguro") from exc
+        raise TelemetryStorageError("No se pudo consultar balance/equity histórico") from exc
+    finally:
+        if connection is not None:
+            connection.set_progress_handler(None, 0)
+            connection.close()
 
 
 @contextmanager

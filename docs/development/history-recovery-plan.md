@@ -77,9 +77,10 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 3. **Implementado en código:** collector de actividad con inicio histórico
    explícito, cursor durable local por fuente/identidad, confirmación después del
    commit, reenvío del mismo lote, solapamiento y subdivisión de rangos saturados.
-   Conserva deals y órdenes finalizadas. Un rango mínimo saturado queda
-   `truncated`, persiste un bloqueo y no entra en un ciclo de reenvíos. Compila
-   con 0 errores y 0 warnings; falta instalarlo y validarlo contra MT5 real.
+   Conserva deals y órdenes finalizadas. Un rango mínimo saturado usa páginas
+   compuestas y solo avanza después de confirmar su cadena durable. La versión
+   anterior compiló sin errores; `activity-0.5.0` todavía requiere compilación e
+   instalación manual en la terminal de prueba.
 4. **Consulta durable implementada:** deals y órdenes se proyectan por separado en
    la misma transacción de ingesta. Se consultan por cuenta, período y Magic Number
    con cursor estable; la cobertura completa y los lotes incompletos se informan
@@ -100,9 +101,11 @@ de trading o al vencer su cadencia. El carril profundo continúa desde
 `HistoryStartServerTime` únicamente cuando el reciente está al día. Ambos conservan
 solapamiento, confirmación posterior al commit y deduplicación del receptor.
 
-Una ventana mínima saturada bloquea solamente su carril. Por lo tanto, un bloqueo
-del backfill antiguo no impide capturar operaciones nuevas. No se salta el rango
-saturado ni se declara cobertura completa. Los parámetros nuevos son
+Una ventana mínima saturada se pagina mediante una clave estable compuesta por
+timestamp, tipo de entidad y ticket. El cursor principal del carril no avanza
+hasta confirmar la cadena completa; una página parcial no declara cobertura. Si
+el conjunto histórico cambia durante el proceso, se reinicia la ventana y las
+observaciones repetidas se resuelven de forma idempotente. Los parámetros nuevos son
 `RecentLookbackSeconds` y `RecentCadenceSeconds`; sus valores iniciales son una hora
 y un minuto. El cursor histórico anterior se reutiliza y el cursor reciente nuevo
 se inicializa sin borrar variables globales.
@@ -115,7 +118,7 @@ completa, incrementa un contador de descartes y la recuperación autoritativa po
 historial continúa siendo la protección contra huecos. Los avisos aceleran y
 diagnostican; no se convierten en una segunda fuente de verdad.
 
-La versión `activity-0.4.0` emite además un heartbeat operativo cada minuto. El
+La versión `activity-0.5.0` emite además un heartbeat operativo cada minuto. El
 mensaje informa por separado los cursores reciente y profundo, atraso pendiente,
 bloqueos, avisos en cola o descartados y los últimos tickets observados. Un heartbeat
 confirmado no mueve cursores, no confirma cobertura y no desencadena reconciliación
@@ -123,11 +126,10 @@ de posiciones. Su esquema es opcional dentro del contrato de heartbeat para que
 los productores existentes sigan siendo compatibles. Un bloqueo o un descarte
 de avisos degrada explícitamente su estado.
 
-Continúan pendientes dentro del punto 3: consulta del progreso/cobertura por fuente,
-pausa operativa, prueba con más de 12 meses y resolución estable de una ventana mínima
-que exceda el límite por compartir muchos registros el mismo timestamp. El siguiente
-incremento debe exponer el último heartbeat persistido; no crear una proyección
-creciente en memoria.
+El progreso se consulta mediante `GET /v2/activity-progress`, leyendo el último
+heartbeat durable sin crear una proyección creciente en memoria. Continúan pendientes
+dentro del punto 3: pausa operativa, prueba reproducible con más de 12 meses y
+compilación/validación manual de `activity-0.5.0` en la terminal de prueba.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

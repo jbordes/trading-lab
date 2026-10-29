@@ -324,6 +324,43 @@ class TelemetryV2ContractTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(TelemetryValidationError):
                 parse_envelope_v2(encoded(candidate))
 
+    def test_activity_pagination_uses_strict_composite_cursors(self) -> None:
+        value = fixture("activity-truncated")
+        deal = value["payload"]["deals"]["items"][0]
+        value["payload"]["deals"] = {
+            "status": "partial",
+            "total": 2,
+            "items": [deal],
+        }
+        value["payload"]["orders"] = {
+            "status": "partial",
+            "total": 0,
+            "items": [],
+        }
+        value["payload"]["pagination"] = {
+            "snapshot_id": "p:1792656000000:1792656060000:2:0",
+            "after": {"time_msc": "0", "entity_type": "deal", "ticket": "0"},
+            "through": {
+                "time_msc": deal["time_msc"],
+                "entity_type": "deal",
+                "ticket": deal["ticket"],
+            },
+            "has_more": True,
+        }
+        parsed = parse_envelope_v2(encoded(value))
+        self.assertTrue(parsed.payload["pagination"]["has_more"])
+
+        for mutation in ("bad_status", "bad_through", "bad_boolean"):
+            candidate = copy.deepcopy(value)
+            if mutation == "bad_status":
+                candidate["payload"]["orders"]["status"] = "paged_complete"
+            elif mutation == "bad_through":
+                candidate["payload"]["pagination"]["through"]["ticket"] = "1"
+            else:
+                candidate["payload"]["pagination"]["has_more"] = 1
+            with self.subTest(mutation=mutation), self.assertRaises(TelemetryValidationError):
+                parse_envelope_v2(encoded(candidate))
+
 
 if __name__ == "__main__":
     unittest.main()

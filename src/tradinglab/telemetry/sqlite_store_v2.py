@@ -553,12 +553,29 @@ class V2TelemetryRegistry:
     ) -> None:
         payload = envelope.payload
         window = payload["window"]
+        pagination = payload.get("pagination")
+        paged_complete = pagination is not None and not pagination["has_more"]
+        if paged_complete and not V2TelemetryRegistry._has_complete_pagination_chain(
+            connection,
+            account_id,
+            envelope.source_id,
+            int(window["from_server_msc"]),
+            int(window["to_server_msc"]),
+            pagination["snapshot_id"],
+            payload["deals"]["total"],
+            payload["orders"]["total"],
+        ):
+            raise V2StorageError("La página final no tiene una cadena durable completa")
         for collection, entity_type, time_field in (
             ("deals", "deal", "time_msc"),
             ("orders", "order", "done_time_msc"),
         ):
             evidence = payload[collection]
-            if payload["reason"] != "position_reconcile":
+            records_coverage = payload["reason"] != "position_reconcile" and (
+                pagination is None or paged_complete
+            )
+            if records_coverage:
+                coverage_status = "complete" if paged_complete else evidence["status"]
                 connection.execute(
                     """INSERT INTO activity_coverage
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -568,7 +585,7 @@ class V2TelemetryRegistry:
                         entity_type,
                         int(window["from_server_msc"]),
                         int(window["to_server_msc"]),
-                        evidence["status"],
+                        coverage_status,
                         evidence["total"],
                         captured,
                         envelope.source_id,
@@ -613,6 +630,61 @@ class V2TelemetryRegistry:
                 captured,
                 payload["deals"]["items"],
             )
+
+    @staticmethod
+    def _has_complete_pagination_chain(
+        connection: sqlite3.Connection,
+        account_id: str,
+        source_id: str,
+        from_msc: int,
+        to_msc: int,
+        snapshot_id: str,
+        deal_total: int,
+        order_total: int,
+    ) -> bool:
+        rows = connection.execute(
+            """SELECT m.payload_json
+               FROM telemetry_v2_messages m
+               JOIN sources s ON s.source_id = m.source_id
+               WHERE s.account_id = ? AND m.source_id = ? AND m.kind = 'activity_batch'
+                 AND json_extract(m.payload_json, '$.payload.window.from_server_msc') = ?
+                 AND json_extract(m.payload_json, '$.payload.window.to_server_msc') = ?
+                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?""",
+            (account_id, source_id, str(from_msc), str(to_msc), snapshot_id),
+        ).fetchall()
+        edges: dict[tuple[int, int, int], list[tuple[tuple[int, int, int], bool]]] = {}
+        for (encoded,) in rows:
+            payload = json.loads(encoded)["payload"]
+            if (
+                payload["deals"]["total"] != deal_total
+                or payload["orders"]["total"] != order_total
+            ):
+                continue
+            pagination = payload["pagination"]
+            after = V2TelemetryRegistry._stored_page_key(pagination["after"])
+            through = V2TelemetryRegistry._stored_page_key(pagination["through"])
+            edges.setdefault(after, []).append((through, pagination["has_more"]))
+
+        frontier = [(0, 0, 0)]
+        visited: set[tuple[int, int, int]] = set()
+        while frontier:
+            current = frontier.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            for through, has_more in edges.get(current, ()):
+                if not has_more:
+                    return True
+                frontier.append(through)
+        return False
+
+    @staticmethod
+    def _stored_page_key(value: dict[str, object]) -> tuple[int, int, int]:
+        return (
+            int(value["time_msc"]),
+            0 if value["entity_type"] == "deal" else 1,
+            int(value["ticket"]),
+        )
 
     @staticmethod
     def _project_position_cycle(

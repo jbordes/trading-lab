@@ -57,11 +57,13 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             reconciler.index("FinalizeConfirmedBatch"),
         )
 
-    def test_saturation_splits_then_blocks_without_advancing(self) -> None:
+    def test_saturation_splits_then_pages_without_early_cursor_advance(self) -> None:
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
         self.assertIn("while(true)", timer)
         self.assertIn("MinimumWindowSeconds", timer)
         self.assertIn("pending_blocks_recovery = truncated", timer)
+        self.assertIn("BuildPagedActivityPayload", timer)
+        self.assertIn("pagination_active", timer)
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
         blocked = sender.split("if(pending_blocks_recovery)", 1)[1].split("else", 1)[0]
         self.assertIn("PersistValue(selected_blocked_key, pending_from_msc)", blocked)
@@ -76,7 +78,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.4.0"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.5.0"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
@@ -132,6 +134,25 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         )[0]
         self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
         self.assertNotIn("PersistValue", heartbeat_ack)
+
+    def test_saturated_pages_use_stable_composite_keys_and_restart_changed_snapshot(self) -> None:
+        pager = self.source.split("string BuildPagedActivityPayload", 1)[1].split(
+            "string BuildHistoricalDeals", 1
+        )[0]
+        self.assertIn("CompareActivityPageKeys", pager)
+        self.assertIn("time_msc", pager)
+        self.assertIn("entity_type", pager)
+        self.assertIn("ticket", pager)
+        self.assertIn("remaining_count > key_count", pager)
+        self.assertIn('page_status = has_more ? "partial" : "paged_complete"', pager)
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("pending_page_snapshot_id != pagination_snapshot_id", timer)
+        self.assertIn("pagination_after.time_msc = 0", timer)
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "int BuildPositionReconcilePayload", 1
+        )[0]
+        partial = finalizer.split("if(pending_is_paged && pending_page_has_more)", 1)[1]
+        self.assertNotIn("PersistValue", partial.split("long next_cursor", 1)[0])
 
 
 if __name__ == "__main__":

@@ -95,6 +95,38 @@ def authorized(name: str, sequence: int | None = None) -> AuthorizedEnvelope:
     return directory().authorize(body(name, sequence), f"Bearer {credential}")
 
 
+def authorized_page(
+    sequence: int,
+    *,
+    ticket: str,
+    time_msc: str,
+    after_time: str,
+    after_ticket: str,
+    has_more: bool,
+) -> AuthorizedEnvelope:
+    value = fixture("activity-truncated")
+    value["sequence"] = sequence
+    value["event_id"] = f"synthetic-session-1:{sequence}"
+    deal = value["payload"]["deals"]["items"][0]
+    deal["ticket"] = ticket
+    deal["time_msc"] = time_msc
+    status = "partial" if has_more else "paged_complete"
+    value["payload"]["deals"] = {"status": status, "total": 2, "items": [deal]}
+    value["payload"]["orders"] = {"status": status, "total": 0, "items": []}
+    value["payload"]["pagination"] = {
+        "snapshot_id": "p:1792656000000:1792656060000:2:0",
+        "after": {
+            "time_msc": after_time,
+            "entity_type": "deal",
+            "ticket": after_ticket,
+        },
+        "through": {"time_msc": time_msc, "entity_type": "deal", "ticket": ticket},
+        "has_more": has_more,
+    }
+    encoded = json.dumps(value).encode()
+    return directory().authorize(encoded, f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
 class V2SqliteTest(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -415,6 +447,65 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(deals.complete_ranges, ())
         self.assertEqual(deals.incomplete_batches, 1)
         self.assertEqual(orders.incomplete_batches, 0)
+
+    def test_paged_activity_claims_coverage_only_after_durable_chain(self) -> None:
+        first = authorized_page(
+            10,
+            ticket="900000000000000002",
+            time_msc="1792656030000",
+            after_time="0",
+            after_ticket="0",
+            has_more=True,
+        )
+        final = authorized_page(
+            11,
+            ticket="900000000000000003",
+            time_msc="1792656030000",
+            after_time="1792656030000",
+            after_ticket="900000000000000002",
+            has_more=False,
+        )
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(first, received_at=self.now)
+            before = registry.coverage_report(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+            registry.store_authorized(final, received_at=self.now)
+            after = registry.coverage_report(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+            deals = registry.activity_page(
+                "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+            )
+
+        self.assertEqual(before.complete_ranges, ())
+        self.assertEqual(before.incomplete_batches, 0)
+        self.assertEqual(after.complete_ranges, (("1792656000000", "1792656060000"),))
+        self.assertEqual(
+            {item.ticket for item in deals.items},
+            {
+                "900000000000000002",
+                "900000000000000003",
+            },
+        )
+
+    def test_final_page_without_durable_prefix_rolls_back(self) -> None:
+        final = authorized_page(
+            12,
+            ticket="900000000000000003",
+            time_msc="1792656030000",
+            after_time="1792656030000",
+            after_ticket="900000000000000002",
+            has_more=False,
+        )
+        with open_v2_registry(self.path) as registry:
+            with self.assertRaises(V2StorageError):
+                registry.store_authorized(final, received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0],
+                0,
+            )
 
     def test_position_reconcile_is_durable_without_claiming_account_range(self) -> None:
         with open_v2_registry(self.path) as registry:

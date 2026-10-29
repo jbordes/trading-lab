@@ -180,15 +180,19 @@ def _activity_progress(value: Any) -> None:
 
 
 def _activity(payload: dict[str, Any]) -> None:
+    expected_fields = {
+        "reason",
+        "identity",
+        "window",
+        "deals",
+        "orders",
+    }
+    paginated = "pagination" in payload
+    if paginated:
+        expected_fields.add("pagination")
     v1._require_exact_fields(
         payload,
-        {
-            "reason",
-            "identity",
-            "window",
-            "deals",
-            "orders",
-        },
+        expected_fields,
         "activity_batch",
     )
     _identity(payload["identity"])
@@ -211,7 +215,7 @@ def _activity(payload: dict[str, Any]) -> None:
         raise TelemetryValidationError("Ventana de actividad inválida")
     collections: dict[str, list[dict[str, Any]]] = {}
     for name in ("deals", "orders"):
-        rows = _collection(payload[name])
+        rows = _collection(payload[name], paginated=paginated)
         collections[name] = rows
         seen: set[str] = set()
         for item in rows:
@@ -227,7 +231,11 @@ def _activity(payload: dict[str, Any]) -> None:
             if row["ticket"] in seen:
                 raise TelemetryValidationError("Ticket duplicado dentro de la colección")
             seen.add(row["ticket"])
+    if paginated:
+        _pagination(payload["pagination"], payload, collections)
     if reason == "position_reconcile":
+        if paginated:
+            raise TelemetryValidationError("Reconciliación de posición no admite paginación")
         _position_reconcile(payload, collections)
 
 
@@ -260,7 +268,7 @@ def _position_reconcile(
         raise TelemetryValidationError("Órdenes de reconciliación pertenecen a otra posición")
 
 
-def _collection(value: Any) -> list[Any]:
+def _collection(value: Any, *, paginated: bool = False) -> list[Any]:
     collection = _object(value, "colección")
     v1._require_exact_fields(collection, {"status", "total", "items"}, "colección")
     status = v1._required_string(collection, "status")
@@ -271,6 +279,10 @@ def _collection(value: Any) -> list[Any]:
     if status == "error":
         if total is not None or rows:
             raise TelemetryValidationError("Error de colección debe tener total null y lista vacía")
+    elif paginated and status in {"partial", "paged_complete"}:
+        v1._integer_range(total, "total", minimum=0, maximum=2**31 - 1)
+        if len(rows) > total:
+            raise TelemetryValidationError("Página excede el total declarado")
     else:
         v1._integer_range(total, "total", minimum=0, maximum=2**31 - 1)
         if not (
@@ -281,6 +293,46 @@ def _collection(value: Any) -> list[Any]:
         ):
             raise TelemetryValidationError("Estado y conteos inconsistentes")
     return rows
+
+
+def _pagination(
+    value: Any,
+    payload: dict[str, Any],
+    collections: dict[str, list[dict[str, Any]]],
+) -> None:
+    pagination = _object(value, "pagination")
+    v1._require_exact_fields(
+        pagination,
+        {"snapshot_id", "after", "through", "has_more"},
+        "pagination",
+    )
+    v1._identifier(pagination, "snapshot_id")
+    after = _page_key(pagination["after"], "after")
+    through = _page_key(pagination["through"], "through")
+    if not isinstance(pagination["has_more"], bool):
+        raise TelemetryValidationError("has_more debe ser booleano")
+    expected_status = "partial" if pagination["has_more"] else "paged_complete"
+    if any(payload[name]["status"] != expected_status for name in ("deals", "orders")):
+        raise TelemetryValidationError("Estado de página inconsistente")
+    keys = sorted(
+        [(int(row["time_msc"]), 0, int(row["ticket"])) for row in collections["deals"]]
+        + [(int(row["done_time_msc"]), 1, int(row["ticket"])) for row in collections["orders"]]
+    )
+    if not keys or len(keys) > 200:
+        raise TelemetryValidationError("Página de actividad vacía o demasiado grande")
+    if keys[0] <= after or keys[-1] != through:
+        raise TelemetryValidationError("Cursores de página inconsistentes")
+
+
+def _page_key(value: Any, label: str) -> tuple[int, int, int]:
+    key = _object(value, label)
+    v1._require_exact_fields(key, {"time_msc", "entity_type", "ticket"}, label)
+    v1._decimal_text(key, "time_msc", minimum=0, maximum=v1.MAX_INT64)
+    v1._decimal_text(key, "ticket", minimum=0, maximum=v1.MAX_UINT64)
+    entity = v1._required_string(key, "entity_type")
+    if entity not in {"deal", "order"}:
+        raise TelemetryValidationError("Tipo de entidad de página inválido")
+    return int(key["time_msc"]), 0 if entity == "deal" else 1, int(key["ticket"])
 
 
 def _deal(row: dict[str, Any]) -> None:

@@ -22,7 +22,7 @@ input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.4.0";
+const string COLLECTOR_VERSION = "activity-0.5.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 
@@ -34,6 +34,13 @@ struct TransactionHint
    ulong position_id;
    string symbol;
    ulong observed_tick_ms;
+};
+
+struct ActivityPageKey
+{
+   long time_msc;
+   int entity_type; // 0=deal, 1=order
+   ulong ticket;
 };
 
 string session_id = "";
@@ -51,6 +58,16 @@ bool pending_blocks_recovery = false;
 bool pending_is_recent = false;
 bool pending_is_position_reconcile = false;
 bool pending_is_heartbeat = false;
+bool pending_is_paged = false;
+bool pending_page_has_more = false;
+ActivityPageKey pending_page_through;
+string pending_page_snapshot_id = "";
+bool pagination_active = false;
+bool pagination_is_recent = false;
+long pagination_from_msc = 0;
+long pagination_to_msc = 0;
+ActivityPageKey pagination_after;
+string pagination_snapshot_id = "";
 bool recovery_blocked = false;
 bool recent_recovery_blocked = false;
 bool batch_waiting_for_positions = false;
@@ -219,6 +236,43 @@ void OnTimer()
       return;
    }
    long now_msc = (long)TimeCurrent() * 1000;
+   if(pagination_active)
+   {
+      pending_is_recent = pagination_is_recent;
+      pending_from_msc = pagination_from_msc;
+      pending_to_msc = pagination_to_msc;
+      string page_reason = RecoveryReason(now_msc, pending_is_recent);
+      string page_payload = BuildPagedActivityPayload(
+         page_reason, pending_from_msc, pending_to_msc, pagination_after,
+         pending_page_through, pending_page_has_more, pending_page_snapshot_id);
+      if(page_payload == "")
+         return;
+      if(pending_page_snapshot_id != pagination_snapshot_id)
+      {
+         Print("TradingLab activity: paged history changed; restarting the window");
+         pagination_after.time_msc = 0;
+         pagination_after.entity_type = 0;
+         pagination_after.ticket = 0;
+         pagination_snapshot_id = pending_page_snapshot_id;
+         page_payload = BuildPagedActivityPayload(
+            page_reason, pending_from_msc, pending_to_msc, pagination_after,
+            pending_page_through, pending_page_has_more, pending_page_snapshot_id);
+         if(page_payload == "")
+            return;
+      }
+      sequence_number++;
+      pending_body = BuildEnvelope(page_payload, sequence_number, "activity_batch");
+      pending_is_paged = true;
+      pending_blocks_recovery = false;
+      pending_is_heartbeat = false;
+      if(!CheckPilotSafety() || !PayloadSizeIsValid(pending_body))
+      {
+         pending_body = "";
+         return;
+      }
+      TrySendPending(now_tick_ms);
+      return;
+   }
    bool recent_due = !recent_recovery_blocked &&
       (startup_pending || trade_activity_pending ||
        now_msc - recent_confirmed_from_msc >= (long)RecentCadenceSeconds * 1000);
@@ -235,6 +289,7 @@ void OnTimer()
    long target_to_msc = window_end_msc < selected_limit_msc ? window_end_msc : selected_limit_msc;
    string reason = RecoveryReason(now_msc, pending_is_recent);
    bool truncated = false;
+   bool use_pagination = false;
    string payload = "";
    while(true)
    {
@@ -247,12 +302,17 @@ void OnTimer()
          break;
       if(duration <= (long)MinimumWindowSeconds * 1000)
       {
-         if(payload_too_large)
-         {
-            Print("TradingLab activity: minimum window exceeds the payload limit; stopped");
-            StopForSafety();
+         ActivityPageKey page_start;
+         page_start.time_msc = 0;
+         page_start.entity_type = 0;
+         page_start.ticket = 0;
+         payload = BuildPagedActivityPayload(reason, selected_from_msc, target_to_msc,
+                                              page_start, pending_page_through,
+                                              pending_page_has_more,
+                                              pending_page_snapshot_id);
+         if(payload == "")
             return;
-         }
+         use_pagination = true;
          break;
       }
       long halved = selected_from_msc + duration / 2;
@@ -270,7 +330,8 @@ void OnTimer()
    }
    pending_from_msc = selected_from_msc;
    pending_to_msc = target_to_msc;
-   pending_blocks_recovery = truncated;
+   pending_blocks_recovery = truncated && !use_pagination;
+   pending_is_paged = use_pagination;
    pending_is_heartbeat = false;
    TrySendPending(GetTickCount64());
 }
@@ -420,6 +481,21 @@ void ResetRetryState()
 
 bool FinalizeConfirmedBatch()
 {
+   if(pending_is_paged && pending_page_has_more)
+   {
+      pagination_active = true;
+      pagination_is_recent = pending_is_recent;
+      pagination_from_msc = pending_from_msc;
+      pagination_to_msc = pending_to_msc;
+      pagination_after = pending_page_through;
+      pagination_snapshot_id = pending_page_snapshot_id;
+      batch_waiting_for_positions = false;
+      pending_is_position_reconcile = false;
+      pending_is_paged = false;
+      ResetCandidatePositions();
+      ResetRetryState();
+      return true;
+   }
    long next_cursor = pending_to_msc - (long)OverlapSeconds * 1000;
    long selected_cursor = pending_is_recent ? recent_confirmed_from_msc : confirmed_from_msc;
    string selected_cursor_key = pending_is_recent ? recent_cursor_key : cursor_key;
@@ -436,6 +512,9 @@ bool FinalizeConfirmedBatch()
    batch_waiting_for_positions = false;
    pending_blocks_recovery = false;
    pending_is_position_reconcile = false;
+   pending_is_paged = false;
+   pagination_active = false;
+   pagination_snapshot_id = "";
    ResetCandidatePositions();
    if(pending_is_recent)
    {
@@ -725,6 +804,199 @@ string CollectionJson(const int total, const string items, const bool truncated)
    string status = truncated ? "truncated" : "complete";
    return "{\"status\":\"" + status + "\",\"total\":" + IntegerToString(total) +
           ",\"items\":" + items + "}";
+}
+
+
+string BuildPagedActivityPayload(const string reason, const long from_msc, const long to_msc,
+                                 const ActivityPageKey &after,
+                                 ActivityPageKey &through, bool &has_more,
+                                 string &snapshot_id)
+{
+   ResetCandidatePositions();
+   long from_seconds = from_msc / 1000;
+   long to_seconds = (to_msc + 999) / 1000;
+   ResetLastError();
+   if(to_msc < from_msc || !HistorySelect((datetime)from_seconds, (datetime)to_seconds))
+   {
+      PrintFormat("TradingLab activity: paged HistorySelect failed (%d)", GetLastError());
+      return "";
+   }
+
+   ActivityPageKey keys[];
+   int key_count = 0;
+   int remaining_count = 0;
+   int deal_total = 0;
+   int order_total = 0;
+   uint snapshot_xor = 0;
+   ulong snapshot_sum = 0;
+   bool valid = true;
+   int selected_deals = HistoryDealsTotal();
+   int selected_orders = HistoryOrdersTotal();
+   if(selected_deals < 0 || selected_orders < 0)
+      return "";
+
+   for(int index = 0; index < selected_deals; index++)
+   {
+      ResetLastError();
+      ulong ticket = HistoryDealGetTicket(index);
+      long time_msc = HistoryDealGetInteger(ticket, DEAL_TIME_MSC);
+      if(ticket == 0 || GetLastError() != 0)
+         return "";
+      if(time_msc < from_msc || time_msc > to_msc)
+         continue;
+      deal_total++;
+      ActivityPageKey key;
+      key.time_msc = time_msc;
+      key.entity_type = 0;
+      key.ticket = ticket;
+      uint fingerprint = PageKeyFingerprint(key);
+      snapshot_xor ^= fingerprint;
+      snapshot_sum += (ulong)fingerprint;
+      ConsiderPageKey(key, after, keys, key_count, remaining_count);
+   }
+   for(int index = 0; index < selected_orders; index++)
+   {
+      ResetLastError();
+      ulong ticket = HistoryOrderGetTicket(index);
+      long time_msc = HistoryOrderGetInteger(ticket, ORDER_TIME_DONE_MSC);
+      if(ticket == 0 || GetLastError() != 0)
+         return "";
+      if(time_msc < from_msc || time_msc > to_msc)
+         continue;
+      order_total++;
+      ActivityPageKey key;
+      key.time_msc = time_msc;
+      key.entity_type = 1;
+      key.ticket = ticket;
+      uint fingerprint = PageKeyFingerprint(key);
+      snapshot_xor ^= fingerprint;
+      snapshot_sum += (ulong)fingerprint;
+      ConsiderPageKey(key, after, keys, key_count, remaining_count);
+   }
+   if(key_count < 1)
+   {
+      Print("TradingLab activity: paged range has no records after its cursor");
+      return "";
+   }
+
+   string deals = "[";
+   string orders = "[";
+   int emitted_deals = 0;
+   int emitted_orders = 0;
+   for(int index = 0; index < key_count; index++)
+   {
+      ActivityPageKey key = keys[index];
+      if(key.entity_type == 0)
+      {
+         string row = BuildHistoricalDeal(key.ticket, valid);
+         if(!valid)
+            return "";
+         ResetLastError();
+         long position_id = HistoryDealGetInteger(key.ticket, DEAL_POSITION_ID);
+         long entry = HistoryDealGetInteger(key.ticket, DEAL_ENTRY);
+         if(GetLastError() != 0)
+            return "";
+         if(position_id > 0 && entry != DEAL_ENTRY_IN)
+            AddCandidatePosition(position_id);
+         if(emitted_deals++ > 0)
+            deals += ",";
+         deals += row;
+      }
+      else
+      {
+         string row = BuildHistoricalOrder(key.ticket, valid);
+         if(!valid)
+            return "";
+         if(emitted_orders++ > 0)
+            orders += ",";
+         orders += row;
+      }
+   }
+   deals += "]";
+   orders += "]";
+   through = keys[key_count - 1];
+   has_more = remaining_count > key_count;
+   string page_status = has_more ? "partial" : "paged_complete";
+   snapshot_id = "p:" + IntegerToString(from_msc) + ":" +
+      IntegerToString(to_msc) + ":" + IntegerToString(deal_total) + ":" +
+      IntegerToString(order_total) + ":" + IntegerToString(snapshot_xor) + ":" +
+      UnsignedIdentifier(snapshot_sum);
+   string payload = "{";
+   payload += "\"reason\":\"" + reason + "\",";
+   payload += "\"identity\":" + BuildIdentity() + ",";
+   payload += "\"window\":{\"from_server_msc\":\"" + IntegerToString(from_msc) +
+              "\",\"to_server_msc\":\"" + IntegerToString(to_msc) + "\"},";
+   payload += "\"deals\":" + PagedCollectionJson(deal_total, deals, page_status) + ",";
+   payload += "\"orders\":" + PagedCollectionJson(order_total, orders, page_status) + ",";
+   payload += "\"pagination\":{\"snapshot_id\":\"" + snapshot_id + "\",";
+   payload += "\"after\":" + ActivityPageKeyJson(after) + ",";
+   payload += "\"through\":" + ActivityPageKeyJson(through) + ",";
+   payload += "\"has_more\":" + (has_more ? "true" : "false") + "}}";
+   return payload;
+}
+
+
+string PagedCollectionJson(const int total, const string items, const string status)
+{
+   return "{\"status\":\"" + status + "\",\"total\":" + IntegerToString(total) +
+          ",\"items\":" + items + "}";
+}
+
+
+string ActivityPageKeyJson(const ActivityPageKey &key)
+{
+   string entity = key.entity_type == 0 ? "deal" : "order";
+   return "{\"time_msc\":\"" + IntegerToString(key.time_msc) +
+          "\",\"entity_type\":\"" + entity + "\",\"ticket\":\"" +
+          UnsignedIdentifier(key.ticket) + "\"}";
+}
+
+
+int CompareActivityPageKeys(const ActivityPageKey &left, const ActivityPageKey &right)
+{
+   if(left.time_msc != right.time_msc)
+      return left.time_msc < right.time_msc ? -1 : 1;
+   if(left.entity_type != right.entity_type)
+      return left.entity_type < right.entity_type ? -1 : 1;
+   if(left.ticket == right.ticket)
+      return 0;
+   return left.ticket < right.ticket ? -1 : 1;
+}
+
+
+uint PageKeyFingerprint(const ActivityPageKey &key)
+{
+   return StableHash(IntegerToString(key.time_msc) + ":" +
+                     IntegerToString(key.entity_type) + ":" +
+                     UnsignedIdentifier(key.ticket));
+}
+
+
+void ConsiderPageKey(const ActivityPageKey &key, const ActivityPageKey &after,
+                     ActivityPageKey &keys[], int &count, int &remaining)
+{
+   if(CompareActivityPageKeys(key, after) <= 0)
+      return;
+   remaining++;
+   if(count < MaxItemsPerCollection)
+   {
+      ArrayResize(keys, count + 1);
+      keys[count] = key;
+      count++;
+   }
+   else if(CompareActivityPageKeys(key, keys[count - 1]) >= 0)
+      return;
+   else
+      keys[count - 1] = key;
+
+   for(int index = count - 1; index > 0; index--)
+   {
+      if(CompareActivityPageKeys(keys[index - 1], keys[index]) <= 0)
+         break;
+      ActivityPageKey swap = keys[index - 1];
+      keys[index - 1] = keys[index];
+      keys[index] = swap;
+   }
 }
 
 

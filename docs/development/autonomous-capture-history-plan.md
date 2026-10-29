@@ -182,8 +182,10 @@ variables globales ni reiniciar cursores manualmente como procedimiento ordinari
 rango/estado/Magic aplicados en SQLite antes de paginar, recorrido cronológico sin
 tope funcional de 500, métricas completas con memoria acotada y series visuales
 de hasta 1.200 puntos. El esquema 5 y su migración verificada agregan índices para
-revisión vigente y consultas por Magic. Falta medir `EXPLAIN QUERY PLAN` y latencia
-con un dataset sintético representativo antes de considerar terminado el paso.
+revisión vigente y consultas por Magic. La prueba reproducible recorre 2.500 ciclos
+de tres EAs durante más de dos años, en páginas de 500, y confirma con
+`EXPLAIN QUERY PLAN` el uso de ambos índices. No impone un umbral temporal dependiente
+del hardware; la latencia operativa se observará al aplicar la migración en el piloto.
 
 **Implementación:** inventariar consultas reales y diseñar índices para cuenta,
 posición, fecha y Magic. Aplicar filtros sobre la versión vigente de cada entidad

@@ -141,8 +141,9 @@ dashboard; nunca recibe la credencial interna de lectura ni las de los collector
    dashboard ya están implementados de forma opt-in.
 4. Continuar contrastando observaciones `position_reconcile` reales en demo con
    reportes MT5 y registrar cualquier brecha de cobertura.
-5. Las consultas y métricas recorren historia extensa con memoria visual acotada;
-   falta medir planes SQL y latencia con el dataset sintético representativo.
+5. Las consultas y métricas recorren historia extensa con memoria visual acotada.
+   Un fixture de 2.500 ciclos, tres EAs y más de dos años verifica paginación
+   completa y uso de índices. Falta observar latencia real tras migrar el piloto.
 
 ## Operación piloto
 

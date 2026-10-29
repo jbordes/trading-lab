@@ -214,6 +214,46 @@ class V2PersistentHttpTest(unittest.TestCase):
             400,
         )
 
+    def test_activity_progress_returns_latest_durable_heartbeat(self) -> None:
+        empty_status, empty = self.request(
+            "/v2/activity-progress", authorization=read_authorization()
+        )
+        self.assertEqual((empty_status, empty), (200, {"activity_progress": None}))
+
+        heartbeat = fixture("heartbeat")
+        heartbeat["source_id"] = "synthetic-activity"
+        heartbeat["payload"]["activity_progress"] = {
+            "recent_cursor_msc": "1792656060000",
+            "deep_cursor_msc": "1767225600000",
+            "backlog_msc": "25430460000",
+            "recent_blocked": False,
+            "deep_blocked": False,
+            "queued_hints": 0,
+            "dropped_hints": 0,
+            "last_transaction_age_ms": "5000",
+            "latest_deal_ticket": "900000000000000001",
+            "latest_order_ticket": "900000000000000002",
+            "latest_position_id": "600000000000000001",
+        }
+        body = json.dumps(heartbeat, separators=(",", ":")).encode()
+        self.assertEqual(
+            self.request("/v2/telemetry", body=body, authorization=activity_authorization())[0],
+            202,
+        )
+
+        self.assertEqual(self.request("/v2/activity-progress")[0], 401)
+        status, result = self.request("/v2/activity-progress", authorization=read_authorization())
+        self.assertEqual(status, 200)
+        progress = result["activity_progress"]
+        self.assertEqual(progress["account_id"], "account-demo")
+        self.assertEqual(progress["source_id"], "synthetic-activity")
+        self.assertEqual(progress["status"], "ok")
+        self.assertEqual(progress["values"]["latest_position_id"], "600000000000000001")
+        self.assertEqual(
+            self.request("/v2/activity-progress?x=1", authorization=read_authorization())[0],
+            400,
+        )
+
     def test_position_cycles_require_read_auth_and_preserve_eligibility(self) -> None:
         self.assertEqual(
             self.request(

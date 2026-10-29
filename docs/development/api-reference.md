@@ -216,6 +216,22 @@ rangos, Magic Number y cursores se aplica en la capa de persistencia.
 Respuestas principales: `200`, `400 invalid_activity_query`, `401 unauthorized`,
 `503 storage_unavailable`.
 
+### `GET /v2/activity-progress`
+
+Devuelve el último heartbeat durable del productor `activity` que incluya progreso
+de recuperación. No admite parámetros y requiere la credencial de lectura v2.
+La respuesta contiene `activity_progress: null` hasta recibir el primero. Luego
+identifica cuenta, fuente, sesión, secuencia y versión del collector, junto con:
+
+- cursores reciente y profundo y atraso entre ambos;
+- bloqueo independiente de cada carril;
+- avisos de transacciones en cola o descartados;
+- antigüedad de la última transacción observada y últimos tickets conocidos.
+
+Es diagnóstico operativo: no demuestra cobertura completa ni modifica cursores.
+Respuestas principales: `200`, `400 invalid_query`, `401 unauthorized`, `503
+storage_unavailable`.
+
 ### `GET /v2/position-cycles`
 
 Consulta ciclos de posición cerrados y reconciliados. Un ciclo agrupa los deals

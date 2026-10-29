@@ -16,12 +16,13 @@ input int OverlapSeconds = 5;
 input int MaxItemsPerCollection = 200;
 input int RecentLookbackSeconds = 3600;
 input int RecentCadenceSeconds = 60;
+input int HeartbeatSeconds = 60;
 // Operator-approved demo identity; never commit real account configuration.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.3.0";
+const string COLLECTOR_VERSION = "activity-0.4.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 
@@ -49,6 +50,7 @@ long pending_to_msc = 0;
 bool pending_blocks_recovery = false;
 bool pending_is_recent = false;
 bool pending_is_position_reconcile = false;
+bool pending_is_heartbeat = false;
 bool recovery_blocked = false;
 bool recent_recovery_blocked = false;
 bool batch_waiting_for_positions = false;
@@ -66,6 +68,7 @@ int transaction_hint_head = 0;
 int transaction_hint_count = 0;
 long transaction_hints_dropped = 0;
 ulong last_transaction_tick_ms = 0;
+ulong last_heartbeat_tick_ms = 0;
 ulong last_hint_deal_ticket = 0;
 ulong last_hint_order_ticket = 0;
 ulong last_hint_position_id = 0;
@@ -99,7 +102,8 @@ int OnInit()
       OverlapSeconds >= MinimumWindowSeconds || MaxItemsPerCollection < 1 ||
       MaxItemsPerCollection > 200 || HistoryStartServerTime <= 0 ||
       RecentLookbackSeconds < RecentCadenceSeconds || RecentLookbackSeconds > 86400 ||
-      RecentCadenceSeconds < IntervalSeconds || RecentCadenceSeconds > 3600)
+      RecentCadenceSeconds < IntervalSeconds || RecentCadenceSeconds > 3600 ||
+      HeartbeatSeconds < IntervalSeconds || HeartbeatSeconds > 3600)
    {
       Print("TradingLab activity: review history window, overlap, limit and explicit start");
       return INIT_PARAMETERS_INCORRECT;
@@ -156,6 +160,7 @@ int OnInit()
 
    session_id = "activity-" + CompactUtcTimestamp() + "-" +
                 IntegerToString((long)GetTickCount64());
+   last_heartbeat_tick_ms = GetTickCount64();
    if(!EventSetTimer(IntervalSeconds))
    {
       PrintFormat("TradingLab activity: cannot start timer (%d)", GetLastError());
@@ -197,6 +202,22 @@ void OnTimer()
    int drained_hints = DrainTransactionHints();
    if(drained_hints > 0)
       trade_activity_pending = true;
+   ulong now_tick_ms = GetTickCount64();
+   if(now_tick_ms - last_heartbeat_tick_ms >= (ulong)HeartbeatSeconds * 1000)
+   {
+      sequence_number++;
+      pending_body = BuildEnvelope(BuildHeartbeatPayload(now_tick_ms), sequence_number,
+                                   "heartbeat");
+      pending_is_heartbeat = true;
+      if(!PayloadSizeIsValid(pending_body))
+      {
+         pending_body = "";
+         pending_is_heartbeat = false;
+         return;
+      }
+      TrySendPending(now_tick_ms);
+      return;
+   }
    long now_msc = (long)TimeCurrent() * 1000;
    bool recent_due = !recent_recovery_blocked &&
       (startup_pending || trade_activity_pending ||
@@ -241,7 +262,7 @@ void OnTimer()
    }
 
    sequence_number++;
-   pending_body = BuildEnvelope(payload, sequence_number);
+   pending_body = BuildEnvelope(payload, sequence_number, "activity_batch");
    if(!CheckPilotSafety() || !PayloadSizeIsValid(pending_body))
    {
       pending_body = "";
@@ -250,6 +271,7 @@ void OnTimer()
    pending_from_msc = selected_from_msc;
    pending_to_msc = target_to_msc;
    pending_blocks_recovery = truncated;
+   pending_is_heartbeat = false;
    TrySendPending(GetTickCount64());
 }
 
@@ -326,6 +348,14 @@ bool TrySendPending(const ulong now_ms)
    send_attempts++;
    if(status == 200 || status == 202)
    {
+      if(pending_is_heartbeat)
+      {
+         pending_body = "";
+         pending_is_heartbeat = false;
+         last_heartbeat_tick_ms = now_ms;
+         ResetRetryState();
+         return true;
+      }
       if(pending_is_position_reconcile)
       {
          pending_body = "";
@@ -577,7 +607,7 @@ void ContinuePositionReconciliation()
          continue;
       }
       sequence_number++;
-      string envelope = BuildEnvelope(payload, sequence_number);
+      string envelope = BuildEnvelope(payload, sequence_number, "activity_batch");
       if(!CheckPilotSafety())
          return;
       if(!PayloadSizeIsValid(envelope))
@@ -589,6 +619,7 @@ void ContinuePositionReconciliation()
       }
       pending_body = envelope;
       pending_is_position_reconcile = true;
+      pending_is_heartbeat = false;
       TrySendPending(GetTickCount64());
       return;
    }
@@ -835,7 +866,35 @@ string BuildIdentity()
 }
 
 
-string BuildEnvelope(const string payload, const ulong sequence)
+string BuildHeartbeatPayload(const ulong now_tick_ms)
+{
+   long backlog_msc = recent_confirmed_from_msc - confirmed_from_msc;
+   if(backlog_msc < 0)
+      backlog_msc = 0;
+   ulong transaction_age_ms = last_transaction_tick_ms > 0 && now_tick_ms >= last_transaction_tick_ms ?
+      now_tick_ms - last_transaction_tick_ms : 0;
+   bool degraded = recovery_blocked || recent_recovery_blocked || transaction_hints_dropped > 0;
+   string payload = "{\"identity\":" + BuildIdentity() + ",";
+   payload += "\"status\":\"" + (degraded ? "degraded" : "ok") + "\",";
+   payload += "\"queued_messages\":0,";
+   payload += "\"dropped_messages\":" + IntegerToString(transaction_hints_dropped) + ",";
+   payload += "\"activity_progress\":{";
+   payload += "\"recent_cursor_msc\":\"" + IntegerToString(recent_confirmed_from_msc) + "\",";
+   payload += "\"deep_cursor_msc\":\"" + IntegerToString(confirmed_from_msc) + "\",";
+   payload += "\"backlog_msc\":\"" + IntegerToString(backlog_msc) + "\",";
+   payload += "\"recent_blocked\":" + (recent_recovery_blocked ? "true" : "false") + ",";
+   payload += "\"deep_blocked\":" + (recovery_blocked ? "true" : "false") + ",";
+   payload += "\"queued_hints\":" + IntegerToString(transaction_hint_count) + ",";
+   payload += "\"dropped_hints\":" + IntegerToString(transaction_hints_dropped) + ",";
+   payload += "\"last_transaction_age_ms\":\"" + UnsignedIdentifier(transaction_age_ms) + "\",";
+   payload += "\"latest_deal_ticket\":\"" + UnsignedIdentifier(last_hint_deal_ticket) + "\",";
+   payload += "\"latest_order_ticket\":\"" + UnsignedIdentifier(last_hint_order_ticket) + "\",";
+   payload += "\"latest_position_id\":\"" + UnsignedIdentifier(last_hint_position_id) + "\"}}";
+   return payload;
+}
+
+
+string BuildEnvelope(const string payload, const ulong sequence, const string kind)
 {
    string event_id = session_id + ":" + IntegerToString((long)sequence);
    string body = "{";
@@ -846,7 +905,7 @@ string BuildEnvelope(const string payload, const ulong sequence)
    body += "\"sequence\":" + IntegerToString((long)sequence) + ",";
    body += "\"event_id\":\"" + JsonEscape(event_id) + "\",";
    body += "\"captured_at\":\"" + IsoUtcTimestamp() + "\",";
-   body += "\"kind\":\"activity_batch\",\"payload\":" + payload + "}";
+   body += "\"kind\":\"" + kind + "\",\"payload\":" + payload + "}";
    return body;
 }
 

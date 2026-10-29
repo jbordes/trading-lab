@@ -115,9 +115,19 @@ completa, incrementa un contador de descartes y la recuperación autoritativa po
 historial continúa siendo la protección contra huecos. Los avisos aceleran y
 diagnostican; no se convierten en una segunda fuente de verdad.
 
-Continúan pendientes dentro del punto 3: heartbeat y progreso/cobertura consultable
-por fuente, pausa operativa, prueba con más de 12 meses y resolución estable de una
-ventana mínima que exceda el límite por compartir muchos registros el mismo timestamp.
+La versión `activity-0.4.0` emite además un heartbeat operativo cada minuto. El
+mensaje informa por separado los cursores reciente y profundo, atraso pendiente,
+bloqueos, avisos en cola o descartados y los últimos tickets observados. Un heartbeat
+confirmado no mueve cursores, no confirma cobertura y no desencadena reconciliación
+de posiciones. Su esquema es opcional dentro del contrato de heartbeat para que
+los productores existentes sigan siendo compatibles. Un bloqueo o un descarte
+de avisos degrada explícitamente su estado.
+
+Continúan pendientes dentro del punto 3: consulta del progreso/cobertura por fuente,
+pausa operativa, prueba con más de 12 meses y resolución estable de una ventana mínima
+que exceda el límite por compartir muchos registros el mismo timestamp. El siguiente
+incremento debe exponer el último heartbeat persistido; no crear una proyección
+creciente en memoria.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

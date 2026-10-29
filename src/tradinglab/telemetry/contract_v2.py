@@ -120,14 +120,18 @@ def _live(payload: dict[str, Any]) -> None:
 
 
 def _heartbeat(payload: dict[str, Any]) -> None:
+    base_fields = {
+        "identity",
+        "status",
+        "queued_messages",
+        "dropped_messages",
+    }
+    expected_fields = base_fields | (
+        {"activity_progress"} if "activity_progress" in payload else set()
+    )
     v1._require_exact_fields(
         payload,
-        {
-            "identity",
-            "status",
-            "queued_messages",
-            "dropped_messages",
-        },
+        expected_fields,
         "heartbeat",
     )
     _identity(payload["identity"])
@@ -135,6 +139,44 @@ def _heartbeat(payload: dict[str, Any]) -> None:
         raise TelemetryValidationError("Estado de heartbeat inválido")
     for field in ("queued_messages", "dropped_messages"):
         v1._integer_range(payload[field], field, minimum=0, maximum=v1.MAX_INT64)
+    if "activity_progress" in payload:
+        _activity_progress(payload["activity_progress"])
+
+
+def _activity_progress(value: Any) -> None:
+    progress = _object(value, "activity_progress")
+    v1._require_exact_fields(
+        progress,
+        {
+            "recent_cursor_msc",
+            "deep_cursor_msc",
+            "backlog_msc",
+            "recent_blocked",
+            "deep_blocked",
+            "queued_hints",
+            "dropped_hints",
+            "last_transaction_age_ms",
+            "latest_deal_ticket",
+            "latest_order_ticket",
+            "latest_position_id",
+        },
+        "activity_progress",
+    )
+    for field in (
+        "recent_cursor_msc",
+        "deep_cursor_msc",
+        "backlog_msc",
+        "last_transaction_age_ms",
+        "latest_deal_ticket",
+        "latest_order_ticket",
+        "latest_position_id",
+    ):
+        v1._decimal_text(progress, field, minimum=0, maximum=v1.MAX_INT64)
+    for field in ("recent_blocked", "deep_blocked"):
+        if not isinstance(progress[field], bool):
+            raise TelemetryValidationError(f"{field} debe ser booleano")
+    for field in ("queued_hints", "dropped_hints"):
+        v1._integer_range(progress[field], field, minimum=0, maximum=v1.MAX_INT64)
 
 
 def _activity(payload: dict[str, Any]) -> None:

@@ -296,6 +296,34 @@ class TelemetryV2ContractTest(unittest.TestCase):
         with self.assertRaises(TelemetryValidationError):
             parse_envelope_v2(encoded(value))
 
+    def test_activity_heartbeat_accepts_strict_progress(self) -> None:
+        value = fixture("heartbeat")
+        value["payload"]["activity_progress"] = {
+            "recent_cursor_msc": "1793260800000",
+            "deep_cursor_msc": "1767225600000",
+            "backlog_msc": "26035200000",
+            "recent_blocked": False,
+            "deep_blocked": False,
+            "queued_hints": 0,
+            "dropped_hints": 0,
+            "last_transaction_age_ms": "2500",
+            "latest_deal_ticket": "2690316619",
+            "latest_order_ticket": "2690316618",
+            "latest_position_id": "12345",
+        }
+        parsed = parse_envelope_v2(encoded(value))
+        self.assertEqual(parsed.payload["activity_progress"]["latest_position_id"], "12345")
+
+        for field, invalid in (
+            ("recent_blocked", 0),
+            ("queued_hints", True),
+            ("deep_cursor_msc", 1),
+        ):
+            candidate = copy.deepcopy(value)
+            candidate["payload"]["activity_progress"][field] = invalid
+            with self.subTest(field=field), self.assertRaises(TelemetryValidationError):
+                parse_envelope_v2(encoded(candidate))
+
 
 if __name__ == "__main__":
     unittest.main()

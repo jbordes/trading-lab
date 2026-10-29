@@ -109,6 +109,11 @@ El receptor también expone `GET /v2/activity` solo en loopback. Exige
 resuelta con cobertura completa e indicador de lotes incompletos. El endpoint de
 salud continúa sin revelar cuenta ni requerir credenciales.
 
+`GET /v2/activity-progress` reutiliza la credencial de lectura y consulta el último
+heartbeat de progreso directamente en SQLite. Devuelve null mientras el collector
+no haya enviado uno. No conserva una proyección creciente en memoria y un heartbeat
+no se interpreta como cobertura confirmada.
+
 `GET /v2/position-cycles` reutiliza esa credencial de lectura y devuelve una
 página acotada de ciclos reconciliados. Admite `owner_magic`, `limit` y cursor
 keyset; autentica antes de validar parámetros. Cada fila conserva procedencia,
@@ -160,8 +165,9 @@ uv run python scripts/telemetry_receiver_v2.py --sqlite-db <ruta> --account-id <
 ```
 
 La ingesta vive en `http://127.0.0.1:8777/v2/telemetry` por defecto y salud en
-`/health`. La consulta vive en `/v2/activity`. Este procedimiento prepara el
-backend; no instala collectors ni genera actividad por sí solo.
+`/health`. Las consultas viven en `/v2/activity`, `/v2/activity-progress` y las
+rutas de ciclos documentadas. Este procedimiento prepara el backend; no instala
+collectors ni genera actividad por sí solo.
 
 Para actualizar una base v2 existente, detener primero el supervisor y revisar la
 vista previa. El nombre de copia debe ser nuevo:

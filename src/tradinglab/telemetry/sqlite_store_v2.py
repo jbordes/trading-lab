@@ -235,6 +235,19 @@ class V2CoverageReport:
 
 
 @dataclass(frozen=True, slots=True)
+class V2ActivityProgress:
+    account_id: str
+    source_id: str
+    session_id: str
+    sequence: int
+    collector_version: str
+    captured_at: str
+    received_at: str
+    status: str
+    values: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class V2PositionCycleItem:
     message_id: int
     cycle: PositionCycle
@@ -830,6 +843,36 @@ class V2TelemetryRegistry:
             entity_type,
             tuple((str(start), str(end)) for start, end in merged),
             incomplete,
+        )
+
+    def latest_activity_progress(self, account_id: str) -> V2ActivityProgress | None:
+        """Return the latest durable activity heartbeat carrying progress."""
+
+        account = _identifier(account_id, "account_id")
+        row = self._connection.execute(
+            """SELECT m.source_id, m.session_id, m.sequence, m.collector_version,
+                      m.captured_at_utc, m.received_at_utc, m.payload_json
+               FROM telemetry_v2_messages m
+               JOIN sources s ON s.source_id = m.source_id
+               WHERE s.account_id = ? AND s.role = 'activity' AND m.kind = 'heartbeat'
+                 AND json_type(m.payload_json, '$.payload.activity_progress') = 'object'
+               ORDER BY m.message_id DESC LIMIT 1""",
+            (account,),
+        ).fetchone()
+        if row is None:
+            return None
+        document = json.loads(row[6])
+        payload = document["payload"]
+        return V2ActivityProgress(
+            account,
+            row[0],
+            row[1],
+            int(row[2]),
+            row[3],
+            row[4],
+            row[5],
+            payload["status"],
+            payload["activity_progress"],
         )
 
     def position_cycles(

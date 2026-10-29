@@ -15,6 +15,7 @@ from tradinglab.telemetry.admission_v2 import (
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
+    V2ActivityProgress,
     V2CoverageReport,
     V2PositionCyclePage,
     V2StorageError,
@@ -146,6 +147,11 @@ class PersistentV2TelemetryReceiver:
                 limit=limit,
                 cursor=cursor,
             )
+
+    def activity_progress(self) -> V2ActivityProgress | None:
+        with self._lock:
+            self._require_open()
+            return self._registry.latest_activity_progress(self._account_id)
 
     def position_cycle_magics(self) -> tuple[str, ...]:
         with self._lock:

@@ -76,7 +76,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.3.0"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.4.0"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
@@ -105,6 +105,33 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("transaction_hints_dropped++", enqueue)
         self.assertNotIn("ArrayResize", enqueue)
         self.assertIn("DrainTransactionHints()", self.source)
+
+    def test_heartbeat_reports_progress_without_advancing_cursors(self) -> None:
+        self.assertIn("BuildHeartbeatPayload", self.source)
+        self.assertIn('"heartbeat"', self.source)
+        heartbeat = self.source.split("string BuildHeartbeatPayload", 1)[1].split(
+            "string BuildEnvelope", 1
+        )[0]
+        for field in (
+            "recent_cursor_msc",
+            "deep_cursor_msc",
+            "backlog_msc",
+            "recent_blocked",
+            "deep_blocked",
+            "queued_hints",
+            "dropped_hints",
+            "latest_deal_ticket",
+            "latest_order_ticket",
+            "latest_position_id",
+        ):
+            self.assertIn(field, heartbeat)
+        self.assertNotIn("PersistValue", heartbeat)
+        sender = self.source.split("bool TrySendPending", 1)[1].split("void ResetRetryState", 1)[0]
+        heartbeat_ack = sender.split("if(pending_is_heartbeat)", 1)[1].split(
+            "if(pending_is_position_reconcile)", 1
+        )[0]
+        self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
+        self.assertNotIn("PersistValue", heartbeat_ack)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
+    V2ActivityProgress,
     V2CoverageReport,
     V2PositionCycleItem,
     V2PositionCyclePage,
@@ -54,6 +55,8 @@ class V2TelemetryBackend(Protocol):
     ) -> V2PositionCyclePage: ...
 
     def position_cycle_magics(self) -> tuple[str, ...]: ...
+
+    def activity_progress(self) -> V2ActivityProgress | None: ...
 
 
 def create_v2_telemetry_server(
@@ -120,6 +123,7 @@ def create_v2_telemetry_server(
                 return
             if target.path not in {
                 "/v2/activity",
+                "/v2/activity-progress",
                 "/v2/position-cycles",
                 "/v2/position-cycle-magics",
             }:
@@ -127,6 +131,23 @@ def create_v2_telemetry_server(
                 return
             if not self._is_read_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if target.path == "/v2/activity-progress":
+                if target.query:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
+                    return
+                try:
+                    progress = backend.activity_progress()
+                except V2StorageError:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "storage_unavailable"},
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"activity_progress": asdict(progress) if progress is not None else None},
+                )
                 return
             if target.path == "/v2/position-cycle-magics":
                 if target.query:

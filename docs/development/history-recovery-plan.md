@@ -1,6 +1,7 @@
 # Recuperación histórica — primer paso
 
-Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados; piloto pendiente.
+Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados;
+recuperación reciente prioritaria preparada, piloto pendiente.
 
 ## Evidencia del piloto
 
@@ -89,6 +90,26 @@ quedan fuera del primer corte; la captura debe preservar la evidencia disponible
 5. Validar reinicio, desorden, duplicados, error, truncamiento y caída prolongada.
    Probar que un lote antiguo no cambia balance/equity actuales y que una orden
    cancelada sin deal se conserva sin incrementar trades. Contrastar con MT5.
+
+## Evolución 0.3: actividad reciente independiente del backfill
+
+`TradingLabActivity` conserva un solo productor, una secuencia y como máximo un
+lote sin confirmar, pero separa dos cursores durables. El carril reciente comienza
+con una relectura acotada de la última hora y se atiende al iniciar, ante actividad
+de trading o al vencer su cadencia. El carril profundo continúa desde
+`HistoryStartServerTime` únicamente cuando el reciente está al día. Ambos conservan
+solapamiento, confirmación posterior al commit y deduplicación del receptor.
+
+Una ventana mínima saturada bloquea solamente su carril. Por lo tanto, un bloqueo
+del backfill antiguo no impide capturar operaciones nuevas. No se salta el rango
+saturado ni se declara cobertura completa. Los parámetros nuevos son
+`RecentLookbackSeconds` y `RecentCadenceSeconds`; sus valores iniciales son una hora
+y un minuto. El cursor histórico anterior se reutiliza y el cursor reciente nuevo
+se inicializa sin borrar variables globales.
+
+Continúan pendientes dentro del punto 3: progreso/cobertura consultable por fuente,
+pausa operativa, prueba con más de 12 meses y resolución estable de una ventana
+mínima que exceda el límite por compartir muchos registros el mismo timestamp.
 
 La instalación en Juampi se realiza después de validar código y con intervención
 humana. No modificar la terminal del socio. La captura sigue siendo solo lectura

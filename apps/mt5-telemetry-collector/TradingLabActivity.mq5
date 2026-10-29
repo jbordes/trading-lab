@@ -14,25 +14,32 @@ input int WindowSeconds = 21600;
 input int MinimumWindowSeconds = 60;
 input int OverlapSeconds = 5;
 input int MaxItemsPerCollection = 200;
+input int RecentLookbackSeconds = 3600;
+input int RecentCadenceSeconds = 60;
 // Operator-approved demo identity; never commit real account configuration.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.2.0";
+const string COLLECTOR_VERSION = "activity-0.3.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 
 string session_id = "";
 string cursor_key = "";
 string blocked_key = "";
+string recent_cursor_key = "";
+string recent_blocked_key = "";
 long confirmed_from_msc = 0;
+long recent_confirmed_from_msc = 0;
 ulong sequence_number = 0;
 string pending_body = "";
 long pending_from_msc = 0;
 long pending_to_msc = 0;
 bool pending_blocks_recovery = false;
+bool pending_is_recent = false;
 bool pending_is_position_reconcile = false;
 bool recovery_blocked = false;
+bool recent_recovery_blocked = false;
 bool batch_waiting_for_positions = false;
 long candidate_position_ids[];
 int candidate_position_count = 0;
@@ -71,7 +78,9 @@ int OnInit()
    if(WindowSeconds < 60 || WindowSeconds > 86400 || MinimumWindowSeconds < 1 ||
       MinimumWindowSeconds > WindowSeconds || OverlapSeconds < 0 ||
       OverlapSeconds >= MinimumWindowSeconds || MaxItemsPerCollection < 1 ||
-      MaxItemsPerCollection > 200 || HistoryStartServerTime <= 0)
+      MaxItemsPerCollection > 200 || HistoryStartServerTime <= 0 ||
+      RecentLookbackSeconds < RecentCadenceSeconds || RecentLookbackSeconds > 86400 ||
+      RecentCadenceSeconds < IntervalSeconds || RecentCadenceSeconds > 3600)
    {
       Print("TradingLab activity: review history window, overlap, limit and explicit start");
       return INIT_PARAMETERS_INCORRECT;
@@ -89,7 +98,12 @@ int OnInit()
                                  ":" + ExpectedDemoServer);
    cursor_key = StringFormat("TL2.ACT.%08X.CURSOR", source_hash);
    blocked_key = StringFormat("TL2.ACT.%08X.BLOCK", source_hash);
+   recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT", source_hash);
+   recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK", source_hash);
    confirmed_from_msc = (long)HistoryStartServerTime * 1000;
+   long recent_floor_msc = now_seconds * 1000 - (long)RecentLookbackSeconds * 1000;
+   recent_confirmed_from_msc = recent_floor_msc > confirmed_from_msc ?
+      recent_floor_msc : confirmed_from_msc;
    if(GlobalVariableCheck(cursor_key))
    {
       double stored = GlobalVariableGet(cursor_key);
@@ -102,9 +116,24 @@ int OnInit()
       }
       confirmed_from_msc = restored;
    }
+   if(GlobalVariableCheck(recent_cursor_key))
+   {
+      double stored = GlobalVariableGet(recent_cursor_key);
+      long restored = (long)stored;
+      if(restored < (long)HistoryStartServerTime * 1000 ||
+         restored > now_seconds * 1000 || (double)restored != stored)
+      {
+         Print("TradingLab activity: stored recent cursor is invalid; review it manually");
+         return INIT_FAILED;
+      }
+      recent_confirmed_from_msc = restored;
+   }
    if(GlobalVariableCheck(blocked_key) &&
       (long)GlobalVariableGet(blocked_key) == confirmed_from_msc)
       recovery_blocked = true;
+   if(GlobalVariableCheck(recent_blocked_key) &&
+      (long)GlobalVariableGet(recent_blocked_key) == recent_confirmed_from_msc)
+      recent_recovery_blocked = true;
 
    session_id = "activity-" + CompactUtcTimestamp() + "-" +
                 IntegerToString((long)GetTickCount64());
@@ -114,9 +143,10 @@ int OnInit()
       return INIT_FAILED;
    }
    if(recovery_blocked)
-      Print("TradingLab activity: recovery is blocked at a saturated minimum window");
-   else
-      Print("TradingLab activity: read-only recovery started");
+      Print("TradingLab activity: deep recovery is blocked; recent capture remains independent");
+   if(recent_recovery_blocked)
+      Print("TradingLab activity: recent recovery is blocked at a saturated minimum window");
+   Print("TradingLab activity: read-only recent and deep recovery started");
    return INIT_SUCCEEDED;
 }
 
@@ -133,7 +163,7 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   if(!CheckPilotSafety() || recovery_blocked)
+   if(!CheckPilotSafety())
       return;
    if(pending_body != "")
    {
@@ -146,20 +176,29 @@ void OnTimer()
       return;
    }
    long now_msc = (long)TimeCurrent() * 1000;
-   if(now_msc <= confirmed_from_msc + (long)OverlapSeconds * 1000)
+   bool recent_due = !recent_recovery_blocked &&
+      (startup_pending || trade_activity_pending ||
+       now_msc - recent_confirmed_from_msc >= (long)RecentCadenceSeconds * 1000);
+   bool deep_due = !recovery_blocked && confirmed_from_msc < recent_confirmed_from_msc;
+   if(!recent_due && !deep_due)
       return;
 
-   long window_end_msc = confirmed_from_msc + (long)WindowSeconds * 1000;
-   long target_to_msc = window_end_msc < now_msc ? window_end_msc : now_msc;
-   string reason = RecoveryReason(now_msc);
+   pending_is_recent = recent_due;
+   long selected_from_msc = pending_is_recent ? recent_confirmed_from_msc : confirmed_from_msc;
+   long selected_limit_msc = pending_is_recent ? now_msc : recent_confirmed_from_msc;
+   if(selected_limit_msc <= selected_from_msc + (long)OverlapSeconds * 1000)
+      return;
+   long window_end_msc = selected_from_msc + (long)WindowSeconds * 1000;
+   long target_to_msc = window_end_msc < selected_limit_msc ? window_end_msc : selected_limit_msc;
+   string reason = RecoveryReason(now_msc, pending_is_recent);
    bool truncated = false;
    string payload = "";
    while(true)
    {
-      payload = BuildActivityPayload(reason, confirmed_from_msc, target_to_msc, truncated);
+      payload = BuildActivityPayload(reason, selected_from_msc, target_to_msc, truncated);
       if(payload == "")
          return;
-      long duration = target_to_msc - confirmed_from_msc;
+      long duration = target_to_msc - selected_from_msc;
       bool payload_too_large = Utf8Size(payload) > MAX_PAYLOAD_BYTES - 1024;
       if(!truncated && !payload_too_large)
          break;
@@ -173,10 +212,10 @@ void OnTimer()
          }
          break;
       }
-      long halved = confirmed_from_msc + duration / 2;
+      long halved = selected_from_msc + duration / 2;
       target_to_msc = (halved / 1000) * 1000;
-      if(target_to_msc < confirmed_from_msc + (long)MinimumWindowSeconds * 1000)
-         target_to_msc = confirmed_from_msc + (long)MinimumWindowSeconds * 1000;
+      if(target_to_msc < selected_from_msc + (long)MinimumWindowSeconds * 1000)
+         target_to_msc = selected_from_msc + (long)MinimumWindowSeconds * 1000;
    }
 
    sequence_number++;
@@ -186,7 +225,7 @@ void OnTimer()
       pending_body = "";
       return;
    }
-   pending_from_msc = confirmed_from_msc;
+   pending_from_msc = selected_from_msc;
    pending_to_msc = target_to_msc;
    pending_blocks_recovery = truncated;
    TrySendPending(GetTickCount64());
@@ -204,13 +243,13 @@ void OnTradeTransaction(
 }
 
 
-string RecoveryReason(const long now_msc)
+string RecoveryReason(const long now_msc, const bool recent_lane)
 {
    if(startup_pending)
       return "startup";
    if(trade_activity_pending)
       return "trade_activity";
-   if(now_msc - confirmed_from_msc > (long)WindowSeconds * 1000)
+   if(!recent_lane || now_msc - recent_confirmed_from_msc > (long)WindowSeconds * 1000)
       return "recovery";
    return "reconcile";
 }
@@ -236,13 +275,17 @@ bool TrySendPending(const ulong now_ms)
       }
       if(pending_blocks_recovery)
       {
-         if(!PersistValue(blocked_key, pending_from_msc))
+         string selected_blocked_key = pending_is_recent ? recent_blocked_key : blocked_key;
+         if(!PersistValue(selected_blocked_key, pending_from_msc))
          {
             Print("TradingLab activity: cannot persist blocked recovery marker");
             StopForSafety();
             return false;
          }
-         recovery_blocked = true;
+         if(pending_is_recent)
+            recent_recovery_blocked = true;
+         else
+            recovery_blocked = true;
          PrintFormat("TradingLab activity: saturated range requires operator review (%I64d..%I64d)",
                      pending_from_msc, pending_to_msc);
          pending_body = "";
@@ -287,19 +330,27 @@ void ResetRetryState()
 bool FinalizeConfirmedBatch()
 {
    long next_cursor = pending_to_msc - (long)OverlapSeconds * 1000;
-   if(next_cursor <= confirmed_from_msc || !PersistValue(cursor_key, next_cursor))
+   long selected_cursor = pending_is_recent ? recent_confirmed_from_msc : confirmed_from_msc;
+   string selected_cursor_key = pending_is_recent ? recent_cursor_key : cursor_key;
+   if(next_cursor <= selected_cursor || !PersistValue(selected_cursor_key, next_cursor))
    {
       Print("TradingLab activity: cannot persist confirmed recovery cursor");
       StopForSafety();
       return false;
    }
-   confirmed_from_msc = next_cursor;
+   if(pending_is_recent)
+      recent_confirmed_from_msc = next_cursor;
+   else
+      confirmed_from_msc = next_cursor;
    batch_waiting_for_positions = false;
    pending_blocks_recovery = false;
    pending_is_position_reconcile = false;
    ResetCandidatePositions();
-   startup_pending = false;
-   trade_activity_pending = false;
+   if(pending_is_recent)
+   {
+      startup_pending = false;
+      trade_activity_pending = false;
+   }
    ResetRetryState();
    return true;
 }

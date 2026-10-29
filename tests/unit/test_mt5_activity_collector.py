@@ -33,9 +33,9 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "void ResetCandidatePositions", 1
         )[0]
-        self.assertIn("PersistValue(cursor_key, next_cursor)", finalizer)
+        self.assertIn("PersistValue(selected_cursor_key, next_cursor)", finalizer)
         self.assertLess(
-            finalizer.index("PersistValue(cursor_key"),
+            finalizer.index("PersistValue(selected_cursor_key"),
             finalizer.index("confirmed_from_msc ="),
         )
         self.assertIn("pending_body", sender)
@@ -64,7 +64,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("pending_blocks_recovery = truncated", timer)
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
         blocked = sender.split("if(pending_blocks_recovery)", 1)[1].split("else", 1)[0]
-        self.assertIn("PersistValue(blocked_key, pending_from_msc)", blocked)
+        self.assertIn("PersistValue(selected_blocked_key, pending_from_msc)", blocked)
         self.assertIn("recovery_blocked = true", blocked)
         self.assertNotIn("confirmed_from_msc =", blocked)
 
@@ -74,6 +74,22 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn('pending_body = ""', sender.split("bool retryable", 1)[1])
         self.assertIn("StopForSafety()", sender)
         self.assertNotIn("Sleep(", self.source)
+
+    def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
+        self.assertIn('COLLECTOR_VERSION = "activity-0.3.0"', self.source)
+        self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
+        self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
+        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
+        self.assertIn("bool recent_due", timer)
+        self.assertIn("bool deep_due", timer)
+        self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
+        self.assertIn("pending_is_recent = recent_due", timer)
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "void ResetCandidatePositions", 1
+        )[0]
+        self.assertIn("selected_cursor_key", finalizer)
+        self.assertIn("recent_confirmed_from_msc = next_cursor", finalizer)
+        self.assertIn("confirmed_from_msc = next_cursor", finalizer)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from tradinglab.telemetry.sqlite_store import (
     MessageAdmissionError,
     TelemetryStorageError,
     open_registry,
+    read_account_history,
 )
 
 
@@ -39,7 +40,9 @@ class PersistentTelemetryReceiver:
             raise ValueError("source_id inválido")
         self._source_id = source_id
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._database = database.resolve(strict=True)
         self._lock = threading.RLock()
+        self._history_admission = threading.BoundedSemaphore(2)
         self._context = open_registry(database, cross_thread=True)
         self._registry = self._context.__enter__()
         try:
@@ -82,7 +85,17 @@ class PersistentTelemetryReceiver:
             raise MessageAdmissionError("Fuente no autorizada por este receptor")
         with self._lock:
             self._require_open()
-            return self._registry.account_history(source_id, from_msc=from_msc, to_msc=to_msc)
+        if not self._history_admission.acquire(blocking=False):
+            raise TelemetryStorageError("Hay demasiadas consultas históricas simultáneas")
+        try:
+            return read_account_history(
+                self._database,
+                source_id,
+                from_msc=from_msc,
+                to_msc=to_msc,
+            )
+        finally:
+            self._history_admission.release()
 
     def deal_history(
         self,

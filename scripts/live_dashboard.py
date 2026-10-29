@@ -65,6 +65,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Segundos máximos sin una nueva muestra antes de degradar la vista.",
     )
     parser.add_argument(
+        "--telemetry-capture-interval",
+        type=interval,
+        default=20.0,
+        help="Cadencia esperada del collector MQL5, independiente del refresco del dashboard.",
+    )
+    parser.add_argument(
         "--history-v2",
         action="store_true",
         help="Lee deals recuperados desde el receptor v2 en lugar del historial v1.",
@@ -186,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
     service = LiveDashboardService(
         source,
         interval_seconds=args.interval,
+        capture_interval_seconds=args.telemetry_capture_interval
+        if args.telemetry
+        else args.interval,
         health_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
     )
     server = create_server(

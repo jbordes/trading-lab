@@ -131,6 +131,7 @@ class PersistentV2TelemetryReceiver:
         self,
         *,
         owner_magic: str | None = None,
+        owner_magics: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
@@ -141,9 +142,15 @@ class PersistentV2TelemetryReceiver:
             return self._registry.position_cycles(
                 self._account_id,
                 owner_magic=owner_magic,
+                owner_magics=owner_magics,
                 limit=limit,
                 cursor=cursor,
             )
+
+    def position_cycle_magics(self) -> tuple[str, ...]:
+        with self._lock:
+            self._require_open()
+            return self._registry.position_cycle_magics(self._account_id)
 
     def close(self) -> None:
         with self._lock:

@@ -429,7 +429,11 @@ class V2SqliteTest(unittest.TestCase):
             )
             cycles = registry.position_cycles("account-demo")
             filtered_cycles = registry.position_cycles("account-demo", owner_magic="11122")
+            multi_filtered = registry.position_cycles(
+                "account-demo", owner_magics=("11122", "99999")
+            )
             other_cycles = registry.position_cycles("account-demo", owner_magic="99999")
+            discovered_magics = registry.position_cycle_magics("account-demo")
             coverage = registry.coverage_report(
                 "account-demo",
                 "deal",
@@ -442,7 +446,9 @@ class V2SqliteTest(unittest.TestCase):
         self.assertEqual(coverage.incomplete_batches, 0)
         self.assertEqual(len(cycles.items), 1)
         self.assertEqual(filtered_cycles.items, cycles.items)
+        self.assertEqual(multi_filtered.items, cycles.items)
         self.assertEqual(other_cycles.items, ())
+        self.assertEqual(discovered_magics, ("11122",))
         self.assertIsNone(cycles.next_cursor)
         cycle = cycles.items[0].cycle
         self.assertEqual(cycle.position_id, "600000000000000001")

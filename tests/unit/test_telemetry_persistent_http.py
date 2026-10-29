@@ -11,10 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from test_mt5_telemetry import TOKEN, encoded, snapshot_message
 from test_telemetry_history import history_message
 
+from tradinglab.telemetry.contract import parse_envelope
 from tradinglab.telemetry.ingest import create_telemetry_server
 from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
 from tradinglab.telemetry.sqlite_store import create_database, open_registry
@@ -147,6 +149,35 @@ class PersistentHttpTest(unittest.TestCase):
             self.request("/v1/telemetry", message=snapshot_message(sequence=2))[0], 409
         )
         self.assertEqual(self.request("/health")[1]["missing_sequences"], 1)
+
+    def test_slow_account_history_does_not_block_ingestion(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_history(*args: object, **kwargs: object) -> dict[str, object]:
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"points": []}
+
+        with patch(
+            "tradinglab.telemetry.persistent_receiver.read_account_history",
+            side_effect=slow_history,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                history = pool.submit(
+                    self.backend.account_history,
+                    SOURCE,
+                    from_msc=1,
+                    to_msc=2,
+                )
+                self.assertTrue(started.wait(timeout=1))
+                ingestion = pool.submit(
+                    self.backend.accept,
+                    parse_envelope(encoded(snapshot_message())),
+                )
+                self.assertEqual(ingestion.result(timeout=1).status, "accepted")
+                release.set()
+                self.assertEqual(history.result(timeout=1), {"points": []})
 
     def test_unknown_source_fails_before_binding(self) -> None:
         with self.assertRaises(ValueError):

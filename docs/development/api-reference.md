@@ -38,6 +38,10 @@ rellena huecos ni cambia la retención. La respuesta refleja capturas existentes
 
 Devuelve la muestra actual de la cuenta, operaciones abiertas, actividad
 reciente, salud de la fuente y el historial ligero utilizado por la interfaz.
+`interval_seconds` describe el polling del dashboard;
+`capture_interval_seconds`, `freshness_tolerance_seconds` y
+`latest_age_seconds` forman el contrato de frescura de la captura y no dependen
+del reloj civil del navegador.
 
 Parámetro opcional:
 
@@ -110,6 +114,8 @@ dashboard, sin entregar al navegador la credencial interna del receptor v2.
 Parámetros opcionales:
 
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `owner_magics`: lista CSV de hasta 12 Magic Numbers, incompatible con
+  `owner_magic`; se aplica en SQLite antes del cursor y el límite.
 - `from_msc` y `to_msc`: período semiabierto opcional; deben aparecer juntos.
 - `closed=true`: limita el resultado a ciclos cerrados.
 - `limit`: tamaño de página `1..100`; valor predeterminado `50`.
@@ -127,7 +133,7 @@ position_cycles_unavailable`.
 
 Calcula las métricas `position-cycle-v1` exclusivamente sobre ciclos cerrados y
 elegibles. Requiere `from_msc` y `to_msc`; admite `magic_number` como filtro del EA
-propietario o `magic_numbers` como lista CSV de 1 a 5 Magic explícitos. Los
+propietario o `magic_numbers` como lista CSV de hasta 12 Magic explícitos. Los
 valores deben ser enteros signed 64-bit canónicos, únicos; `magic_number` y
 `magic_numbers` no se pueden combinar. No admite paginación explícita y rechaza
 períodos que superen el límite seguro de 500 operaciones inspeccionadas. Si se
@@ -160,6 +166,12 @@ la cuenta. Se usa para salud local, no para descubrir el resto de la API.
 - `GET /login`: formulario o redirección al dashboard si ya hay sesión.
 - `POST /login`: valida el token humano y crea una cookie local de sesión.
 - `POST /logout`: invalida la sesión; el cuerpo debe estar vacío.
+
+### `GET /api/cycle-magics`
+
+Descubre hasta 100 Magic Numbers con ciclos persistidos mediante una consulta
+separada y acotada. No recibe parámetros y evita cargar ciclos completos para
+armar el selector. Requiere sesión del dashboard.
 
 ## Receptor de telemetría v2
 
@@ -213,6 +225,8 @@ completo. Es una proyección durable; no es una colección mantenida en memoria.
 Parámetros opcionales:
 
 - `owner_magic`: Magic Number propietario atribuido al ciclo.
+- `owner_magics`: lista CSV de hasta 12 Magic Numbers, incompatible con
+  `owner_magic`; se filtra antes de paginar.
 - `limit`: tamaño de página; predeterminado `50`.
 - `cursor`: cursor opaco devuelto como `next_cursor`.
 
@@ -243,6 +257,12 @@ conservarse para auditoría y quedar excluido de las métricas autónomas.
 
 Respuestas principales: `200`, `400 invalid_position_cycles_query`, `401
 unauthorized`, `503 storage_unavailable`.
+
+### `GET /v2/position-cycle-magics`
+
+Devuelve `{"magics": [...]}` con hasta 100 Magic Numbers distintos existentes
+en la proyección durable. No admite parámetros y requiere la credencial de
+lectura v2.
 
 ### `GET /health`
 

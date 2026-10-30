@@ -16,6 +16,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.api_docs import serve_api_docs
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryValidationError
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.sqlite_store_v2 import (
@@ -110,6 +111,8 @@ def create_v2_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
+            if serve_api_docs(self, self.path, "v2"):
+                return
             try:
                 target = urlsplit(self.path)
             except ValueError:

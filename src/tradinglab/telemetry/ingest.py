@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlsplit
 
+from tradinglab.telemetry.api_docs import serve_api_docs
 from tradinglab.telemetry.contract import (
     IDENTIFIER,
     MAX_BODY_BYTES,
@@ -262,6 +263,8 @@ def create_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
+            if serve_api_docs(self, self.path, "v1"):
+                return
             try:
                 request_target = urlsplit(self.path)
             except ValueError:

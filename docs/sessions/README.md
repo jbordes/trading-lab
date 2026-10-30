@@ -10,6 +10,20 @@ El formato `YYYY-MM-DD-<tema>.md` queda reservado para casos excepcionales en lo
 
 Las bitácoras diarias son canónicas en `main` y no deben viajar dentro de ramas de cambio. Una feature solo se menciona como iniciada, continuada o terminada cuando resulte relevante para la jornada.
 
+### Excepción temporal: plataforma de datos remota
+
+Durante la construcción definida en
+[`remote-data-platform-delivery.md`](../development/remote-data-platform-delivery.md),
+la rama `feature/remote-data-platform` conserva la bitácora canónica del programa
+y reemplaza temporalmente a `main` como destino de publicación. Las ramas cortas
+no incluyen entradas de sesión y todos los demás cambios llegan mediante pull
+request. Solo la entrada correspondiente al día actual en `Europe/Madrid` puede
+publicarse directamente en la rama de integración, en un commit exclusivo.
+
+La excepción termina antes del pull request final hacia `main`. En ese momento se
+retira esta sección operativa, se comprueba que no existan bitácoras duplicadas o
+reescritas y vuelve a regir únicamente el flujo normal descrito debajo.
+
 ## Inmutabilidad
 
 Solo se pueden crear o actualizar entradas cuya fecha inicial coincida con el día actual en `Europe/Madrid`. Al cambiar el día, todas las entradas anteriores quedan inmutables. Una corrección posterior se registra en la bitácora del día corriente y referencia la entrada antigua; nunca se reescribe el pasado.

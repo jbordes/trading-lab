@@ -17,6 +17,20 @@
 - Solo en `main` se pueden crear o actualizar directamente bitácoras cuya fecha sea hoy en `Europe/Madrid`, sin mezclar ninguna otra ruta. Las entradas de días anteriores son inmutables.
 - Registrar decisiones durables en `docs/adr/`; no reescribir ADR aceptados para cambiar su decisión.
 
+### Programa temporal `remote-data-platform`
+
+- Mientras esté activo el programa descrito en
+  `docs/development/remote-data-platform-delivery.md`,
+  `feature/remote-data-platform` reemplaza temporalmente a `main` como rama base
+  estable para este alcance.
+- Las ramas cortas del programa nacen de esa base y vuelven a ella mediante pull
+  request, CI y merge humano. No se integran directamente en `main`.
+- La bitácora diaria del programa es canónica en esa rama de integración. Es la
+  única ruta que puede recibir commits directos, siempre limitados a la entrada
+  fechada hoy en `Europe/Madrid`; las ramas cortas continúan sin incluir bitácoras.
+- `main` permanece intacto durante el programa. Antes del PR final se retira esta
+  excepción, se verifica el historial acumulado y se restaura el flujo normal.
+
 ## Mapa mínimo
 
 - `docs/architecture/`: estado y dirección vigente del sistema.

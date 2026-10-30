@@ -243,6 +243,10 @@ simplemente su dirección de escucha. El navegador accede al backend, nunca a la
 
 ### Análisis posterior a los cinco pasos: API central de ingesta
 
+Este análisis se activó como programa de implementación el 2026-10-30. Su alcance,
+secuencia de entregas y flujo Git temporal se mantienen en
+[`remote-data-platform-delivery.md`](remote-data-platform-delivery.md).
+
 Una vez completados los cinco pasos de este plan, analizar la extracción del
 receptor y la base fuera de la VPS de MT5. Los collectors `Telemetry` y
 `TradingLabActivity` ya publican contratos HTTP y no escriben SQLite directamente;

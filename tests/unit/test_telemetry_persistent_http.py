@@ -25,6 +25,18 @@ SOURCE = "demo-terminal-01"
 
 
 class PersistentHttpTest(unittest.TestCase):
+    def test_developer_docs_are_available_without_receiver_token(self) -> None:
+        with urllib.request.urlopen(self.base + "/docs", timeout=3) as response:
+            page = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("/v1/telemetry", page)
+            self.assertNotIn(TOKEN, page)
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        status, catalog = self.request("/docs.json", token="invalid")
+        self.assertEqual(status, 200)
+        self.assertTrue(any(row["path"] == "/v1/snapshot" for row in catalog["routes"]))
+        self.assertEqual(self.request("/v1/snapshot?source_id=demo", token="invalid")[0], 401)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

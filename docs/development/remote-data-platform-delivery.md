@@ -57,10 +57,11 @@ ninguna feature. Durante este programa:
 - las entradas de días anteriores siguen siendo inmutables;
 - `main` no recibe bitácoras hasta la integración final del programa.
 
-El guard actual solo reconoce la excepción sobre `main`. Su adaptación segura a
-una base configurable será el primer cambio de harness del programa. Hasta que
-ese cambio sea integrado, no se publicarán nuevos commits directos de bitácora
-sin una comprobación manual equivalente y un diff limitado a la fecha actual.
+La rama estable se declara en `tool.tradinglab.workflow.stable-branch` dentro de
+`pyproject.toml`. El guard, el cálculo local del diff y el resumen de cambios usan
+esa misma fuente. GitHub continúa tomando la base real de cada pull request. Al
+cerrar el programa se elimina la configuración temporal y el valor vuelve a
+`main` por defecto.
 
 ## Entregas previstas
 

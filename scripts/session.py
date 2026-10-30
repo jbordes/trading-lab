@@ -7,6 +7,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -32,6 +33,7 @@ REQUIRED_DAILY_SECTIONS = (
     "Referencias",
 )
 PLACEHOLDER = re.compile(r"\[(?:completar|actividad|HH:MM|referencia)[^\]]*\]", re.IGNORECASE)
+DEFAULT_STABLE_BRANCH = "main"
 
 
 def madrid_now() -> datetime:
@@ -190,17 +192,43 @@ def git_output(root: Path, *args: str) -> str:
     return result.stdout
 
 
-def guard_direct_main_publish(root: Path, current_date: date | None = None) -> list[str]:
+def configured_stable_branch(root: Path) -> str:
+    config_path = root / "pyproject.toml"
+    if not config_path.is_file():
+        return DEFAULT_STABLE_BRANCH
+    with config_path.open("rb") as stream:
+        config = tomllib.load(stream)
+    branch = (
+        config.get("tool", {})
+        .get("tradinglab", {})
+        .get("workflow", {})
+        .get("stable-branch", DEFAULT_STABLE_BRANCH)
+    )
+    if (
+        not isinstance(branch, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch)
+        or ".." in branch
+        or "//" in branch
+        or branch.endswith("/")
+    ):
+        raise ValueError("tool.tradinglab.workflow.stable-branch no es una rama válida")
+    return branch
+
+
+def guard_direct_session_publish(root: Path, current_date: date | None = None) -> list[str]:
     today = current_date or madrid_now().date()
     errors: list[str] = []
     try:
+        stable_branch = configured_stable_branch(root)
         branch = git_output(root, "branch", "--show-current").strip()
         status = git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
         changed = {Path(item[3:]) for item in status.split("\0") if item}
-    except RuntimeError as error:
+    except (RuntimeError, OSError, tomllib.TOMLDecodeError, ValueError) as error:
         return [str(error)]
-    if branch != "main":
-        errors.append("La publicación directa de la bitácora solo puede ejecutarse desde main")
+    if branch != stable_branch:
+        errors.append(
+            f"La publicación directa de la bitácora solo puede ejecutarse desde {stable_branch}"
+        )
     if not changed:
         errors.append("No hay cambios de bitácora para publicar")
     authorized: list[Path] = []
@@ -225,6 +253,11 @@ def guard_direct_main_publish(root: Path, current_date: date | None = None) -> l
     return errors
 
 
+def guard_direct_main_publish(root: Path, current_date: date | None = None) -> list[str]:
+    """Compatibility wrapper for callers predating configurable stable branches."""
+    return guard_direct_session_publish(root, current_date)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -237,7 +270,9 @@ def parse_args() -> argparse.Namespace:
     check_parser = subparsers.add_parser("check", help="validar bitácoras")
     check_parser.add_argument("paths", nargs="*", type=Path)
     check_parser.add_argument("--closed", action="store_true")
-    subparsers.add_parser("guard-publish", help="verificar la excepción de push directo a main")
+    subparsers.add_parser(
+        "guard-publish", help="verificar la excepción de push directo a la rama estable"
+    )
     return parser.parse_args()
 
 
@@ -254,7 +289,7 @@ def main() -> int:
         print(f"[OK] Bitácora {action}: {target.relative_to(root).as_posix()}")
         return 0
     if args.command == "guard-publish":
-        errors = guard_direct_main_publish(root)
+        errors = guard_direct_session_publish(root)
     else:
         paths = [path if path.is_absolute() else root / path for path in args.paths] or None
         errors = validate_sessions(root, require_closed=args.closed, paths=paths)

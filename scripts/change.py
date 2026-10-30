@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from session import configured_stable_branch
+
 
 def git(root: Path, *args: str) -> str:
     result = subprocess.run(
@@ -78,7 +80,8 @@ def recommend(paths: list[str]) -> dict[str, object]:
 def inspect(root: Path, base: str | None = None) -> dict[str, object]:
     branch = git(root, "branch", "--show-current").strip()
     if base is None:
-        base = "HEAD" if branch in {"main", "master", ""} else "origin/main"
+        stable_branch = configured_stable_branch(root)
+        base = "HEAD" if branch in {stable_branch, ""} else f"origin/{stable_branch}"
         reference = git(root, "merge-base", "HEAD", base).strip()
     else:
         reference = git(

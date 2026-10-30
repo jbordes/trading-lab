@@ -20,6 +20,9 @@ dev = [
 [tool.uv]
 package = false
 
+[tool.tradinglab.workflow]
+stable-branch = "feature/remote-data-platform"
+
 [tool.ruff]
 target-version = "py314"
 line-length = 100

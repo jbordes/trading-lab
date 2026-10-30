@@ -13,7 +13,12 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
-from session import madrid_now, session_date_from_name, validate_sessions
+from session import (
+    configured_stable_branch,
+    madrid_now,
+    session_date_from_name,
+    validate_sessions,
+)
 
 HARNESS_VERSION = "0.2"
 
@@ -300,12 +305,17 @@ def changed_files(root: Path) -> tuple[set[Path], list[str]]:
         if pull_request_base:
             base_ref = f"origin/{pull_request_base}"
         else:
+            try:
+                stable_branch = configured_stable_branch(root)
+            except (OSError, tomllib.TOMLDecodeError, ValueError) as error:
+                return set(), [str(error)]
             branch_result = run_git(root, "branch", "--show-current")
             branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
-            if branch not in {"", "main", "master"}:
-                merge_base = run_git(root, "merge-base", "HEAD", "origin/main")
+            if branch not in {"", stable_branch}:
+                stable_ref = f"origin/{stable_branch}"
+                merge_base = run_git(root, "merge-base", "HEAD", stable_ref)
                 if merge_base.returncode != 0:
-                    return set(), ["No se pudo calcular el ancestro común con origin/main"]
+                    return set(), [f"No se pudo calcular el ancestro común con {stable_ref}"]
                 base_ref = merge_base.stdout.decode("utf-8", errors="replace").strip()
     if not base_ref:
         return set(), []
@@ -383,7 +393,11 @@ def check_session_change_policy(root: Path, current_date: date | None = None) ->
     branch_result = run_git(root, "branch", "--show-current")
     branch = branch_result.stdout.decode("utf-8", errors="replace").strip()
     is_pull_request = bool(os.environ.get("GITHUB_BASE_REF"))
-    if is_pull_request or branch not in {"main", "master"}:
+    try:
+        stable_branch = configured_stable_branch(root)
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as error:
+        return [str(error)]
+    if is_pull_request or branch != stable_branch:
         names = ", ".join(sorted(path.as_posix() for path in dated_sessions))
         return [f"Las ramas de cambio no pueden modificar bitácoras diarias: {names}"]
 
@@ -393,8 +407,8 @@ def check_session_change_policy(root: Path, current_date: date | None = None) ->
     if unauthorized:
         names = ", ".join(sorted(path.as_posix() for path in unauthorized))
         errors.append(
-            "Un cambio directo de bitácora en main solo puede contener archivos fechados hoy: "
-            + names
+            f"Un cambio directo de bitácora en {stable_branch} solo puede contener archivos "
+            "fechados hoy: " + names
         )
     return errors
 

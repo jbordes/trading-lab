@@ -128,6 +128,35 @@ class SessionLogTest(unittest.TestCase):
             errors = session.guard_direct_main_publish(root, date(2026, 10, 12))
             self.assertTrue(any("solo puede ejecutarse desde main" in error for error in errors))
 
+    def test_guard_uses_configured_stable_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "feature/remote-data-platform")
+            (root / "docs" / "sessions").mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                '[tool.tradinglab.workflow]\nstable-branch = "feature/remote-data-platform"\n',
+                encoding="utf-8",
+            )
+            self.run_git(root, "add", "pyproject.toml")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
+            moment = datetime(2026, 10, 30, 9, 30, tzinfo=ZoneInfo("Europe/Madrid"))
+            session.create_today(root, "Registrar programa", moment=moment)
+
+            self.assertEqual(session.guard_direct_session_publish(root, date(2026, 10, 30)), [])
+
+            self.run_git(root, "checkout", "-b", "feature/program-step")
+            errors = session.guard_direct_session_publish(root, date(2026, 10, 30))
+            self.assertTrue(any("feature/remote-data-platform" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

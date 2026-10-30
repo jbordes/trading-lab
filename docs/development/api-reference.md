@@ -4,9 +4,16 @@ Esta es la puerta de entrada única para las interfaces HTTP implementadas por
 TradingLab. Describe el contrato operativo vigente; los documentos enlazados
 amplían el formato de telemetría y los procedimientos de arranque.
 
-TradingLab todavía no publica Swagger, OpenAPI ni una ruta `/docs`. Los
+Los receptores v1 y v2 publican `/docs` (guía navegable con ejemplos curl) y
+`/docs.json` (catálogo JSON, no OpenAPI). Son rutas estáticas sin autenticación,
+sin acceso a cuentas ni tokens, y funcionan sin servicios externos. Los
 servidores están ligados a `127.0.0.1` y las APIs son internas al piloto. No se
 deben exponer directamente a Internet.
+
+En el piloto habitual: `http://127.0.0.1:8776/docs` para v1 y
+`http://127.0.0.1:8777/docs` para v2. El dashboard conserva sus endpoints propios.
+La evolución remota se define en el
+[contrato central](../architecture/central-ingestion-api-contract.md).
 
 ## Mapa rápido
 

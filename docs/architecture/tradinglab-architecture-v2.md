@@ -2,6 +2,10 @@
 
 **Versión:** 2.4
 
+Programa remoto: el [contrato de API central](central-ingestion-api-contract.md)
+formaliza transporte, identidad y confirmaciones. Los receptores locales ofrecen
+`/docs` y `/docs.json`; relay durable y despliegue en la Mac permanecen pendientes.
+
 **Estado:** Propuesta para validación de socios
 
 **Fecha:** 14 de octubre de 2026

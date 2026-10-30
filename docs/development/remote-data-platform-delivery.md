@@ -65,6 +65,10 @@ cerrar el programa se elimina la configuración temporal y el valor vuelve a
 
 ## Entregas previstas
 
+Paso 1 preparado: [contrato central](../architecture/central-ingestion-api-contract.md)
+y rutas `/docs` y `/docs.json` en ambos receptores. Pendiente revisión y merge.
+El despliegue remoto permanece en los pasos siguientes.
+
 1. **Contrato central y seguridad.** Delimitar ingesta v1/v2, ACK durable,
    autenticación por productor, límites y lecturas del dashboard. No exponer
    operaciones genéricas de baja o modificación a los collectors.

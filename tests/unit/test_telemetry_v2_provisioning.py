@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -50,6 +52,30 @@ class V2ProvisioningTest(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.plan.apply(clock=self.now)
         self.assertEqual(database.read_bytes(), before)
+
+    def test_external_storage_creates_empty_schema_five_without_checkout_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            from dataclasses import replace
+
+            plan = replace(self.plan, storage_root=Path(directory).resolve())
+            self.assertEqual(plan.database.parent, Path(directory).resolve())
+            self.assertFalse(plan.database.exists())
+            database = plan.apply(clock=self.now)
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
+                self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+                self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            with open_v2_registry(database, read_only=True) as registry:
+                self.assertEqual(registry.account_evidence("account-demo").messages, ())
+            self.assertFalse((self.root / "_storage").exists())
+
+    def test_external_storage_rejects_relative_or_missing_directory(self) -> None:
+        from dataclasses import replace
+
+        for directory in (Path("relative"), self.root / "missing"):
+            with self.subTest(directory=directory), self.assertRaises((ValueError, OSError)):
+                replace(self.plan, storage_root=directory).apply(clock=self.now)
+        self.assertFalse((self.root / "missing").exists())
 
     def test_create_race_never_deletes_file_not_created_by_plan(self) -> None:
         def concurrent_create(path: Path) -> None:

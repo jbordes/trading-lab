@@ -23,6 +23,7 @@ class V2ProvisionPlan:
     identity: ProducerIdentity
     live_source_id: str
     activity_source_id: str
+    storage_root: Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not DATABASE_NAME.fullmatch(self.filename):
@@ -48,6 +49,13 @@ class V2ProvisionPlan:
 
     @property
     def database(self) -> Path:
+        if self.storage_root is not None:
+            if not self.storage_root.is_absolute():
+                raise ValueError("storage_root debe ser una ruta absoluta")
+            storage = self.storage_root.resolve(strict=True)
+            if not storage.is_dir():
+                raise ValueError("storage_root debe ser un directorio existente")
+            return storage / self.filename
         root = self.root.resolve()
         storage = root / "_storage"
         if not storage.resolve().is_relative_to(root):

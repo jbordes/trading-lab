@@ -17,6 +17,11 @@ La evolución remota se define en el
 
 ## Mapa rápido
 
+La [API central optativa con FastAPI](central-api-operation.md) publica ingesta y
+lecturas v1/v2 en el puerto 8781, OpenAPI real en `/openapi.json`, Swagger UI en
+`/docs` y ReDoc en `/redoc`. No sustituye automáticamente a los servicios del piloto
+listados debajo. Sus modelos y códigos de validación se describen en la guía central.
+
 | Servicio | Puerto habitual | Interfaz | Consumidor | Autenticación |
 | --- | ---: | --- | --- | --- |
 | Dashboard | `8775` en el piloto v2 | `/api/*` | navegador autenticado | cookie de sesión |

@@ -65,6 +65,13 @@ cerrar el programa se elimina la configuración temporal y el valor vuelve a
 
 ## Entregas previstas
 
+Antes del piloto en la Mac se acordó incorporar
+[FastAPI/OpenAPI y mejoras concretas de diseño](fastapi-central-api-plan.md) en
+`feature/fastapi-central-api`, desprendida de la rama del relay. El trabajo conserva
+las garantías de integridad y permite revisar explícitamente las decisiones de
+transporte. La implementación está preparada; quedan validación e integración y
+el piloto manual descrito en [operación central](central-api-operation.md).
+
 Paso 1 preparado: [contrato central](../architecture/central-ingestion-api-contract.md)
 y rutas `/docs` y `/docs.json` en ambos receptores. Pendiente revisión y merge.
 El despliegue remoto permanece en los pasos siguientes.
@@ -109,6 +116,10 @@ que deba conservarse.
   humana y un camino de reversión.
 
 ## Pendientes preservados fuera del alcance inmediato
+
+- [revisión completa de diseño y buenas prácticas Python](python-design-review-plan.md)
+  en todo el proyecto (SOLID, DRY, YAGNI, encapsulamiento y patrones); no se limita
+  a la revisión parcial de API y relay;
 
 - activación definitiva y observación de los jobs automáticos en la VPS;
 - comparación amplia de la base y la API contra reportes MT5;

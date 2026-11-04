@@ -8,6 +8,11 @@ formaliza transporte, identidad y confirmaciones. Los receptores locales ofrecen
 está implementado para pruebas locales; la activación y el despliegue en la Mac
 permanecen pendientes.
 
+La [API central FastAPI](../development/central-api-operation.md) está preparada
+como servicio optativo con OpenAPI y modelos explícitos, según
+[ADR-0018](../adr/0018-fastapi-central-api.md). El piloto operativo no cambia
+automáticamente de receptores.
+
 **Estado:** Propuesta para validación de socios
 
 **Fecha:** 14 de octubre de 2026

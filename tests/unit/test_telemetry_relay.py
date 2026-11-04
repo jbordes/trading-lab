@@ -30,6 +30,7 @@ from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryRec
 from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_config import load_relay_producers
+from tradinglab.telemetry.relay_delivery import HttpRelayTransport
 from tradinglab.telemetry.relay_http import create_relay_server
 from tradinglab.telemetry.relay_queue import (
     RelayConflict,
@@ -73,6 +74,7 @@ class RelayTest(unittest.TestCase):
             CENTRAL,
         )
         self.ingress = RelayIngress(self.queue, (self.producer,))
+        self.transport = HttpRelayTransport()
 
     def enqueue(self, sequence: int = 1) -> tuple[bool, int, bool]:
         return self.ingress.accept("v2", message(sequence), f"Bearer {LOCAL}", now=10)
@@ -124,8 +126,8 @@ class RelayTest(unittest.TestCase):
 
     def test_network_outage_retries_same_bytes_after_restart(self) -> None:
         self.enqueue()
-        forwarder = RelayForwarder(self.ingress)
-        with patch.object(forwarder, "_send", side_effect=OSError("offline")):
+        forwarder = RelayForwarder(self.queue, self.ingress.producers, transport=self.transport)
+        with patch.object(self.transport, "send", side_effect=OSError("offline")):
             forwarder.run_once(now=10)
         self.queue.close()
         self.queue = RelayQueue(self.path)
@@ -145,15 +147,15 @@ class RelayTest(unittest.TestCase):
         producer = replace(self.producer, target=url + "/v2/telemetry")
         ingress = RelayIngress(queue, (producer,))
         ingress.accept("v2", message(), f"Bearer {LOCAL}", now=10)
-        forwarder = RelayForwarder(ingress)
-        original = forwarder._send
+        forwarder = RelayForwarder(queue, ingress.producers, transport=self.transport)
+        original = self.transport.send
 
         def lose_ack(*args, **kwargs):
             status, _, _ = original(*args, **kwargs)
             self.assertEqual(status, 202)
             raise OSError("ACK lost")
 
-        with patch.object(forwarder, "_send", side_effect=lose_ack):
+        with patch.object(self.transport, "send", side_effect=lose_ack):
             forwarder.run_once(now=10)
         self.assertEqual(queue.status(now=10)["states"], {"pending": 1})
         forwarder.run_once(now=12)
@@ -164,8 +166,8 @@ class RelayTest(unittest.TestCase):
     def test_rejected_source_blocks_following_messages(self) -> None:
         self.enqueue()
         self.enqueue(2)
-        forwarder = RelayForwarder(self.ingress)
-        with patch.object(forwarder, "_send", return_value=(409, "application/json", b"{}")):
+        forwarder = RelayForwarder(self.queue, self.ingress.producers, transport=self.transport)
+        with patch.object(self.transport, "send", return_value=(409, "application/json", b"{}")):
             forwarder.run_once(now=10)
         self.assertIsNone(self.queue.next(self.producer.stream, now=100))
         self.assertEqual(self.queue.status(now=100)["states"], {"pending": 1, "rejected": 1})
@@ -176,7 +178,7 @@ class RelayTest(unittest.TestCase):
 
     def test_invalid_ack_never_removes_pending(self) -> None:
         self.enqueue()
-        forwarder = RelayForwarder(self.ingress)
+        forwarder = RelayForwarder(self.queue, self.ingress.producers, transport=self.transport)
 
         for index, (status, document) in enumerate(
             (
@@ -189,7 +191,7 @@ class RelayTest(unittest.TestCase):
             )
         ):
             with patch.object(
-                forwarder, "_send", return_value=(status, "application/json", document)
+                self.transport, "send", return_value=(status, "application/json", document)
             ) as send:
                 forwarder.run_once(now=100 + index * 100)
                 send.assert_called_once()
@@ -207,7 +209,7 @@ class RelayTest(unittest.TestCase):
         ingress = RelayIngress(self.queue, (producer,))
         body = (FIXTURES / "activity-canceled-order.json").read_bytes()
         ingress.accept("v2", body, f"Bearer {LOCAL}", now=10)
-        RelayForwarder(ingress).run_once(now=10)
+        RelayForwarder(self.queue, ingress.producers).run_once(now=10)
         self.assertEqual(self.queue.status(now=10)["states"], {"acked": 1})
         request = urllib.request.Request(
             url + "/v2/activity?entity=order&from_msc=1792656000000&to_msc=1792656060001",
@@ -248,8 +250,8 @@ class RelayTest(unittest.TestCase):
                 )
             )
 
-        forwarder = RelayForwarder(ingress)
-        with patch.object(forwarder, "_send", side_effect=send):
+        forwarder = RelayForwarder(self.queue, ingress.producers, transport=self.transport)
+        with patch.object(self.transport, "send", side_effect=send):
             forwarder.run_once(now=10)
         self.assertEqual(self.queue.status(now=10)["states"], {"acked": 1, "rejected": 1})
 
@@ -333,7 +335,7 @@ class RelayTest(unittest.TestCase):
         ingress = RelayIngress(self.queue, (producer,))
         body = json.dumps(snapshot_message()).encode()
         ingress.accept("v1", body, f"Bearer {LOCAL}", now=10)
-        RelayForwarder(ingress).run_once(now=10)
+        RelayForwarder(self.queue, ingress.producers).run_once(now=10)
         self.assertEqual(self.queue.status(now=10)["states"], {"acked": 1})
         for token, expected in ((CENTRAL, 401), (READ, 200)):
             request = urllib.request.Request(
@@ -383,7 +385,9 @@ class RelayTest(unittest.TestCase):
         ingress = RelayIngress(queue, (producer,))
         ingress.accept("v2", message(), f"Bearer {LOCAL}", now=10)
         try:
-            RelayForwarder(ingress, timeout=0.05).run_once(now=10)
+            RelayForwarder(
+                queue, ingress.producers, transport=HttpRelayTransport(timeout=0.05)
+            ).run_once(now=10)
         finally:
             release.set()
         self.assertEqual(queue.status(now=10)["states"], {"pending": 1})

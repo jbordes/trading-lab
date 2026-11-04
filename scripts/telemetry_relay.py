@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             try:
                 ingress = RelayIngress(queue, producers)
-                forwarder = RelayForwarder(ingress)
+                forwarder = RelayForwarder(queue, producers)
                 server = create_relay_server(ingress, port=args.port)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()

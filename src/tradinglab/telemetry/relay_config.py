@@ -8,7 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
-from tradinglab.telemetry.relay import RelayProducer, _unique_fields
+from tradinglab.telemetry.relay import RelayProducer
+from tradinglab.telemetry.relay_delivery import unique_json_fields
 
 
 def relay_rows(path: Path) -> list[dict[str, str]]:
@@ -17,7 +18,7 @@ def relay_rows(path: Path) -> list[dict[str, str]]:
     if len(body) > 65_536:
         raise ValueError("Configuración relay demasiado grande")
     try:
-        config = json.loads(body, object_pairs_hook=_unique_fields)
+        config = json.loads(body, object_pairs_hook=unique_json_fields)
     except RecursionError as exc:
         raise ValueError("Configuración demasiado anidada") from exc
     if not isinstance(config, list) or not 1 <= len(config) <= 16:

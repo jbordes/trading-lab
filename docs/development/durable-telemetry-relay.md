@@ -133,7 +133,10 @@ para loopback en pruebas.
 - [`relay_queue.py`](../../src/tradinglab/telemetry/relay_queue.py): esquema,
   admisión, deduplicación, cuotas, backoff y transiciones persistentes.
 - [`relay.py`](../../src/tradinglab/telemetry/relay.py): ciclo del worker y
-  coordinación de envíos por stream, autenticación de productores y cliente HTTP central.
+  coordinación de envíos por stream y autenticación de productores.
+- [`relay_delivery.py`](../../src/tradinglab/telemetry/relay_delivery.py): protocolo
+  inyectable, cliente HTTP central y validación pura del ACK. El forwarder recibe
+  cola/productores/transporte directamente, sin depender de `RelayIngress`.
 - [`relay_http.py`](../../src/tradinglab/telemetry/relay_http.py): listener,
   validación de encabezados y respuestas HTTP de admisión y salud local.
 - [`relay_config.py`](../../src/tradinglab/telemetry/relay_config.py): carga y

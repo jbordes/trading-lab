@@ -2,6 +2,11 @@
 
 Estado: preparada para piloto local. No se activó en MT5 ni en la Mac.
 
+El dashboard admite v1/v2 en el mismo puerto mediante `--central-api-port`.
+Ver [arranque conjunto y pruebas](central-api-dashboard.md). El diagnóstico
+`GET /v1/health` requiere lectura v1 y no expone el snapshot; `/health` permanece
+mínimo y público.
+
 ## Qué cambia
 
 El comando `scripts/central_api.py` sirve ingesta y lecturas v1/v2 en un único

@@ -205,6 +205,7 @@ class LoopbackTelemetryClient:
         source_id: str,
         port: int = 8766,
         timeout_seconds: float = 2.0,
+        central_api: bool = False,
     ) -> None:
         if len(token) < 24 or not token.isascii() or any(not 33 <= ord(c) <= 126 for c in token):
             raise ValueError("El token de telemetría no cumple el formato requerido")
@@ -221,7 +222,8 @@ class LoopbackTelemetryClient:
         query = urllib.parse.urlencode({"source_id": source_id})
         self._source_id = source_id
         self._url = f"http://127.0.0.1:{port}/v1/snapshot?{query}"
-        self._health_url = f"http://127.0.0.1:{port}/health"
+        health_path = "/v1/health" if central_api else "/health"
+        self._health_url = f"http://127.0.0.1:{port}{health_path}"
         self._deals_url = f"http://127.0.0.1:{port}/v1/deals"
         self._account_history_url = f"http://127.0.0.1:{port}/v1/account-history"
         self._authorization = f"Bearer {token}"
@@ -322,7 +324,7 @@ class LoopbackTelemetryClient:
     def health(self) -> ReceiverHealth:
         request = urllib.request.Request(
             self._health_url,
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "Authorization": self._authorization},
         )
         try:
             with self._opener.open(request, timeout=self._timeout_seconds) as response:

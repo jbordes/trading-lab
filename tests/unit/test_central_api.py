@@ -1,22 +1,30 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
+import threading
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import uvicorn
 from fastapi.testclient import TestClient
 from test_mt5_telemetry import snapshot_message
 
+from tradinglab.dashboard.telemetry import LoopbackTelemetryClient
+from tradinglab.dashboard.telemetry_v2 import LoopbackV2HistoryClient, V2HistoryProvider
 from tradinglab.telemetry import api_models as models
-from tradinglab.telemetry.admission_v2 import ProducerIdentity
+from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
 from tradinglab.telemetry.central_api import CentralSettings, create_central_app
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, parse_envelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
+from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_delivery import validate_central_ack
+from tradinglab.telemetry.relay_queue import RelayQueue, create_relay_database
 from tradinglab.telemetry.sqlite_store import create_database, open_registry
 from tradinglab.telemetry.sqlite_store_v2 import V2StorageError
 
@@ -24,6 +32,121 @@ FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
 
 
 class CentralApiTest(unittest.TestCase):
+    def test_v1_health_requires_read_permission_and_exposes_no_payload(self) -> None:
+        for key in (self.settings.v1_ingest, self.settings.v2_read):
+            response = self.client.get("/v1/health", headers={"Authorization": f"Bearer {key}"})
+            self.assertEqual(response.status_code, 401)
+        response = self.client.get(
+            "/v1/health", headers={"Authorization": f"Bearer {self.settings.v1_read}"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("latest", response.json())
+        self.assertEqual(response.json()["history_status"], "unavailable")
+        self.assertNotIn("accepted", self.client.get("/health").json())
+
+    def test_relay_to_fastapi_to_dashboard_clients_over_real_http(self) -> None:
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                create_central_app(self.settings),
+                log_level="error",
+                access_log=False,
+                proxy_headers=False,
+                timeout_graceful_shutdown=2,
+            )
+        )
+        thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5
+            while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                thread.join(0.01)
+            self.assertTrue(server.started, "La API de prueba no inició")
+            producers = (
+                RelayProducer(
+                    "v1",
+                    "demo-terminal-01",
+                    "demo",
+                    ProducerRole.LIVE,
+                    ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
+                    f"http://127.0.0.1:{port}/v1/telemetry",
+                    "synthetic-local-live-key-12345",
+                    self.settings.v1_ingest,
+                ),
+                RelayProducer(
+                    "v2",
+                    "synthetic-activity",
+                    "demo",
+                    ProducerRole.ACTIVITY,
+                    ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
+                    f"http://127.0.0.1:{port}/v2/telemetry",
+                    "synthetic-local-activity-key-12345",
+                    self.settings.v2_activity,
+                ),
+            )
+            queue_path = self.root / "outbox.sqlite3"
+            create_relay_database(queue_path)
+            queue = RelayQueue(queue_path)
+            try:
+                ingress = RelayIngress(queue, producers)
+                ingress.accept(
+                    "v2",
+                    (FIXTURES / "activity-canceled-order.json").read_bytes(),
+                    f"Bearer {producers[1].local_token}",
+                    now=1,
+                )
+                for producer, raw in zip(
+                    producers,
+                    (
+                        json.dumps(snapshot_message()).encode(),
+                        (FIXTURES / "activity-position-reconcile.json").read_bytes(),
+                    ),
+                    strict=True,
+                ):
+                    ingress.accept(producer.version, raw, f"Bearer {producer.local_token}", now=1)
+                forwarder = RelayForwarder(queue, producers)
+                forwarder.run_once(now=2)
+                forwarder.run_once(now=3)
+                for producer in producers:
+                    self.assertIsNone(queue.next(producer.stream, now=1000))
+            finally:
+                queue.close()
+            key = self.settings.v1_read
+            live = LoopbackTelemetryClient(
+                token=key,
+                source_id="demo-terminal-01",
+                port=port,
+                central_api=True,
+            )
+            self.assertEqual(live.latest().source_id, "demo-terminal-01")
+            self.assertEqual(live.health().accepted, 1)
+            history = live.account_history(from_msc=1792000000000, to_msc=1793000000000)
+            self.assertTrue(history["points"])
+            activity = LoopbackV2HistoryClient(
+                read_authorization=self.settings.v2_read,
+                activity_source_id="synthetic-activity",
+                port=port,
+            )
+            self.assertTrue(activity.position_cycles(closed_only=True).cycles)
+            self.assertTrue(activity.position_cycle_magics())
+            self.assertTrue(
+                activity.deal_history(from_msc=1792000000000, to_msc=1793000000000).deals
+            )
+            self.assertTrue(
+                activity.order_history(from_msc=1792000000000, to_msc=1793000000000).orders
+            )
+            metrics = V2HistoryProvider(activity).cycle_performance_metrics(
+                from_msc=1792000000000, to_msc=1793000000000
+            )
+            self.assertGreater(metrics.as_dict()["trade_count"], 0)
+        finally:
+            server.should_exit = True
+            thread.join(5)
+        self.assertFalse(thread.is_alive(), "La API de prueba no cerró")
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

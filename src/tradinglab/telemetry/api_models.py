@@ -273,6 +273,18 @@ class Health(WireModel):
     services: dict[str, str]
 
 
+class V1Health(WireModel):
+    status: Literal["ready"]
+    storage: Literal["sqlite"]
+    accepted: Counter
+    duplicates: Counter
+    missing_sequences: Counter
+    retained: Counter
+    retained_sessions: Counter
+    history_status: Literal["complete", "truncated", "error", "unavailable"]
+    history_retained: Counter
+
+
 class HistoricalDeal(DealValues):
     account_id: str
     source_id: str

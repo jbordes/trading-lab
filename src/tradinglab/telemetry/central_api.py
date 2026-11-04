@@ -315,6 +315,18 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         return m.Health(status="ready", storage="sqlite", services={"v1": "ready", "v2": "ready"})
 
     @app.get(
+        "/v1/health",
+        response_model=m.V1Health,
+        dependencies=[Depends(read1)],
+        tags=["Lecturas v1"],
+        responses=errors,
+    )
+    def v1_health(request: Request):
+        if request.query_params:
+            raise HTTPException(400, "invalid_query")
+        return services(request).v1.state(include_latest=False)
+
+    @app.get(
         "/v1/snapshot",
         response_model=m.V1Snapshot,
         response_model_exclude_unset=True,

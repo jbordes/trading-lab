@@ -8,6 +8,10 @@
 
 ## Objetivo
 
+Integración local preparada: [dashboard con FastAPI](central-api-dashboard.md).
+Próximo paso acordado: [credenciales y permisos](credential-management-plan.md),
+todavía pendiente de implementación.
+
 Separar progresivamente la persistencia y la API de la VPS que ejecuta MT5 sin
 arriesgar la captura ni desestabilizar `main`. El piloto alojará API, backend y
 SQLite v5 en una Mac conectada privadamente con la VPS. La base permanecerá en

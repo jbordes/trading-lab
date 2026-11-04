@@ -8,6 +8,7 @@ import getpass
 import os
 import sys
 import warnings
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 
@@ -43,6 +44,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--telemetry",
         action="store_true",
         help="Lee el receptor push local del collector MQL5.",
+    )
+    source.add_argument(
+        "--central-api-port", type=port, help="Lee v1/v2 desde una única API central loopback."
+    )
+    parser.add_argument(
+        "--secrets-file", type=Path, help="Archivo .env.central; solo con --central-api-port."
+    )
+    parser.add_argument(
+        "--dashboard-secrets-file",
+        type=Path,
+        help="Archivo privado con TRADINGLAB_DASHBOARD_TOKEN.",
     )
     parser.add_argument("--interval", type=interval, default=5.0, help="Segundos entre lecturas.")
     parser.add_argument("--port", type=port, default=8765, help="Puerto local.")
@@ -86,6 +98,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="SourceId de actividad provisionado en el receptor v2.",
     )
     args = parser.parse_args(argv)
+    if args.central_api_port is not None:
+        args.telemetry = True
+        args.history_v2 = True
+        args.telemetry_port = args.central_api_port
+        args.history_v2_port = args.central_api_port
+    elif args.secrets_file is not None:
+        parser.error("--secrets-file requiere --central-api-port")
     if args.telemetry and not args.telemetry_source:
         parser.error("--telemetry requiere --telemetry-source")
     if args.demo and args.telemetry_source:
@@ -96,12 +115,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--history-v2 requiere --history-v2-source")
     if args.history_v2_source and not args.history_v2:
         parser.error("--history-v2-source requiere --history-v2")
-    if args.history_v2 and args.history_v2_port in {args.port, args.telemetry_port}:
+    if args.port == args.telemetry_port and args.telemetry:
+        parser.error("dashboard y backend requieren puertos distintos")
+    if args.history_v2 and (
+        args.history_v2_port == args.port
+        or (args.history_v2_port == args.telemetry_port and args.central_api_port is None)
+    ):
         parser.error("dashboard, receptor v1 y receptor v2 requieren puertos distintos")
     return args
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "src"))
     from tradinglab.dashboard.auth import DASHBOARD_TOKEN_ENV, validate_dashboard_token
@@ -118,12 +142,38 @@ def main(argv: list[str] | None = None) -> int:
         V2HistoryProvider,
     )
     from tradinglab.dashboard.web import create_server
+    from tradinglab.telemetry.local_secrets import load_local_secrets
 
     args = parse_args(argv)
+    values = dict(os.environ if environment is None else environment)
+    try:
+        if args.secrets_file is not None:
+            values = load_local_secrets(
+                args.secrets_file,
+                allowed_names=(
+                    "CENTRAL_V1_INGEST",
+                    "CENTRAL_V1_READ",
+                    "CENTRAL_V2_LIVE",
+                    "CENTRAL_V2_ACTIVITY",
+                    "CENTRAL_V2_READ",
+                ),
+                environment=values,
+            )
+        if args.dashboard_secrets_file is not None:
+            values = load_local_secrets(
+                args.dashboard_secrets_file,
+                allowed_names=(DASHBOARD_TOKEN_ENV,),
+                environment=values,
+            )
+    except ValueError, OSError:
+        print(
+            "Error: revise los archivos privados de configuración del dashboard.", file=sys.stderr
+        )
+        return 2
     history_provider = None
     position_cycle_provider = None
     historical_order_provider = None
-    access = os.environ.get(DASHBOARD_TOKEN_ENV, "")
+    access = values.get(DASHBOARD_TOKEN_ENV, "")
     if not access:
         try:
             with warnings.catch_warnings():
@@ -141,10 +191,11 @@ def main(argv: list[str] | None = None) -> int:
         source = DemoSnapshotSource()
     elif args.telemetry:
         assert args.telemetry_source is not None
-        ingest = os.environ.get(TELEMETRY_TOKEN_ENV, "")
+        read1_name = "CENTRAL_V1_READ" if args.central_api_port is not None else TELEMETRY_TOKEN_ENV
+        ingest = values.get(read1_name, "")
         if len(ingest) < 24:
             print(
-                f"Error: configure {TELEMETRY_TOKEN_ENV} con el mismo token del receptor.",
+                f"Error: configure {read1_name} con la credencial de lectura del backend.",
                 file=sys.stderr,
             )
             return 2
@@ -162,13 +213,19 @@ def main(argv: list[str] | None = None) -> int:
                     token=ingest,
                     source_id=args.telemetry_source,
                     port=args.telemetry_port,
+                    central_api=args.central_api_port is not None,
                 ),
                 source_id=args.telemetry_source,
                 max_age=timedelta(seconds=args.telemetry_max_age),
             )
             history_provider = source
             if args.history_v2:
-                read_authorization = os.environ.get(TELEMETRY_READ_TOKEN_ENV, "")
+                read2_name = (
+                    "CENTRAL_V2_READ"
+                    if args.central_api_port is not None
+                    else TELEMETRY_READ_TOKEN_ENV
+                )
+                read_authorization = values.get(read2_name, "")
                 if read_authorization in {access, ingest}:
                     raise ValueError(
                         "La credencial de lectura v2 debe ser distinta de dashboard e ingesta v1"

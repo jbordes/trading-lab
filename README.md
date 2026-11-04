@@ -24,7 +24,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Guía para acordar métricas de riesgo](docs/development/guia-metricas-para-el-socio.md)
 - [Spike de captura MT5](docs/development/mt5-capture-spike.md)
 - [Spike de colector de telemetría MT5](docs/development/mt5-telemetry-collector-spike.md)
-- [Operación supervisada del collector MT5](docs/development/mt5-collector-operations.md)
+- [Manual de instalación y operación de los collectors MT5](docs/development/mt5-collector-operations.md)
 - [Registros de decisiones](docs/adr/)
 - [Bitácora de sesiones](docs/sessions/)
 
@@ -52,40 +52,39 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
-El comando solicita de forma oculta un token local para el dashboard. Luego se
-ingresa ese mismo valor en `/login`; no se escribe en argumentos ni en Git.
+El comando solicita de forma oculta un token humano local para el dashboard. Se
+ingresa ese mismo token en `/login`; no se escribe en argumentos ni en Git. El
+modo de fuente siempre es explícito: se debe indicar `--demo`, `--telemetry` o la
+configuración central con `--central-api-port`, y la aplicación no descubre terminales MT5.
+El modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
+descrito debajo utiliza el puerto `8775`.
 
-El modo de fuente siempre es explícito: ejecutar el comando sin `--demo` o
-`--telemetry` se rechaza y nunca intenta descubrir una terminal MT5.
-
-La fuente MT5 operativa es el collector MQL5. Con el receptor local iniciado, el
-mismo token disponible fuera de Git y un `SourceId` configurado en el EA:
+El flujo MT5 central del piloto utiliza collectors de solo lectura en cuentas
+demo aprobadas:
 
 ```text
-uv run python scripts/telemetry_receiver.py
-uv run python scripts/live_dashboard.py --telemetry --telemetry-source demo-terminal-01 --broker-utc-offset-minutes 120
+EAs -> relay local 8776/8777 -> FastAPI 8781 -> SQLite v1 + v2 (schema 5)
+                                            -> dashboard local 8775
 ```
 
-La aplicación queda disponible únicamente en `http://127.0.0.1:8765`: `/` es la
-página del proyecto, `/login` crea una sesión local y `/dashboard` es el panel
-protegido de la cuenta, con tema claro y oscuro. El token humano debe ser distinto
-del token de telemetría configurado en el EA. La vista `Trading` reúne `En curso`,
-`Operaciones cerradas` y `Registro MT5`: permite analizar ciclos completos junto
-a sus métricas y explorar órdenes, deals y actividad vigente sin mezclarlos en el
-cálculo. Para cuentas
-reales se utilizará una identidad separada con acceso de inversor.
-El offset del ejemplo (`120`, UTC+02:00) es una configuración explícita de la
-fuente: debe ajustarse al reloj vigente del broker y nunca se deduce de la VPS.
-La vista `Actividad` muestra el estado de la fuente (salud del receptor local:
-aceptados, duplicados, secuencias faltantes, retenidos e historial) separado de
-la actualización de la vista. La hora del historial se presenta según el
-timestamp de MT5 y su escala todavía debe validarse con el socio.
+El dashboard consulta FastAPI, no accede a SQLite por red. Los cuatro puertos
+permanecen en loopback. El token humano del dashboard es distinto de los tokens
+de lectura de la API, de ingesta central y de los dos tokens locales de los EAs.
+No incluyas valores de tokens en comandos, documentación ni Git.
 
-El adaptador solo consulta `http://127.0.0.1:8766`, no entrega el token al
-navegador y marca la vista como degradada si pasan 30 segundos sin una muestra
-nueva. El `SourceId` debe coincidir con el configurado en el EA. La API Python se
-reserva para diagnóstico de una sola terminal por proceso, siempre con ruta e
-identidad explícitas; no es la fuente multterminal del dashboard.
+La vista `Trading` permite consultar la actividad en curso. `Performance financiera`
+reúne operaciones cerradas, métricas y comparaciones de EAs; `Performance de ejecución`
+permite explorar el registro de órdenes y deals de MT5.
+La vista `Actividad` presenta el estado de captura e historial separado de la
+actualización visual. Los datos históricos conservan tiempos del broker MT5.
+Consulta el [manual de instalación y operación de los collectors MT5](docs/development/mt5-collector-operations.md)
+para compilar, instalar, configurar fuentes, operar los servicios, revisar logs,
+diagnosticar fallos y volver atrás. Para los comandos coordinados de los servicios,
+consulta [API central, relay y dashboard](docs/development/central-api-dashboard.md).
+
+El conjunto documentado corresponde al piloto demo. No declara desplegada una
+instalación remota ni habilita cuentas reales. La conexión legacy de un dashboard
+a un receptor local no representa la topología central vigente del piloto.
 
 ## Validación del repositorio
 

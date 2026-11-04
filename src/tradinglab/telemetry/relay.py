@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
 from tradinglab.telemetry.admission_v2 import (
+    AuthorizationRejection,
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
@@ -109,7 +110,9 @@ class RelayIngress:
         if producer is None:
             raise V2AuthenticationError("Credencial inválida")
         if producer.version != version:
-            raise V2AuthorizationError("Versión no autorizada")
+            raise V2AuthorizationError(
+                "Versión no autorizada", reason=AuthorizationRejection.VERSION
+            )
         if version == "v2":
             directory = V2ProducerDirectory(
                 (
@@ -126,12 +129,16 @@ class RelayIngress:
         else:
             envelope = parse_envelope(body)
             if envelope.source_id != producer.source_id:
-                raise V2AuthorizationError("Fuente no autorizada")
+                raise V2AuthorizationError(
+                    "Fuente no autorizada", reason=AuthorizationRejection.SOURCE
+                )
             if envelope.kind == "account_snapshot":
                 account = envelope.payload["account"]
                 identity = {key: account[key] for key in ("login_masked", "server", "currency")}
                 if not producer.identity.matches(identity):
-                    raise V2AuthorizationError("Cuenta no autorizada")
+                    raise V2AuthorizationError(
+                        "Cuenta no autorizada", reason=AuthorizationRejection.IDENTITY
+                    )
         return self.queue.enqueue(producer.stream, envelope, now=now)
 
 

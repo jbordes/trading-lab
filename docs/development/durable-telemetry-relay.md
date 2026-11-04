@@ -176,6 +176,20 @@ y `/v2/telemetry`. `GET /health` informa estados, errores acotados, bytes de
 cuerpos pendientes, antigüedad del más antiguo y última confirmación central
 (Unix UTC en segundos, o null). No expone cuerpos ni tokens.
 
+`ingress_rejections` añade contadores en memoria compartidos entre listeners:
+`host_missing`, `host_multiple`, `host_not_allowed`,
+`origin_not_allowed`, `unauthorized`, `version_mismatch`, `source_mismatch`,
+`role_mismatch`, `identity_mismatch` y `producer_not_allowed`. Solo aparecen los
+motivos observados. No guarda valores de cabeceras, tokens, identidades ni
+payloads; los contadores están acotados y se reinician con el proceso. Los códigos
+y cuerpos de error existentes no cambian para diagnosticar.
+
+Compatibilidad MT5: el piloto confirmó peticiones con `Host` sin puerto. Se
+admiten únicamente los literales exactos `127.0.0.1` y `localhost`, con o sin el
+puerto del listener. Se siguen rechazando Host ausente/duplicado, dominios ajenos,
+puertos explícitos incorrectos y cualquier `Origin`; autenticación y permisos de
+cuenta/fuente no cambian. No se capturan cabeceras, tokens ni cuerpos para comprobarlo.
+
 `--port` puede repetirse para abrir hasta ocho listeners loopback en el mismo
 proceso, compartiendo autenticación, outbox y un único worker. Por ejemplo,
 `--port 8776 --port 8777` conserva las URLs actuales de los EAs del piloto. Sin

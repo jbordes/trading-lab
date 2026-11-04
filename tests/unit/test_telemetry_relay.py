@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import subprocess
 import sys
@@ -55,6 +56,116 @@ def message(sequence: int = 1) -> bytes:
 
 
 class RelayTest(unittest.TestCase):
+    def test_header_rejection_diagnostics_are_bounded_and_do_not_echo_headers(self) -> None:
+        server = create_relay_server(self.ingress, port=0)
+        url = self.server(server)
+        for headers in (
+            [],
+            [("Host", "127.0.0.1"), ("Host", "localhost")],
+            [("Host", "private-header-marker.invalid")],
+            [("Host", f"127.0.0.1:{server.server_port}"), ("Origin", "private-origin-marker")],
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            try:
+                connection.putrequest("GET", "/health", skip_host=True)
+                for key, value in headers:
+                    connection.putheader(key, value)
+                connection.endheaders()
+                response = connection.getresponse()
+                self.assertEqual(response.status, 403)
+                self.assertEqual(json.loads(response.read()), {"error": "host_not_allowed"})
+            finally:
+                connection.close()
+        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+            health = json.load(response)
+        self.assertEqual(
+            health["ingress_rejections"],
+            {
+                "host_missing": 1,
+                "host_multiple": 1,
+                "host_not_allowed": 1,
+                "origin_not_allowed": 1,
+            },
+        )
+        self.assertNotIn("private-", json.dumps(health))
+
+    def test_mt5_host_without_port_preserves_authentication_and_origin_guards(self) -> None:
+        server = create_relay_server(self.ingress, port=0)
+        url = self.server(server)
+        for host, key, origin, expected in (
+            ("127.0.0.1", LOCAL, None, 202),
+            ("localhost", LOCAL, None, 200),
+            ("127.0.0.1", "invalid", None, 401),
+            ("localhost", "invalid", None, 401),
+            ("127.0.0.1", LOCAL, "http://127.0.0.1", 403),
+            ("localhost.evil.invalid", LOCAL, None, 403),
+            ("127.0.0.1:1", LOCAL, None, 403),
+        ):
+            headers = {
+                "Host": host,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            }
+            if origin is not None:
+                headers["Origin"] = origin
+            request = urllib.request.Request(url + "/v2/telemetry", data=message(), headers=headers)
+            try:
+                response = urllib.request.urlopen(request, timeout=3)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                self.assertEqual(response.status, expected)
+                response.read()
+        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+            health = json.load(response)
+        self.assertEqual(health["states"], {"pending": 1})
+        self.assertEqual(
+            health["ingress_rejections"],
+            {
+                "unauthorized": 2,
+                "origin_not_allowed": 1,
+                "host_not_allowed": 2,
+            },
+        )
+
+    def test_authorization_diagnostics_distinguish_source_role_identity_and_version(self) -> None:
+        url = self.server(create_relay_server(self.ingress, port=0))
+        source = json.loads(message())
+        source["source_id"] = "another-source"
+        identity = json.loads(message())
+        identity["payload"]["identity"]["server"] = "another-server"
+        role = json.loads((FIXTURES / "activity-canceled-order.json").read_bytes())
+        role["source_id"] = self.producer.source_id
+        for path, body in (
+            ("/v2/telemetry", source),
+            ("/v2/telemetry", identity),
+            ("/v2/telemetry", role),
+            ("/v1/telemetry", snapshot_message()),
+        ):
+            request = urllib.request.Request(
+                url + path,
+                data=json.dumps(body).encode(),
+                headers={"Authorization": f"Bearer {LOCAL}", "Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as captured:
+                urllib.request.urlopen(request, timeout=3)
+            with captured.exception as response:
+                self.assertEqual(response.code, 403)
+                self.assertEqual(json.load(response), {"error": "source_not_allowed"})
+        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+            health = json.load(response)
+        self.assertEqual(
+            health["ingress_rejections"],
+            {
+                "source_mismatch": 1,
+                "identity_mismatch": 1,
+                "role_mismatch": 1,
+                "version_mismatch": 1,
+            },
+        )
+        self.assertEqual(health["states"], {})
+        self.assertNotIn(LOCAL, json.dumps(health))
+
     def test_two_listeners_share_one_queue_authentication_and_deduplication(self) -> None:
         live = replace(
             self.producer,
@@ -93,16 +204,18 @@ class RelayTest(unittest.TestCase):
                     response.read()
             for url in (first, second):
                 with urllib.request.urlopen(url + "/health", timeout=3) as response:
-                    self.assertEqual(json.load(response)["states"], {"pending": 2})
+                    health = json.load(response)
+                    self.assertEqual(health["states"], {"pending": 2})
+                    self.assertEqual(health["ingress_rejections"], {"unauthorized": 1})
         self.assertTrue(all(server.socket.fileno() == -1 for server in servers))
 
     def test_second_bind_failure_closes_first_without_starting_acceptance(self) -> None:
         opened = []
 
-        def bind(ingress, *, port):
+        def bind(ingress, *, port, diagnostics):
             if opened:
                 raise OSError("port busy")
-            server = create_relay_server(ingress, port=port)
+            server = create_relay_server(ingress, port=port, diagnostics=diagnostics)
             opened.append(server)
             return server
 

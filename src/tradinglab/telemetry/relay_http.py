@@ -11,6 +11,7 @@ from contextlib import ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler
 
 from tradinglab.telemetry.admission_v2 import (
+    AuthorizationRejection,
     V2AuthenticationError,
     V2AuthorizationError,
     V2StaleSequenceError,
@@ -19,6 +20,34 @@ from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryValidationErr
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.relay import RelayIngress
 from tradinglab.telemetry.relay_queue import RelayConflict, RelayStorageError
+
+
+class RelayDiagnostics:
+    """Fixed-cardinality process counters; never retain request data."""
+
+    _REASONS = frozenset(
+        {
+            "host_missing",
+            "host_multiple",
+            "host_not_allowed",
+            "origin_not_allowed",
+            "unauthorized",
+        }
+    ) | frozenset(reason.value for reason in AuthorizationRejection)
+
+    def __init__(self) -> None:
+        self._counts: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def reject(self, reason: str) -> None:
+        if reason not in self._REASONS:
+            raise ValueError("Motivo de diagnóstico no admitido")
+        with self._lock:
+            self._counts[reason] = min(self._counts.get(reason, 0) + 1, 2**63 - 1)
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._counts)
 
 
 @contextmanager
@@ -38,9 +67,10 @@ def relay_listeners(
     if len(set(explicit)) != len(explicit):
         raise ValueError("Los puertos del relay no pueden repetirse")
     with ExitStack() as stack:
+        diagnostics = RelayDiagnostics()
         servers = []
         for port in ports:
-            server = create_relay_server(ingress, port=port)
+            server = create_relay_server(ingress, port=port, diagnostics=diagnostics)
             stack.callback(server.server_close)
             servers.append(server)
         for server in servers:
@@ -51,9 +81,12 @@ def relay_listeners(
         yield tuple(servers)
 
 
-def create_relay_server(ingress: RelayIngress, *, port: int) -> BoundedTelemetryServer:
+def create_relay_server(
+    ingress: RelayIngress, *, port: int, diagnostics: RelayDiagnostics | None = None
+) -> BoundedTelemetryServer:
     if type(port) is not int or not 0 <= port <= 65535:
         raise ValueError("Puerto del relay inválido")
+    counters = diagnostics if diagnostics is not None else RelayDiagnostics()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -66,15 +99,26 @@ def create_relay_server(ingress: RelayIngress, *, port: int) -> BoundedTelemetry
 
         def _allowed_host(self) -> bool:
             hosts = self.headers.get_all("Host", [])
-            return (
-                len(hosts) == 1
-                and hosts[0]
-                in {
-                    f"127.0.0.1:{self.server.server_port}",
-                    f"localhost:{self.server.server_port}",
-                }
-                and not self.headers.get_all("Origin")
-            )
+            reason = None
+            if not hosts:
+                reason = "host_missing"
+            elif len(hosts) != 1:
+                reason = "host_multiple"
+            elif hosts[0] not in {
+                # MT5 WebRequest omits the port from Host on this pilot.
+                # Only exact loopback literals are accepted; Origin is still denied.
+                "127.0.0.1",
+                "localhost",
+                f"127.0.0.1:{self.server.server_port}",
+                f"localhost:{self.server.server_port}",
+            }:
+                reason = "host_not_allowed"
+            elif self.headers.get_all("Origin"):
+                reason = "origin_not_allowed"
+            if reason is not None:
+                counters.reject(reason)
+                return False
+            return True
 
         def do_GET(self) -> None:  # noqa: N802
             if not self._allowed_host():
@@ -88,6 +132,7 @@ def create_relay_server(ingress: RelayIngress, *, port: int) -> BoundedTelemetry
                         {
                             "storage": "relay-outbox",
                             "ack_scope": "local",
+                            "ingress_rejections": counters.snapshot(),
                             **ingress.queue.status(now=time.time()),
                         },
                     )
@@ -128,9 +173,11 @@ def create_relay_server(ingress: RelayIngress, *, port: int) -> BoundedTelemetry
                     version, body, self.headers["Authorization"], now=time.time()
                 )
             except V2AuthenticationError:
+                counters.reject("unauthorized")
                 self._json(401, {"error": "unauthorized"})
                 return
-            except V2AuthorizationError:
+            except V2AuthorizationError as exc:
+                counters.reject(exc.reason.value)
                 self._json(403, {"error": "source_not_allowed"})
                 return
             except RelayConflict:

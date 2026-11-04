@@ -4,7 +4,7 @@ Estado: integración local preparada; validación visual manual pendiente. Rama
 `feature/central-api-dashboard`, desde `feature/fastapi-central-api` (PR 59).
 
 ```text
-EAs -> relay 8780 -> FastAPI 8781 -> SQLite v1 + SQLite v2/esquema 5
+EAs -> relay 8776/8777 -> FastAPI 8781 -> SQLite v1 + SQLite v2/esquema 5
                         ^
                         |
                  dashboard 8775 -> navegador
@@ -58,7 +58,7 @@ piloto, no una detección automática; verificarlo si cambia el horario del brok
 Con cola y topología ya preparadas según [la guía del relay](durable-telemetry-relay.md):
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/telemetry_relay.py --queue 'C:\TradingLab 2.0\.tmp-fastapi-central-api\_storage\relay-api-pilot.sqlite3' --config .relay-pilot.json --secrets-file .env.relay --port 8780
+.\.venv\Scripts\python.exe scripts/telemetry_relay.py --queue 'C:\TradingLab 2.0\.tmp-fastapi-central-api\_storage\relay-api-pilot.sqlite3' --config _storage/relay-pilot.json --secrets-file .env.relay --port 8776 --port 8777
 ```
 
 La topología debe apuntar a `http://127.0.0.1:8781/v1/telemetry` y `/v2/telemetry`,
@@ -66,19 +66,22 @@ con las identidades de las bases. El token central v1 coincide con
 `CENTRAL_V1_INGEST` y el de actividad con `CENTRAL_V2_ACTIVITY`. Cambiar targets
 de una outbox operativa requiere un corte planificado.
 
-Para recibir datos nuevos por el relay, configurar manualmente en la terminal de
-pruebas Telemetry hacia `http://127.0.0.1:8780/v1/telemetry` y Activity hacia
-`http://127.0.0.1:8780/v2/telemetry`, conservando sus tokens locales. Verificar
-antes el permiso WebRequest del relay y cómo volver a los receptores anteriores.
-Los comandos no cambian MT5 ni sus EAs. Sin este cambio solo se pueden consultar
-los datos ya guardados; no habrá capturas nuevas por el relay.
+Este comando conserva las URLs del piloto: Telemetry envía a
+`http://127.0.0.1:8776/v1/telemetry` y Activity a
+`http://127.0.0.1:8777/v2/telemetry`, con sus tokens locales actuales. No hay que
+cambiar los EAs ni sus permisos WebRequest si ya utilizan esas URLs. Detener
+primero los receptores anteriores para liberar ambos puertos. El relay abre dos
+listeners en un proceso, con una cola y un worker. Si no puede abrir cualquiera
+de los puertos, falla sin aceptar tráfico por el otro. Ambos listeners admiten
+las rutas v1/v2; los permisos siguen determinados por fuente y credencial.
 
 ## Chequeos manuales
 
 - `http://127.0.0.1:8781/docs`: lecturas autenticadas y autorización por rol.
 - `http://127.0.0.1:8775/dashboard`: login humano, resumen, en curso, operaciones
   cerradas, registro MT5, métricas y gráficos.
-- `http://127.0.0.1:8780/health`: cola y confirmación central.
+- `http://127.0.0.1:8776/health` o `http://127.0.0.1:8777/health`: la misma cola
+  y confirmación central.
 - Con captura activa, detener solo la API: las lecturas se degradan y el relay
   conserva pendientes. Reiniciar API: cola drenada y lecturas recuperadas sin
   duplicar operaciones. Un ACK nunca rejuvenece capturas antiguas.

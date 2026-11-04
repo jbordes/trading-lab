@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
+from collections.abc import Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler
 
 from tradinglab.telemetry.admission_v2 import (
@@ -16,6 +19,36 @@ from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryValidationErr
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.relay import RelayIngress
 from tradinglab.telemetry.relay_queue import RelayConflict, RelayStorageError
+
+
+@contextmanager
+def relay_listeners(
+    ingress: RelayIngress, ports: Sequence[int]
+) -> Iterator[tuple[BoundedTelemetryServer, ...]]:
+    """Bind every socket before accepting; close all owned listeners on exit.
+
+    Zero requests an ephemeral port for isolated tests. Nonzero ports must be
+    unique; the CLI only accepts explicit ports in 1..65535.
+    """
+    if not 1 <= len(ports) <= 8 or any(
+        type(port) is not int or not 0 <= port <= 65535 for port in ports
+    ):
+        raise ValueError("Configure entre uno y ocho puertos válidos")
+    explicit = [port for port in ports if port != 0]
+    if len(set(explicit)) != len(explicit):
+        raise ValueError("Los puertos del relay no pueden repetirse")
+    with ExitStack() as stack:
+        servers = []
+        for port in ports:
+            server = create_relay_server(ingress, port=port)
+            stack.callback(server.server_close)
+            servers.append(server)
+        for server in servers:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            stack.callback(thread.join, timeout=6)
+            stack.callback(server.shutdown)
+        yield tuple(servers)
 
 
 def create_relay_server(ingress: RelayIngress, *, port: int) -> BoundedTelemetryServer:

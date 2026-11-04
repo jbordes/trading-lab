@@ -176,6 +176,16 @@ y `/v2/telemetry`. `GET /health` informa estados, errores acotados, bytes de
 cuerpos pendientes, antigüedad del más antiguo y última confirmación central
 (Unix UTC en segundos, o null). No expone cuerpos ni tokens.
 
+`--port` puede repetirse para abrir hasta ocho listeners loopback en el mismo
+proceso, compartiendo autenticación, outbox y un único worker. Por ejemplo,
+`--port 8776 --port 8777` conserva las URLs actuales de los EAs del piloto. Sin
+`--port` se mantiene 8780. No ejecutar dos procesos sobre la misma outbox.
+Los puertos explícitos deben ser distintos y estar en 1..65535. Se enlazan todos
+antes de empezar a aceptar conexiones; un fallo libera los ya reservados. Al
+salir se cierran todos antes de cerrar SQLite. Cada listener mantiene el límite
+de ocho conexiones, por lo que el máximo agregado crece con los puertos elegidos.
+Ver [arranque conjunto sin modificar EAs](central-api-dashboard.md).
+
 Una sola instancia puede usar la misma outbox gracias al lock del sistema
 operativo. Se mantiene tras fallos y reinicios; no se necesitan conexiones MT5
 desde Python. El archivo lock puede permanecer al cerrar, sin retener el bloqueo.

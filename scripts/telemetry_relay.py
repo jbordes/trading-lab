@@ -14,12 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
+def listener_port(value: str) -> int:
+    result = int(value)
+    if not 1 <= result <= 65535:
+        raise argparse.ArgumentTypeError("El puerto debe estar entre 1 y 65535")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.local_secrets import load_local_secrets
     from tradinglab.telemetry.operational_job import exclusive_job_lock
     from tradinglab.telemetry.relay import RelayForwarder, RelayIngress
     from tradinglab.telemetry.relay_config import load_relay_producers, relay_token_names
-    from tradinglab.telemetry.relay_http import create_relay_server
+    from tradinglab.telemetry.relay_http import relay_listeners
     from tradinglab.telemetry.relay_queue import (
         RelayQueue,
         RelayStorageError,
@@ -41,7 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--secrets-file", type=Path, help="Archivo .env ignorado; variables RELAY_*"
     )
-    parser.add_argument("--port", type=int, default=8780)
+    parser.add_argument(
+        "--port",
+        type=listener_port,
+        action="append",
+        help="Puerto loopback; repetir para varios listeners (por defecto: 8780).",
+    )
     parser.add_argument("--max-mib", type=int, default=64)
     parser.add_argument("--max-records", type=int, default=100_000)
     args = parser.parse_args(argv)
@@ -86,20 +98,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 ingress = RelayIngress(queue, producers)
                 forwarder = RelayForwarder(queue, producers)
-                server = create_relay_server(ingress, port=args.port)
-                thread = threading.Thread(target=server.serve_forever, daemon=True)
-                thread.start()
-                print(f"Relay durable: http://127.0.0.1:{server.server_port}; ACK local")
-                try:
-                    while True:
-                        forwarder.run_once()
-                        threading.Event().wait(0.25)
-                except KeyboardInterrupt:
-                    pass
-                finally:
-                    server.shutdown()
-                    server.server_close()
-                    thread.join(timeout=6)
+                with relay_listeners(ingress, args.port or [8780]) as servers:
+                    for server in servers:
+                        print(f"Relay durable: http://127.0.0.1:{server.server_port}; ACK local")
+                    try:
+                        while True:
+                            forwarder.run_once()
+                            threading.Event().wait(0.25)
+                    except KeyboardInterrupt:
+                        pass
             finally:
                 queue.close()
     except ValueError, OSError, RuntimeError, sqlite3.Error, RelayStorageError:

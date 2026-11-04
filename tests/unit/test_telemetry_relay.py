@@ -31,7 +31,7 @@ from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_config import load_relay_producers
 from tradinglab.telemetry.relay_delivery import HttpRelayTransport
-from tradinglab.telemetry.relay_http import create_relay_server
+from tradinglab.telemetry.relay_http import create_relay_server, relay_listeners
 from tradinglab.telemetry.relay_queue import (
     RelayConflict,
     RelayQueue,
@@ -55,6 +55,74 @@ def message(sequence: int = 1) -> bytes:
 
 
 class RelayTest(unittest.TestCase):
+    def test_two_listeners_share_one_queue_authentication_and_deduplication(self) -> None:
+        live = replace(
+            self.producer,
+            version="v1",
+            source_id="demo-terminal-01",
+            target="http://127.0.0.1:8776/v1/telemetry",
+            local_token=LOCAL + "v1",
+            central_token=CENTRAL + "v1",
+        )
+        ingress = RelayIngress(self.queue, (live, self.producer))
+        with relay_listeners(ingress, (0, 0)) as servers:
+            first, second = (f"http://127.0.0.1:{server.server_port}" for server in servers)
+            for url, path, raw, key, expected in (
+                (
+                    first,
+                    "/v1/telemetry",
+                    json.dumps(snapshot_message()).encode(),
+                    live.local_token,
+                    202,
+                ),
+                (second, "/v2/telemetry", message(), LOCAL, 202),
+                (first, "/v2/telemetry", message(), LOCAL, 200),
+                (second, "/v2/telemetry", message(), "invalid", 401),
+            ):
+                request = urllib.request.Request(
+                    url + path,
+                    data=raw,
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                )
+                try:
+                    response = urllib.request.urlopen(request, timeout=3)
+                except urllib.error.HTTPError as error:
+                    response = error
+                with response:
+                    self.assertEqual(response.status, expected)
+                    response.read()
+            for url in (first, second):
+                with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                    self.assertEqual(json.load(response)["states"], {"pending": 2})
+        self.assertTrue(all(server.socket.fileno() == -1 for server in servers))
+
+    def test_second_bind_failure_closes_first_without_starting_acceptance(self) -> None:
+        opened = []
+
+        def bind(ingress, *, port):
+            if opened:
+                raise OSError("port busy")
+            server = create_relay_server(ingress, port=port)
+            opened.append(server)
+            return server
+
+        with (
+            patch("tradinglab.telemetry.relay_http.create_relay_server", side_effect=bind),
+            patch("tradinglab.telemetry.relay_http.threading.Thread.start") as start,
+        ):
+            with self.assertRaises(OSError), relay_listeners(self.ingress, (0, 0)):
+                self.fail("No debe abrir un relay parcial")
+        start.assert_not_called()
+        self.assertEqual(opened[0].socket.fileno(), -1)
+
+    def test_invalid_and_duplicate_listener_ports_fail_before_binding(self) -> None:
+        for ports in ((), (8776, 8776), (-1,), (65536,), (True,), tuple(range(9))):
+            with self.subTest(ports=ports):
+                with patch("tradinglab.telemetry.relay_http.create_relay_server") as bind:
+                    with self.assertRaises(ValueError), relay_listeners(self.ingress, ports):
+                        self.fail("Puertos inválidos aceptados")
+                    bind.assert_not_called()
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

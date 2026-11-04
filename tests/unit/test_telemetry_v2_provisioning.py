@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,19 +81,85 @@ class V2ProvisioningTest(unittest.TestCase):
         self.assertFalse((self.root / "missing").exists())
 
     def test_create_race_never_deletes_file_not_created_by_plan(self) -> None:
-        def concurrent_create(path: Path) -> None:
-            path.write_bytes(b"external")
+        def concurrent_create(source: Path, destination: Path) -> None:
+            destination.write_bytes(b"external")
             raise FileExistsError("concurrent file")
 
         with (
             patch(
-                "tradinglab.telemetry.provisioning_v2.create_v2_database",
+                "tradinglab.telemetry.provisioning_v2.os.link",
                 side_effect=concurrent_create,
             ),
             self.assertRaises(FileExistsError),
         ):
             self.plan.apply(clock=self.now)
         self.assertEqual(self.plan.database.read_bytes(), b"external")
+        self.assertEqual(list(self.plan.database.parent.iterdir()), [self.plan.database])
+
+    def test_partial_creation_or_registration_or_verification_failure_allows_retry(self) -> None:
+        def broken_schema(path: Path) -> None:
+            path.write_bytes(b"partial")
+            raise OSError("simulated creation failure")
+
+        faults = (
+            ("tradinglab.telemetry.provisioning_v2.create_v2_database", broken_schema),
+            ("tradinglab.telemetry.provisioning_v2.os.link", OSError("publication unavailable")),
+            (
+                "tradinglab.telemetry.sqlite_store_v2.V2TelemetryRegistry.register_source",
+                RuntimeError("simulated registration failure"),
+            ),
+            (
+                "tradinglab.telemetry.sqlite_store_v2.V2TelemetryRegistry.account_evidence",
+                RuntimeError("simulated verification failure"),
+            ),
+        )
+        for target, failure in faults:
+            with self.subTest(target=target):
+                with patch(target, side_effect=failure), self.assertRaises((OSError, RuntimeError)):
+                    self.plan.apply(clock=self.now)
+                self.assertFalse(self.plan.database.exists())
+                self.assertEqual(list(self.plan.database.parent.iterdir()), [])
+        self.plan.apply(clock=self.now)
+
+    def test_concurrent_creators_publish_exactly_one_complete_database(self) -> None:
+        def create() -> str:
+            try:
+                self.plan.apply(clock=self.now)
+                return "created"
+            except FileExistsError:
+                return "exists"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: create(), range(2)))
+        self.assertCountEqual(outcomes, ["created", "exists"])
+        with open_v2_registry(self.plan.database, read_only=True) as registry:
+            self.assertEqual(len(registry.account_evidence("account-demo").sources), 2)
+
+    def test_abrupt_exit_does_not_publish_incomplete_database_or_block_retry(self) -> None:
+        code = """
+import os
+import sys
+from pathlib import Path
+from tradinglab.telemetry.admission_v2 import ProducerIdentity
+from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
+from tradinglab.telemetry.sqlite_store_v2 import V2TelemetryRegistry
+V2TelemetryRegistry.register_source = lambda *a, **kw: os._exit(27)
+V2ProvisionPlan(Path(sys.argv[1]), 'pilot-v2.sqlite3', 'account-demo', 'Demo',
+                ProducerIdentity('****1234', 'DEMO-SERVER', 'USD'),
+                'demo-live-01', 'demo-activity-01').apply()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(self.root)],
+            cwd=Path(__file__).resolve().parents[2] / "src",
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 27, result.stderr)
+        self.assertFalse(self.plan.database.exists())
+        self.plan.apply(clock=self.now)
+        with open_v2_registry(self.plan.database, read_only=True) as registry:
+            self.assertEqual(len(registry.account_evidence("account-demo").sources), 2)
 
     def test_invalid_input_and_clock_create_nothing(self) -> None:
         invalid = (

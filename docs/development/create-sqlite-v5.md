@@ -31,8 +31,17 @@ existe, incluso en vista previa, el comando falla sin modificarlo. No hay `--for
 ## Resultado y verificación
 
 La creación abre y verifica el esquema exacto, integridad y claves foráneas; luego
-comprueba la cuenta y los roles registrados. La biblioteca crea el archivo con
-reserva exclusiva para impedir sobrescrituras ante dos creaciones simultáneas.
+comprueba la cuenta y los roles registrados. La base se prepara en un directorio
+temporal privado dentro del directorio de destino. Solo después de verificarla y
+cerrar SQLite se publica mediante un enlace duro que falla si el destino ya
+existe, incluso ante creaciones simultáneas. El disco local debe admitir enlaces
+duros; si no los admite, falla sin publicar una base incompleta ni reemplazar archivos.
+
+Los fallos normales limpian el temporal. Una terminación abrupta puede dejar un
+directorio `.tradinglab-create-*`, pero no publica el archivo final y permite
+reintentar con el mismo nombre. No se reutilizan ni eliminan automáticamente
+temporales de otros intentos. Cualquier limpieza manual debe realizarse después
+de confirmar que no hay una creación en curso.
 Se crean las tablas e índices actuales sin pasar por migraciones de esquemas viejos.
 
 No se arranca ningún servicio. El receptor se configura después para usar esta

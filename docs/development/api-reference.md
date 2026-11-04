@@ -339,6 +339,12 @@ en el [spike de telemetría MT5](mt5-telemetry-collector-spike.md).
 
 ## Convenciones comunes
 
+El [relay optativo](durable-telemetry-relay.md) expone ambas rutas POST y
+`GET /health` en loopback (puerto predeterminado 8780). Su confirmación es local
+a la outbox y no sustituye un ACK central ni ofrece las lecturas históricas.
+El receptor v1 admite una credencial de lectura separada mediante
+`TRADINGLAB_V1_READ_TOKEN`; sin ella conserva la compatibilidad anterior.
+
 - JSON usa UTF-8 y las respuestas envían `Cache-Control: no-store`, salvo assets
   estáticos del dashboard.
 - Los cursores son opacos para el consumidor: no deben fabricarse ni editarse.

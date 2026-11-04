@@ -73,6 +73,9 @@ Paso 2 preparado: [creación limpia SQLite v5](create-sqlite-v5.md), con vista
 previa, aplicación explícita y directorio local independiente del checkout.
 Pendiente revisión y merge; no se crean ni trasladan bases operativas en este paso.
 
+Paso 3 preparado: [relay y outbox durable](durable-telemetry-relay.md) optativos,
+con pruebas contra receptores locales SQLite. Sin activación en MT5 ni Mac.
+
 1. **Contrato central y seguridad.** Delimitar ingesta v1/v2, ACK durable,
    autenticación por productor, límites y lecturas del dashboard. No exponer
    operaciones genéricas de baja o modificación a los collectors.

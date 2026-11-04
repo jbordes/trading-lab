@@ -22,9 +22,9 @@ live/activity restringen tipos de mensaje; lectura usa credencial independiente.
 El relay tendrá credenciales centrales distintas de las locales de los EAs.
 Las credenciales se envían solo en Authorization, nunca en URL ni ejemplos reales.
 
-La compatibilidad v1 conserva hoy un token compartido para lectura e ingesta.
-Separar esas credenciales es un requisito previo a exponer v1 por el transporte
-central: la documentación actual no afirma que ese aislamiento ya exista.
+V1 permite una credencial de lectura independiente configurada explícitamente;
+mantiene token compartido como compatibilidad cuando no se indica. Antes de
+exponer v1 por el transporte central se debe activar el modo separado.
 
 No se publican DELETE/PATCH de datos ni comandos de trading. Provisión y migración
 siguen siendo CLI administrativas con aprobación humana.
@@ -76,7 +76,11 @@ Se sirve sin JavaScript/CDN, sin guardar credenciales ni ejecutar escrituras.
 
 ## Entregables y cierre de este paso
 
-Este paso formaliza las fronteras y entrega la referencia HTTP navegable. Quedan
-para pasos posteriores creación v5, traslado entre hosts, relay durable,
-aislamiento de credenciales v1, ajustes para backlog, HTTPS, servicio macOS y
-pruebas de cortes. No constituye aprobación de despliegue remoto.
+Este contrato formaliza las fronteras y la referencia HTTP navegable. La creación
+v5, el relay durable y las credenciales separadas v1 están preparados en entregas
+sucesivas. Permanecen pendientes traslado entre hosts, HTTPS, servicio macOS y
+pruebas de cortes entre máquinas. No constituye aprobación de despliegue remoto.
+
+Evolución: el [relay optativo](../development/durable-telemetry-relay.md) implementa
+outbox, reintentos y ACK local/central con tests SQLite. La activación remota y
+las lecturas del dashboard permanecen pendientes.

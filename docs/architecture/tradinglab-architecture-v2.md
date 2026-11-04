@@ -4,7 +4,9 @@
 
 Programa remoto: el [contrato de API central](central-ingestion-api-contract.md)
 formaliza transporte, identidad y confirmaciones. Los receptores locales ofrecen
-`/docs` y `/docs.json`; relay durable y despliegue en la Mac permanecen pendientes.
+`/docs` y `/docs.json`. El [relay durable optativo](../development/durable-telemetry-relay.md)
+está implementado para pruebas locales; la activación y el despliegue en la Mac
+permanecen pendientes.
 
 **Estado:** Propuesta para validación de socios
 

@@ -1,0 +1,26 @@
+[
+  {
+    "version": "v1",
+    "source_id": "demo-terminal-01",
+    "account_id": "account-demo",
+    "role": "live",
+    "login_masked": "****1234",
+    "server": "DEMO-SERVER",
+    "currency": "USD",
+    "target": "http://127.0.0.1:8776/v1/telemetry",
+    "local_token_env": "RELAY_LIVE_LOCAL_TOKEN",
+    "central_token_env": "RELAY_LIVE_CENTRAL_TOKEN"
+  },
+  {
+    "version": "v2",
+    "source_id": "synthetic-activity",
+    "account_id": "account-demo",
+    "role": "activity",
+    "login_masked": "****1234",
+    "server": "DEMO-SERVER",
+    "currency": "USD",
+    "target": "http://127.0.0.1:8777/v2/telemetry",
+    "local_token_env": "RELAY_ACTIVITY_LOCAL_TOKEN",
+    "central_token_env": "RELAY_ACTIVITY_CENTRAL_TOKEN"
+  }
+]

@@ -23,6 +23,124 @@ El relay autentica fuente, cuenta y rol antes de encolar. V1 conserva identidad
 de cuenta en snapshots; sus heartbeats no incluyen esa identidad y se autorizan
 por credencial/fuente. No se autoprovisionan productores.
 
+## Esquema durable y ciclo de vida
+
+La cola usa SQLite `user_version=1`. Las escrituras de admisión y los cambios
+de estado relevantes son transacciones locales; el esquema se comprueba al
+abrir junto con `quick_check` y la coherencia de los contadores.
+
+| Tabla | Campo | Tipo / restricción | Uso |
+| --- | --- | --- | --- |
+| `messages` | `id` | `INTEGER PRIMARY KEY` | Orden local de admisión. |
+| `messages` | `stream` | `TEXT NOT NULL` | Fuente/version, con forma `v1:source` o `v2:source`. |
+| `messages` | `session` | `TEXT NOT NULL` | Sesión del sobre. |
+| `messages` | `sequence` | `TEXT NOT NULL` | Secuencia decimal como texto; el highwater se compara por longitud y valor dentro de stream/sesión. |
+| `messages` | `event_id` | `TEXT NOT NULL` | Identidad de evento para deduplicación. |
+| `messages` | `digest` | `TEXT NOT NULL` | SHA-256 del cuerpo canónico completo. |
+| `messages` | `body` | `BLOB` nullable | Sobre canónico hasta el ACK válido; se pone a `NULL` al confirmar. |
+| `messages` | `state` | `TEXT NOT NULL`, `pending` / `acked` / `rejected` | Estado durable. No existe estado `sent`. |
+| `messages` | `attempts` | `INTEGER NOT NULL DEFAULT 0` | Intentos de envío persistidos antes de la E/S. |
+| `messages` | `first_seen` | `REAL NOT NULL` | Hora Unix UTC de admisión local. No es `captured_at`. |
+| `messages` | `due` | `REAL NOT NULL DEFAULT 0` | Próximo instante Unix UTC elegible para reintento. |
+| `messages` | `last_sent` | `REAL` nullable | Hora Unix UTC en que se persistió el inicio del último intento. |
+| `messages` | `confirmed_at` | `REAL` nullable | Hora de inicio del intento que terminó confirmado; aproximación, no hora de recepción exacta del ACK. |
+| `messages` | `error` | `TEXT` nullable | Error operativo asociado al pendiente o rechazo. |
+| `messages` | restricciones | `UNIQUE(stream,session,sequence)`, `UNIQUE(stream,event_id)` | Impiden reutilizar una identidad dentro del stream. |
+| `messages` | índice `pending_stream` | Parcial sobre `(stream,id)` donde `state != 'acked'` | Permite escoger el mensaje más antiguo aún no confirmado por stream. |
+| `bindings` | `stream` | `TEXT PRIMARY KEY` | Identificador del stream vinculado. |
+| `bindings` | `identity` | `TEXT NOT NULL` | JSON con cuenta, rol, identidad MT5 y target. La relación con `messages.stream` es lógica; no hay FK explícita. |
+| `usage` | `id` | `INTEGER PRIMARY KEY CHECK(id=1)` | La tabla contiene una única fila de contadores. |
+| `usage` | `records` | `INTEGER NOT NULL CHECK(records>=0)` | Registros totales, incluidos los `acked`, que retienen huellas para deduplicar. |
+| `usage` | `pending_bytes` | `INTEGER NOT NULL CHECK(pending_bytes>=0)` | Suma de cuerpos en estado `pending` o `rejected`; baja al liberar el cuerpo tras ACK. |
+
+Todos los tiempos `REAL` son segundos Unix UTC. `captured_at` solo pertenece al
+sobre original; no determina `first_seen`, `last_sent` ni `confirmed_at`. La
+fila inicial de `usage` es `(1,0,0)`. La admisión autentica y valida antes de
+abrir una transacción `BEGIN IMMEDIATE`: reconoce primero duplicados por hash,
+valida después el highwater y los límites, y guarda mensaje y contadores en el
+mismo commit. Solo entonces responde al productor: HTTP 202 para nuevo, HTTP
+200 para duplicado idéntico sin nuevas filas ni cambios de contador. El 200
+local no confirma recepción central. Reutilizar identidad con distinto hash
+da 409; saturación o error de almacenamiento da 503 sin admitir el mensaje.
+Los duplicados reconocibles se resuelven antes de aplicar cuotas.
+
+El worker considera el `id` menor no `acked` de cada stream. Un `rejected` o
+un pendiente cuyo `due` aún no llegó bloquea ese stream, mientras los demás
+streams pueden avanzar. El intento incrementa `attempts` y persiste `last_sent`
+y `due` antes de la llamada de red. El backoff es
+`min(300, 2**min(attempts_prev, 8))` segundos, es decir, de 1 a 256 segundos
+con los valores actuales. Mientras se envía, el estado continúa `pending`.
+
+Un ACK central válido es HTTP 200 (duplicado) o 202 (aceptado), con JSON
+`application/json` de hasta 4096 bytes y los campos esperados validados:
+`status`, `sequence_gap` entero no negativo y, para v2, `out_of_order` booleano.
+El commit local posterior cambia a `acked`, borra el cuerpo y el error, registra
+`confirmed_at` y resta el tamaño del cuerpo a `pending_bytes`; `records` no
+cambia. Fallos de red, timeout, 5xx, 408 o 429 dejan el mensaje `pending` con
+error y reintento programado. Redirecciones y otros 4xx lo dejan `rejected`,
+conservando cuerpo y bloqueando ese stream. `--retry-stream` primero muestra
+una vista previa; con `--apply` cambia los rechazados del stream a `pending`,
+pone `due=0` y limpia `error`, sin modificar identidad, cuerpo ni intentos.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: admisión local commit
+    pending --> pending: intento persistido / fallo recuperable
+    pending --> pending: timeout o ACK central inválido
+    pending --> acked: ACK central válido y commit local
+    pending --> rejected: 3xx o 4xx salvo 408 y 429
+    rejected --> pending: retry-stream --apply
+    acked --> acked: duplicado del EA sin nueva fila
+    note right of acked
+        body = NULL
+        Hash e identidad permanecen
+    end note
+```
+
+La confirmación requiere dos commits separados: primero el receptor central
+confirma su escritura; después el relay registra esa confirmación en su outbox y libera el
+cuerpo. Por tanto, una caída entre ambos puede reenviar el mismo mensaje y
+recibir 200 por duplicado. Una caída después de persistir el intento pero antes
+del envío espera hasta `due`; una caída antes del commit central permite
+reintentar; y una caída después del commit de admisión local pero antes de la
+respuesta hace que el productor pueda repetir y obtener la deduplicación local.
+El transporte es al menos una vez, con deduplicación de efecto; no promete
+exactly-once ni tolerancia a pérdida del disco sin respaldo.
+
+```mermaid
+sequenceDiagram
+    participant P as Productor
+    participant R as Relay / SQLite local
+    participant C as Receptor central
+    P->>R: POST sobre
+    R->>R: validar, insertar y actualizar usage (commit A)
+    R-->>P: 202 admitido local
+    R->>R: persistir intento y due (commit B)
+    R->>C: reenviar cuerpo canónico
+    C->>C: guardar o reconocer duplicado (commit central)
+    C-->>R: 202 accepted o 200 duplicate
+    R->>R: acked, liberar body, ajustar pending_bytes (commit C)
+```
+
+La creación usa una base temporal verificada y un hard link que falla si el
+destino ya existe. Un `RLock` serializa el acceso dentro del proceso y un lock
+del sistema operativo limita el uso de la outbox a una instancia CLI. HTTP no
+usa proxy ni sigue redirects; HTTPS valida certificados y HTTP solo se admite
+para loopback en pruebas.
+
+## Archivos de implementación relacionados
+
+- [`relay_queue.py`](../../src/tradinglab/telemetry/relay_queue.py): esquema,
+  admisión, deduplicación, cuotas, backoff y transiciones persistentes.
+- [`relay.py`](../../src/tradinglab/telemetry/relay.py): ciclo del worker y
+  coordinación de envíos por stream, autenticación de productores y cliente HTTP central.
+- [`relay_http.py`](../../src/tradinglab/telemetry/relay_http.py): listener,
+  validación de encabezados y respuestas HTTP de admisión y salud local.
+- [`relay_config.py`](../../src/tradinglab/telemetry/relay_config.py): carga y
+  validación de configuración y referencias de credenciales.
+- [`telemetry_relay.py`](../../scripts/telemetry_relay.py): entrada CLI para
+  crear/abrir la cola, arrancar el relay y revisar o rehabilitar rechazos.
+
 ## Preparación aislada
 
 Usar un directorio local privado existente y rutas absolutas, fuera de carpetas

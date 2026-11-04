@@ -1,6 +1,29 @@
 # Roadmap — Dashboard local de riesgo
 
-## Prioridad acordada — 29 de octubre de 2026
+## Resumen vigente — 5 de noviembre de 2026
+
+El piloto local demo ya tiene captura separada para estado vivo (v1) y actividad
+histórica/ciclos (v2), persistencia SQLite v5, recuperación histórica reanudable,
+consultas paginadas y métricas con memoria acotada. FastAPI, relay durable y
+logging de collectors están integrados y validados localmente, incluido un corte
+breve del relay. Los cambios locales aún requieren revisión y CI; este resumen no
+afirma estados de merge.
+
+Los jobs tienen definiciones preparadas, pero no se declara que estén activados.
+La Mac, el enlace privado remoto y la operación de producción siguen pendientes.
+La retención de datos históricos no tiene TTL; los 14 días se aplican a los logs
+locales de diagnóstico. Las fórmulas financieras existentes evolucionan con el
+socio; las métricas de riesgo y ejecución todavía requieren definición.
+
+Pendientes actuales: gestión de credenciales y conectividad privada para preparar
+el piloto en Mac; pruebas restantes de 401/403, desconexión del broker y carga;
+validación amplia contra reportes/cuentas; modelo de riesgo y métricas de
+ejecución; backup y restauración para producción.
+
+Las secciones fechadas siguientes preservan el plan y los antecedentes de cada
+etapa; sus estados no sustituyen este resumen vigente.
+
+## Prioridad acordada — 29 de octubre de 2026 (antecedente)
 
 El [plan de captura autónoma, historial completo y rendimiento](autonomous-capture-history-plan.md)
 define la siguiente tanda, pendiente de aprobación para implementar:
@@ -420,57 +443,37 @@ Las decisiones y ejemplos pendientes se recopilan en la
 5. Resolver identidad de bot o estrategia en StocksTrader.
 6. Comparar frescura y consistencia con su plataforma web.
 
-## Seguimiento de robustez
+## Seguimiento de robustez — estado actual y antecedentes
 
-La revisión de solo lectura de PR #48 (commit `a1d6959`) documenta cinco
-hallazgos abiertos, prioridades y criterios de aceptación en
-[Revisión de robustez — 2026-10-28](robustness-review-2026-10-28.md). Las
-soluciones son propuestas y aún no están implementadas.
+Los cinco hallazgos de la revisión de robustez del 28 de octubre están resueltos;
+véase el informe final [robustness-review-2026-10-28](robustness-review-2026-10-28.md).
+La revisión del 21 de octubre conserva sus mediciones e historial de cambios; no
+es una lista actual de cinco bugs abiertos.
 
-Se prepararon el [contrato v2 propuesto](../architecture/telemetry-v2-contract.md),
-ADR-0011 y ejemplos sintéticos. El validador y la admisión v2 aislados cubren
-credencial/fuente/cuenta/rol, identidad MT5, reintentos, conflictos, secuencia
-estricta y recuperación histórica fuera de orden. No están conectados al receptor
-v1. La [persistencia y composición v2](telemetry-v2-persistence.md) agregan una
-base opt-in separada, recuperación durable y una vista de referencia. Migración,
-proyecciones, receptor v2, collector de actividad y despliegue piloto ya están
-operativos; el contraste formal contra el reporte MT5 y la cobertura visible ya
-están resueltos. Falta la promoción fuera de la cuenta demo. V1 conserva el estado vivo; v2 es la
-fuente durable de actividad y ciclos.
+La arquitectura actual separa dos productores: v1 para estado vivo y v2 para
+actividad histórica y ciclos. Contrato, identidades, admisión, persistencia,
+migración y composición tienen fixtures y regresiones. La recuperación y el
+contraste del piloto contra MT5 y la cobertura visible se completaron el
+2026-10-28. El piloto local fue ampliado con FastAPI, relay durable y logging de
+collectors; su estado y las validaciones pendientes se resumen al inicio y en el
+[programa de plataforma remota](remote-data-platform-delivery.md).
 
-Antes de implementar nuevos collectors, revisar la
-[separación de responsabilidades](../architecture/collector-responsibilities.md):
-dos productores (estado vivo y actividad), diagnóstico integrado y piloto en la
-terminal actual. Contrato, identidades, admisión, persistencia, migración,
-receptor v2 y composición ya tienen fixtures y regresiones. El contraste del
-piloto contra MT5 y la cobertura visible quedaron completados el 2026-10-28.
-No se adoptará una proyección histórica acumulativa en memoria. La frecuencia de
-un segundo y SSE quedan condicionados a mediciones; no requieren terminal adicional.
-
-La [revisión del 21 de octubre de 2026](system-review-2026-10-21.md) reúne el
-cierre de cinco bugs y los hallazgos medidos de performance y seguridad.
-Consultar allí las prioridades, criterios de aceptación y la cadencia de revisión
-cada seis PRs mergeados. El endurecimiento separa la autenticación humana del
-token del EA, protege `/dashboard` y `/api/state` con sesiones locales y rechaza
-autoridades HTTP ajenas. La remediación siguiente impide redirecciones y proxies
-implícitos del cliente local y aplica admisión acotada y plazo por conexión al
-servidor web; quedó integrada mediante PR #26. Continúan pendientes las mejoras de performance.
-Ningún control actual autoriza ampliar la exposición del piloto.
+El diseño evita una proyección histórica acumulativa en memoria. Frecuencias de
+un segundo y SSE siguen condicionadas a mediciones. La interfaz del piloto local
+no autoriza ampliar la exposición fuera de loopback ni conectar cuentas reales.
 
 ## Fuera del piloto
 
 - exposición pública o dentro de la LAN;
 - ejecución o modificación de operaciones;
-- PostgreSQL, TimescaleDB, colas o microservicios;
+- Kafka, PostgreSQL, TimescaleDB u otra infraestructura adicional de colas o microservicios;
 - autenticación multiusuario;
 - fórmulas inferidas de ejemplos de Gemini;
 - Excel como salida principal.
 
-Después de completar el plan vigente de captura autónoma, historia, consultas y
-retención, se analizará una API central de ingesta para separar receptor, base y
-dashboard de la VPS de MT5. Los collectors seguirán publicando contratos HTTP; no
-accederán directamente a la base. El análisis deberá decidir entre envío remoto
-directo y un relay local con cola durable, además de seguridad, idempotencia,
-autorización por cuenta/fuente y estrategia de migración. Esta línea futura está
-detallada en el
-[plan de captura autónoma e historial](autonomous-capture-history-plan.md#análisis-posterior-a-los-cinco-pasos-api-central-de-ingesta).
+La API central y el relay durable ya están implementados y probados localmente.
+El traslado a Mac, conectividad privada y credenciales siguen siendo trabajo
+futuro; consultar el [programa de entrega](remote-data-platform-delivery.md) y el
+[plan de captura e historial](autonomous-capture-history-plan.md). Fuera del
+alcance actual quedan infraestructura adicional como Kafka, PostgreSQL o
+TimescaleDB; la outbox durable local ya existe y no debe describirse como ausente.

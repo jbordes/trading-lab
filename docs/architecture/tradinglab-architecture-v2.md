@@ -3,15 +3,15 @@
 **Versión:** 2.4
 
 Programa remoto: el [contrato de API central](central-ingestion-api-contract.md)
-formaliza transporte, identidad y confirmaciones. Los receptores locales ofrecen
-`/docs` y `/docs.json`. El [relay durable optativo](../development/durable-telemetry-relay.md)
-está implementado para pruebas locales; la activación y el despliegue en la Mac
-permanecen pendientes.
-
-La [API central FastAPI](../development/central-api-operation.md) está preparada
-como servicio optativo con OpenAPI y modelos explícitos, según
-[ADR-0018](../adr/0018-fastapi-central-api.md). El piloto operativo no cambia
-automáticamente de receptores.
+formaliza transporte, identidad y confirmaciones. En el piloto local validado
+el 5 de noviembre de 2026, los dos collectors publican al
+[relay durable](../development/durable-telemetry-relay.md), que reenvía a la
+[API central FastAPI](../development/central-api-operation.md) y sus bases SQLite.
+El dashboard consulta la API con credenciales de lectura separadas. FastAPI ofrece
+OpenAPI y `/docs` en el puerto 8781, según [ADR-0018](../adr/0018-fastapi-central-api.md).
+Los catálogos `/docs.json` de los receptores independientes se conservan para
+compatibilidad, no describen los listeners actuales del relay.
+El despliegue en la Mac y la conectividad privada siguen pendientes.
 
 **Estado:** Propuesta para validación de socios
 
@@ -97,9 +97,13 @@ Estas extensiones no obligan a crear todas sus tablas en la primera migración. 
 
 ### 2.6 Modificación 2.4 — Dashboard local de riesgo
 
-El workbook deja de ser el entregable prioritario de incubación. El primer corte visible será una aplicación local, enlazada exclusivamente a loopback, que muestre observaciones de MT5 con pocos segundos de demora y sin ejecutar operaciones. La interfaz incluye una muestra de posiciones abiertas y órdenes pendientes con Magic Number filtrable, actividad histórica reciente y estado técnico de captura, sin convertir todavía esos datos en un modelo histórico amplio.
-
-El piloto no anticipa una base productiva ni un modelo canónico amplio. Utiliza un snapshot mínimo, un buffer acotado y adaptadores separados. MT5 se valida primero; StocksTrader REST se incorpora después para cuentas propias de esa plataforma. Las métricas se implementan únicamente desde contratos aprobados por los socios.
+El workbook dejó de ser el entregable prioritario de incubación. El piloto local,
+enlazado exclusivamente a loopback, muestra estado vivo de MT5, operaciones
+cerradas, métricas financieras por EA y registro de órdenes y deals. No ejecuta
+operaciones. Conserva el historial en SQLite, con consultas y buffers acotados;
+no acumula toda la historia en RAM ni anticipa un catálogo productivo completo.
+StocksTrader REST sigue siendo una integración futura. Las fórmulas de riesgo
+pendientes no se confunden con las métricas financieras implementadas.
 
 Las decisiones y el diseño se detallan en
 [ADR-0002](../adr/0002-local-live-risk-dashboard.md),
@@ -108,40 +112,34 @@ Las decisiones y el diseño se detallan en
 [ADR-0012](../adr/0012-durable-operation-history.md),
 [ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md),
 [ADR-0015](../adr/0015-closed-operations-and-mt5-registry.md) y
-[Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza un collector
-MQL5 por terminal como fuente operativa; la API Python queda limitada a
+[Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza dos collectors
+MQL5 con fuentes distintas por rol como entrada operativa; la API Python queda limitada a
 diagnóstico o reconciliación aislada con identidad explícita. El acceso humano
 al dashboard usa una credencial distinta del token de telemetría; ninguna llega
 al navegador salvo el token humano durante el login local.
 
-La [propuesta de separación de collectors](collector-responsibilities.md) analiza
-estado vivo y actividad histórica como responsabilidades independientes sobre
-la terminal actual. No requiere una terminal observadora adicional. La propuesta
-no modifica todavía el receptor ni los ADR vigentes. El contrato v2 y su admisión
-por rol ya existen como componentes aislados. Una base SQLite v2 separada demuestra
-persistencia transaccional, recuperación y composición por cuenta sin tocar v1.
-Aún se requieren migración/provisión, proyecciones incrementales y receptor opt-in
-antes de habilitar productores v2.
+La [separación de collectors](collector-responsibilities.md) distingue estado vivo
+y actividad histórica sobre la terminal actual, sin requerir una terminal
+observadora adicional. Telemetry v1 y Activity v2, la admisión por rol, las bases
+separadas y los ciclos durables ya están implementados en el piloto. La
+[guía vigente](../development/mt5-collector-operations.md) documenta instalación,
+recuperación y logs de las versiones validadas.
 
-Actualización de planificación del 2026-10-29: el piloto ya dispone de receptores
-v1/v2 y actividad/ciclos durables, como documenta la
-[operación del piloto](../development/telemetry-v2-pilot-operation.md). El
-[plan de captura autónoma e historial completo](../development/autonomous-capture-history-plan.md)
-define separar su operación del dashboard, recuperar años de historia disponible
-y preparar consultas y retención. SQLite continúa en la etapa local; un backend
-remoto con SQLite junto al proceso o PostgreSQL central son alternativas futuras.
-El plan no autoriza despliegue remoto ni modifica los ADR vigentes de retención.
+El [plan del 29 de octubre](../development/autonomous-capture-history-plan.md)
+conserva el contexto de captura autónoma e historial. La evolución actual se
+sigue en el [programa remoto](../development/remote-data-platform-delivery.md):
+API y relay ya funcionan separados del dashboard en la VPS; mover API y SQLite
+juntas a la Mac requiere conectividad privada y aprobación. No se abrirá SQLite
+por red. PostgreSQL y el catálogo productivo siguen fuera del piloto actual.
 
-El historial de operaciones no espera esa transición. El journal SQLite v1 ya
-persistido será el punto de partida de una vista paginada por periodo y Magic
-Number. Las nuevas proyecciones de consulta serán durables y se agregarán mediante
-migraciones explícitas cuando una necesidad concreta lo justifique. El historial
-creciente no se conservará completo en RAM; una caché futura será acotada,
-descartable y reconstruible desde SQLite.
+La persistencia v1 conserva las observaciones de cuenta; v2/esquema 5 conserva
+actividad, cobertura y ciclos reconstruidos, consultables por período y Magic.
+Las proyecciones históricas son durables. Las evoluciones usan migraciones
+explícitas; una caché futura será acotada, descartable y reconstruible desde SQLite.
 
-La evolución de producto unifica `Operaciones` e `Historial` en una experiencia
-de `Actividad de trading`, sin unificar artificialmente sus entidades o fuentes.
-La consulta distingue `En curso`, `Operaciones cerradas` y `Registro MT5`. El
+La navegación separa `Trading` (actividad en curso), `Performance financiera`
+(operaciones cerradas y métricas) y `Performance de ejecución` (Registro MT5),
+sin unificar artificialmente sus entidades o fuentes. El
 registro conserva deals y órdenes como entidades auditables con filtros compartidos.
 El rendimiento se calcula junto a las operaciones cerradas, pero exclusivamente
 sobre ciclos completos reconstruidos por `account_id + position_id`. El Magic Number es una
@@ -156,8 +154,8 @@ implementa la creación segura del esquema SQLite, su apertura validada y el
 registro local de cuentas/fuentes y guardado transaccional de mensajes. El
 [ADR-0007](../adr/0007-opt-in-sqlite-telemetry-receiver.md) permite al receptor
 usar una base local preexistente y una sola fuente autorizada por token como modo
-explícito. El arranque por defecto sigue usando memoria. Antes de activar el modo
-persistente falta probar la provisión operativa en la terminal demo. Existe una
+explícito. Los modos iniciales permanecen como compatibilidad; el piloto central
+actual ya usa bases persistentes y provisión validada. Existe una
 copia SQLite local verificable para el piloto, documentada en
 [operación](../development/telemetry-operation.md), y una
 [retención conservadora](../adr/0008-pilot-telemetry-retention.md). El

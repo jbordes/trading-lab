@@ -1,6 +1,7 @@
 # API central FastAPI: operación local
 
-Estado: preparada para piloto local. No se activó en MT5 ni en la Mac.
+Estado: operativa y validada en el piloto local Juampi el 5 de noviembre de
+2026. No está desplegada en Mac ni producción y no sustituye EAs de trading.
 
 El dashboard admite v1/v2 en el mismo puerto mediante `--central-api-port`.
 Ver [arranque conjunto y pruebas](central-api-dashboard.md). El diagnóstico
@@ -27,8 +28,11 @@ identidad y fechas antes de probar una ingesta. Usar un directorio y bases de pr
 Las rutas `/v1/telemetry`, `/v1/snapshot`, `/v1/deals`, `/v1/account-history`,
 `/v2/telemetry`, `/v2/activity`, `/v2/activity-progress`, `/v2/position-cycles` y
 `/v2/position-cycle-magics` están disponibles con modelos documentados. Los
-receptores anteriores y sus catálogos `/docs.json` continúan separados; no fueron
-sustituidos en la configuración del dashboard ni de los EAs.
+receptores legacy y sus catálogos `/docs` y `/docs.json` continúan en el repo
+solo para compatibilidad si se inician en puertos separados. En la topología
+validada, los collectors envían al relay `8776/8777`, éste reenvía a FastAPI
+`8781` y el dashboard `8775` lee FastAPI. No iniciar receptores legacy en esos
+puertos ocupados.
 
 ## Preparación
 
@@ -98,7 +102,10 @@ La nueva API agrega validación de consultas/Host/Origin y errores homogéneos;
 no promete que cada etiqueta de error de los handlers antiguos sea idéntica.
 Las garantías de aceptación, idempotencia y tipos de negocio se conservan.
 
-Después de integrar esta entrega, probar el relay contra ambos targets en
-`http://127.0.0.1:8781/v1/telemetry` y `/v2/telemetry` con una cola y bases aisladas.
-Cambiar targets de una cola existente exige un corte planificado porque están
-vinculados a la identidad del stream. No reutilizar la cola operativa a ciegas.
+La integración local validada envía el relay a ambos targets:
+`http://127.0.0.1:8781/v1/telemetry` y
+`http://127.0.0.1:8781/v2/telemetry`. El ACK central y la persistencia fueron
+confirmados. El despliegue privado remoto, TLS/Tailscale y cualquier operación
+con cuentas reales siguen pendientes. Cambiar targets de una cola existente
+exige un corte planificado porque están vinculados a la identidad del stream.
+No reutilizar la cola operativa a ciegas.

@@ -1,7 +1,9 @@
 # Relay con outbox durable: primera entrega local
 
-Estado: implementación optativa para prueba aislada; sin activación en MT5 ni
-despliegue en la Mac. Nace de `feature/clean-sqlite-v5` (PR 57).
+Estado: relay operativo en el piloto local Juampi, validado el 5 de noviembre
+de 2026 junto con Telemetry `0.2.1` y Activity `0.7.1`. Escucha en `8776/8777`
+en un proceso, con outbox y worker compartidos, y reenvía a FastAPI `8781`. No
+está desplegado en Mac ni producción y no sustituye EAs de trading.
 
 ## Responsabilidades
 
@@ -154,14 +156,17 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 ```
 
 El comando crea una cola nueva verificada y termina. No sobrescribe un destino.
-En la Mac la ruta equivalente podría ser `/Users/tu_usuario/TradingLabData/relay.sqlite3`.
-La cola permanecerá en la VPS cuando la API central esté en la Mac.
+En otra máquina, sustituir la ruta por una ubicación privada local equivalente.
+El ejemplo es genérico; no describe el almacenamiento del piloto validado.
 
 Copiar y adaptar [la topología de ejemplo](telemetry-relay.example.json) a un
 archivo local. Define las identidades y targets; las credenciales se referencian
 por nombre de variable. V1 utiliza rol live; v2 admite live/activity según fuente.
 Configurar credenciales distintas para cada productor y frontera. El token local
-debe coincidir con el EA; el central, con el receptor de destino.
+debe coincidir con el EA; el central, con el receptor de destino. Los targets
+`8776/8777` del ejemplo son ilustrativos de receptores legacy: para la topología
+FastAPI validada, adaptarlos a `http://127.0.0.1:8781/v1/telemetry` y
+`http://127.0.0.1:8781/v2/telemetry`. No apuntar el relay a sí mismo.
 
 Se admiten variables del proceso o un archivo local ignorado `.env.relay` con
 asignaciones `RELAY_...=valor`, una por línea y sin comillas. No versionarlo ni
@@ -172,17 +177,26 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 ```
 
 El listener queda en `127.0.0.1:8780` y admite ambas rutas POST, `/v1/telemetry`
-y `/v2/telemetry`. `GET /health` informa estados, errores acotados, bytes de
-cuerpos pendientes, antigüedad del más antiguo y última confirmación central
-(Unix UTC en segundos, o null). No expone cuerpos ni tokens.
+y `/v2/telemetry`. `GET /health` incluye `diagnostics_version` (actualmente 2),
+`states`, `pending_bytes`, `oldest_pending_seconds`, `max_records`, `max_bytes`,
+`last_central_ack_at`, `errors` e `ingress_rejections`; no expone cuerpos ni
+tokens. `last_central_ack_at` es Unix UTC en segundos o null. Los motivos fijos
+de `ingress_rejections` incluyen errores de Host/Origin, autenticación,
+validación, framing incompleto/ambiguo y HTTP malformado, además de rechazos de
+autorización y validación v1/v2. Solo aparecen contadores observados.
 
-`ingress_rejections` añade contadores en memoria compartidos entre listeners:
-`host_missing`, `host_multiple`, `host_not_allowed`,
-`origin_not_allowed`, `unauthorized`, `version_mismatch`, `source_mismatch`,
-`role_mismatch`, `identity_mismatch` y `producer_not_allowed`. Solo aparecen los
-motivos observados. No guarda valores de cabeceras, tokens, identidades ni
-payloads; los contadores están acotados y se reinician con el proceso. Los códigos
-y cuerpos de error existentes no cambian para diagnosticar.
+`ingress_rejections` añade contadores en memoria compartidos entre listeners.
+Los códigos fijos disponibles son `host_missing`, `host_multiple`,
+`host_not_allowed`, `origin_not_allowed`, `unauthorized`, `invalid_message`,
+`invalid_fields`, `ambiguous_framing`, `incomplete_body`, `malformed_http`,
+`version_mismatch`, `source_mismatch`, `role_mismatch`, `identity_mismatch`,
+`producer_not_allowed`, `invalid_json`, `invalid_activity_window`,
+`row_outside_window`, `invalid_collection_counts`, `invalid_order_volumes`,
+`invalid_order_times`, `collection_limit`, `invalid_page_cursors`,
+`invalid_page_size`, `invalid_page_status`, `invalid_schema` e
+`invalid_event_id`. Solo aparecen motivos observados. No guarda valores de
+cabeceras, tokens, identidades ni payloads; los contadores se limitan y reinician
+con el proceso. Los códigos y cuerpos de error existentes no cambian.
 
 Compatibilidad MT5: el piloto confirmó peticiones con `Host` sin puerto. Se
 admiten únicamente los literales exactos `127.0.0.1` y `localhost`, con o sin el
@@ -191,9 +205,10 @@ puertos explícitos incorrectos y cualquier `Origin`; autenticación y permisos 
 cuenta/fuente no cambian. No se capturan cabeceras, tokens ni cuerpos para comprobarlo.
 
 `--port` puede repetirse para abrir hasta ocho listeners loopback en el mismo
-proceso, compartiendo autenticación, outbox y un único worker. Por ejemplo,
-`--port 8776 --port 8777` conserva las URLs actuales de los EAs del piloto. Sin
-`--port` se mantiene 8780. No ejecutar dos procesos sobre la misma outbox.
+proceso, compartiendo autenticación, outbox y un único worker. El piloto validado
+usa `--port 8776 --port 8777` para conservar las URLs de ambos collectors. Sin
+`--port` se mantiene 8780 como valor genérico de CLI, no como puerto del piloto.
+No ejecutar dos procesos sobre la misma outbox.
 Los puertos explícitos deben ser distintos y estar en 1..65535. Se enlazan todos
 antes de empezar a aceptar conexiones; un fallo libera los ya reservados. Al
 salir se cierran todos antes de cerrar SQLite. Cada listener mantiene el límite
@@ -241,20 +256,18 @@ identidad y contenido; no omite un 409 ni cambia la operación que lo produjo.
 
 ## Compatibilidad con el sistema actual
 
-El relay no sirve las lecturas `/v1/snapshot` o `/v2/activity` del dashboard.
-El backend histórico sigue consultándose en los receptores de destino.
-No cambiar puertos de los receptores actuales ni EAs hasta aprobar un piloto.
-El receptor central v1 puede separar lectura usando `TRADINGLAB_V1_READ_TOKEN` al
-ejecutar `scripts/telemetry_receiver.py`; el token de ingesta deja entonces de
-autorizar lecturas y el token de lectura no autoriza ingesta. Si no se configura,
-se conserva la compatibilidad anterior de token único. El supervisor del piloto
-no añade un nuevo prompt ni cambia los tokens existentes en este incremento.
+El relay no sirve las lecturas `/v1/snapshot` o `/v2/activity` del dashboard;
+éstas se consultan en FastAPI central `8781` en la topología validada. Los
+receptores SQLite legacy permanecen para compatibilidad y solo deben iniciarse
+aparte, en puertos libres; no son parte del arranque habitual. FastAPI separa
+ingesta v1 con `CENTRAL_V1_INGEST` y lectura con `CENTRAL_V1_READ`.
+`TRADINGLAB_V1_READ_TOKEN` corresponde solo al receptor legacy.
 
 Los receptores SQLite admiten mensajes con capturas antiguas; sus proyecciones
 conservan la captura original y no infieren frescura del ACK. El modo memoria v1
 no es un destino válido para garantías durables: usar siempre receptor SQLite.
 
-## Pendientes antes de activar en la Mac
+## Despliegue remoto futuro
 
 - Preparar servicios macOS y transporte privado HTTPS/Tailscale.
 - Conectar las lecturas del dashboard al backend remoto y sus credenciales.
@@ -263,3 +276,9 @@ no es un destino válido para garantías durables: usar siempre receptor SQLite.
   de crecimiento, así como objetivos operativos antes de una cuenta real.
 - La prioridad interna entre backfill y actividad reciente de una misma fuente
   sigue a cargo de Activity: el relay preserva su orden y no lo reordena.
+
+En la validación local supervisada, los cuatro scripts nativos del collector
+terminaron sin fallos. El corte breve produjo `WARN` y `RESOLVED` locales y,
+tras recuperarse, ambos flujos volvieron a recibir ACK central. Para el
+procedimiento completo y la evidencia operativa, consultar [operación de los
+collectors](mt5-collector-operations.md) y [resiliencia](mt5-collector-resilience.md).

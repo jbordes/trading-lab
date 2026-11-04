@@ -3,10 +3,15 @@
 Estos EAs emiten observaciones desde un terminal MT5 hacia receptores locales.
 No abren, cierran ni modifican operaciones y no aceptan instrucciones remotas.
 
+La revisión de diseño, recuperación automática, límites y pruebas de las nuevas
+versiones se documenta en [robustez de collectors](../../docs/development/mt5-collector-resilience.md).
+Se deben copiar también `TradingLabCollectorCommon.mqh` y `TradingLabActivityState.mqh`
+al compilar estas versiones. Su instalación no es automática.
+
 - `TradingLabTelemetry.mq5`: snapshot v1 vigente de cuenta, posiciones, órdenes
   pendientes y una ventana reciente de deals.
 - `TradingLabActivity.mq5`: piloto v2 de actividad histórica con deals, órdenes
-  finalizadas y recuperación por tramos. Todavía no está instalado.
+  finalizadas y recuperación por tramos. La nueva versión requiere validación e instalación manual.
 
 ## Collector vigente v1
 
@@ -41,14 +46,15 @@ El collector v2 exige un inicio histórico explícito y usa tiempo de servidor M
 Consulta ventanas de hasta seis horas por defecto, filtra exactamente por
 milisegundos y envía como máximo 200 deals y 200 órdenes por lote. Si un rango
 supera ese límite, lo divide hasta `MinimumWindowSeconds`. Un mínimo todavía
-saturado se guarda como `truncated`, bloquea el avance y requiere revisión.
+saturado utiliza páginas estables; no se confirma el rango hasta completarlo.
 
 El cursor se conserva en las variables globales de la terminal, asociado a la
 fuente y la identidad demo. Solo avanza después de HTTP 200/202 y fuerza el
 guardado a disco. Un corte antes de confirmar vuelve a consultar con solapamiento;
-la composición del backend resuelve reobservaciones por ticket. Los rechazos 4xx
-detienen el EA y los fallos transitorios reintentan el mismo cuerpo con espera
-creciente.
+la composición del backend resuelve reobservaciones por ticket. Los fallos
+transitorios reintentan el mismo cuerpo con espera creciente. Desde
+`activity-0.7.0`, 401/403 conservan el lote y reintentan cada 60 segundos; otros
+rechazos no recuperables detienen el EA y requieren revisión.
 
 Desde `activity-0.2.0`, cuando una ventana contiene una salida o reversión, el
 collector selecciona además el historial completo de esa posición con

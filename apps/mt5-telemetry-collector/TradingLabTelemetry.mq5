@@ -1,6 +1,7 @@
 #property copyright "TradingLab 2.0"
 #property version   "1.000"
 #property strict
+#include "TradingLabCollectorCommon.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
@@ -11,13 +12,14 @@ input int IntervalSeconds = 5;
 input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
 input int HistoryLookbackSeconds = 3600;
+input int HistoryIntervalSeconds = 60;
 input int MaxDealsPerSnapshot = 200;
 // Operator-approved demo identity; never commit real account configuration.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.1.1";
+const string COLLECTOR_VERSION = "0.2.0";
 
 string session_id = "";
 // Bounded, volatile FIFO: preserve retry identity, prefer fresh samples on overflow.
@@ -28,44 +30,17 @@ ulong outbox_sequence[OUTBOX_CAPACITY];
 int outbox_head = 0;
 int outbox_count = 0;
 ulong dropped_samples = 0;
-ulong next_send_ms = 0;
-int retry_delay_seconds = 2;
+CollectorTransport transport;
 int head_attempts = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
 ulong sequence_number = 0;
-bool safety_stopped = false;
+CollectorCaptureState capture_state = CAPTURE_READY;
 
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   const string prefix = "http://127.0.0.1:";
-   const string suffix = "/v1/telemetry";
-   if(StringFind(url, prefix) != 0)
-      return false;
-   int start = StringLen(prefix);
-   int length = StringLen(url) - start - StringLen(suffix);
-   if(length < 1 || length > 5 || StringSubstr(url, start + length) != suffix)
-      return false;
-   string port = StringSubstr(url, start, length);
-   if(StringGetCharacter(port, 0) == '0')
-      return false;
-   for(int i = 0; i < length; i++)
-   {
-      ushort character = StringGetCharacter(port, i);
-      if(character < '0' || character > '9')
-         return false;
-   }
-   long number = StringToInteger(port);
-   return number >= 1 && number <= 65535;
-}
-
-
-bool IsApprovedDemo(const bool connected, const long mode, const long login,
-                    const string server, const long expected_login, const string expected_server)
-{
-   return connected && mode == ACCOUNT_TRADE_MODE_DEMO && expected_login > 0 &&
-          expected_server != "" && login == expected_login && server == expected_server;
+   return IsLoopbackCollectorUrl(url, "/v1/telemetry");
 }
 
 
@@ -77,7 +52,7 @@ int OnInit()
       Print("TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(StringLen(Token) < 24 || StringFind(Token, "CHANGE-ME") == 0)
+   if(!IsCollectorToken(Token))
    {
       Print("TradingLab telemetry: configure a local test token with at least 24 characters");
       return INIT_PARAMETERS_INCORRECT;
@@ -103,9 +78,12 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
 
-   if(!CheckPilotSafety())
+   if(ExpectedDemoLogin <= 0 || ExpectedDemoServer == "")
+      return INIT_PARAMETERS_INCORRECT;
+   if(!CheckPilotSafety() && capture_state == CAPTURE_STOPPED)
       return INIT_FAILED;
-   if(HistoryLookbackSeconds < 60 || HistoryLookbackSeconds > 86400 ||
+   if(HistoryIntervalSeconds < IntervalSeconds || HistoryIntervalSeconds > 3600 ||
+      HistoryLookbackSeconds < 60 || HistoryLookbackSeconds > 86400 ||
       MaxDealsPerSnapshot < 1 || MaxDealsPerSnapshot > 200)
    {
       Print("TradingLab telemetry: history window must be 60..86400 seconds, deals 1..200");
@@ -160,17 +138,30 @@ void OnTimer()
 
 bool CheckPilotSafety()
 {
-   if(safety_stopped)
+   if(capture_state == CAPTURE_STOPPED)
       return false;
    ResetLastError();
    bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
    long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
-   if(GetLastError() == 0 && IsApprovedDemo(connected, mode, login, server,
-                                          ExpectedDemoLogin, ExpectedDemoServer))
+   CollectorCaptureState observed = EvaluateCaptureState(connected, GetLastError() == 0,
+      mode, login, server, ExpectedDemoLogin, ExpectedDemoServer);
+   if(observed == CAPTURE_WAIT_BROKER)
+   {
+      if(capture_state != CAPTURE_WAIT_BROKER)
+         Print("TradingLab telemetry: broker unavailable; waiting without advancing capture");
+      capture_state = CAPTURE_WAIT_BROKER;
+      return false;
+   }
+   if(observed == CAPTURE_READY)
+   {
+      if(capture_state == CAPTURE_WAIT_BROKER)
+         Print("TradingLab telemetry: approved broker connection restored");
+      capture_state = CAPTURE_READY;
       return true;
-   safety_stopped = true;
+   }
+   capture_state = CAPTURE_STOPPED;
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("pilot_guard");
@@ -192,7 +183,8 @@ void RemoveHead()
 void RecordDrop(const ulong sequence, const string reason)
 {
    dropped_samples++;
-   PrintFormat("TradingLab telemetry: dropped sequence=%I64u reason=%s total=%I64u",
+   if(dropped_samples == 1 || (dropped_samples & (dropped_samples - 1)) == 0)
+      PrintFormat("TradingLab telemetry: dropped sequence=%I64u reason=%s total=%I64u",
                sequence, reason, dropped_samples);
 }
 
@@ -230,28 +222,36 @@ void EnqueueSnapshot(const string body, const ulong sequence)
 
 bool TrySendQueued(const ulong now_ms)
 {
-   if(outbox_count == 0 || now_ms < next_send_ms)
+   if(outbox_count == 0 || !transport.Ready(now_ms))
       return false;
-   // One bounded synchronous request per call; no Sleep and no retry loop.
    int status = SendMessage(outbox_body[outbox_head]);
-   // The live safety guard may have cleared the queue inside SendMessage.
-   if(safety_stopped)
+   if(capture_state == CAPTURE_STOPPED || capture_state == CAPTURE_WAIT_BROKER)
       return false;
    head_attempts++;
-   if(status == 200 || status == 202)
+   CollectorDelivery previous = transport.State();
+   CollectorDelivery delivery = transport.Observe(status, now_ms);
+   if(delivery == DELIVERY_ACK)
    {
+      if(previous == DELIVERY_ACCESS_BLOCKED)
+         Print("TradingLab telemetry: receiver access restored");
       RemoveHead();
-      retry_delay_seconds = 2;
-      next_send_ms = 0;
       return true;
    }
-   // Retry ambiguous transport errors, throttling and server failures only.
-   bool retryable = status == -1 || status == 408 || status == 429 || status >= 500;
-   if(!retryable || head_attempts >= 5)
-      DropHead(retryable ? "retry_limit" : "http_rejected");
-   // Keep endpoint-level backoff even when overflow replaces the head.
-   next_send_ms = now_ms + (ulong)retry_delay_seconds * 1000;
-   retry_delay_seconds = MathMin(retry_delay_seconds * 2, 60);
+   if(delivery == DELIVERY_ACCESS_BLOCKED)
+   {
+      if(previous != DELIVERY_ACCESS_BLOCKED)
+         Print("TradingLab telemetry: receiver access blocked; probing every 60 seconds");
+      return false;
+   }
+   if(delivery == DELIVERY_FATAL)
+   {
+      PrintFormat("TradingLab telemetry: invalid/conflicting message HTTP %d; review required", status);
+      capture_state = CAPTURE_STOPPED;
+      EventKillTimer();
+      return false;
+   }
+   if(head_attempts >= 5)
+      DropHead("retry_limit");
    return false;
 }
 
@@ -319,7 +319,7 @@ string BuildSnapshot(const string reason, const ulong sequence)
    payload += "\"orders_total\":" + IntegerToString(OrdersTotal()) + ",";
    payload += "\"positions\":" + BuildPositions(valid) + ",";
    payload += "\"orders\":" + BuildOrders(valid) + ",";
-   payload += "\"history\":" + BuildHistory();
+   payload += "\"history\":" + BuildHistorySample();
    payload += "}";
 
    string body = "{";
@@ -491,100 +491,16 @@ string BuildOrders(bool &valid)
 }
 
 
-string MaskedLogin()
+string history_sample = "";
+ulong history_sample_tick = 0;
+string BuildHistorySample()
 {
-   string login = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
-   int length = StringLen(login);
-   if(length <= 4)
-      return "****" + login;
-   return "****" + StringSubstr(login, length - 4);
-}
-
-
-string JsonNumber(const double value, bool &valid)
-{
-   if(!MathIsValidNumber(value))
+   ulong now_ms = GetTickCount64();
+   if(history_sample == "" || startup_pending || trade_activity_pending ||
+      now_ms - history_sample_tick >= (ulong)HistoryIntervalSeconds * 1000)
    {
-      valid = false;
-      // Internal placeholder only: FinalizeSnapshot discards the whole message.
-      return "null";
+      history_sample = BuildHistory();
+      history_sample_tick = now_ms;
    }
-   return DoubleToString(value, 8);
-}
-
-
-string UnsignedIdentifier(const ulong value)
-{
-   return StringFormat("%I64u", value);
-}
-
-
-string JsonEscape(string value)
-{
-   StringReplace(value, "\\", "\\\\");
-   StringReplace(value, "\"", "\\\"");
-   StringReplace(value, "\r", "\\r");
-   StringReplace(value, "\n", "\\n");
-   StringReplace(value, "\t", "\\t");
-   return value;
-}
-
-
-string Truncate(const string value, const int maximum)
-{
-   if(StringLen(value) <= maximum)
-      return value;
-   return StringSubstr(value, 0, maximum);
-}
-
-
-string IsoUtcTimestamp()
-{
-   MqlDateTime parts = {};
-   TimeToStruct(TimeGMT(), parts);
-   return StringFormat(
-      "%04d-%02d-%02dT%02d:%02d:%02dZ",
-      parts.year,
-      parts.mon,
-      parts.day,
-      parts.hour,
-      parts.min,
-      parts.sec
-   );
-}
-
-
-string CompactUtcTimestamp()
-{
-   MqlDateTime parts = {};
-   TimeToStruct(TimeGMT(), parts);
-   return StringFormat(
-      "%04d%02d%02dT%02d%02d%02dZ",
-      parts.year,
-      parts.mon,
-      parts.day,
-      parts.hour,
-      parts.min,
-      parts.sec
-   );
-}
-
-
-bool IsSafeIdentifier(const string value)
-{
-   int length = StringLen(value);
-   if(length < 1 || length > 128)
-      return false;
-   for(int index = 0; index < length; index++)
-   {
-      ushort character = StringGetCharacter(value, index);
-      bool allowed =
-         (character >= 'A' && character <= 'Z') ||
-         (character >= 'a' && character <= 'z') ||
-         (character >= '0' && character <= '9') ||
-         character == '.' || character == '_' || character == ':' || character == '-';
-      if(!allowed)
-         return false;
-   }
-   return true;
+   return history_sample;
 }

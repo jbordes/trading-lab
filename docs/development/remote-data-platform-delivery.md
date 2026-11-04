@@ -8,6 +8,10 @@
 
 ## Objetivo
 
+Revisión e implementación de recuperación/diseño/performance de EAs:
+[collectors con trabajo acotado](mt5-collector-resilience.md), pendiente de
+ejecución nativa y despliegue humano.
+
 Integración local preparada: [dashboard con FastAPI](central-api-dashboard.md).
 Próximo paso acordado: [credenciales y permisos](credential-management-plan.md),
 todavía pendiente de implementación.

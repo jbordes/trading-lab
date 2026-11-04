@@ -8,9 +8,12 @@ versiones se documenta en [robustez de collectors](../../docs/development/mt5-co
 Al compilar las versiones preparadas se deben incluir tres headers:
 `TradingLabCollectorCommon.mqh`, `TradingLabActivityState.mqh` y
 `TradingLabCollectorLog.mqh`. Telemetry `0.2.1` y Activity `activity-0.7.1`
-están preparadas, pero todavía no instaladas. El runtime instalado sigue en
-Telemetry `0.2.0` y Activity `activity-0.7.0`; el fix de strings de esas versiones
-fue validado operacionalmente y esa evidencia se conserva en
+se instalaron bajo supervisión en Juampi el 2026-11-05, después de ejecutar los
+cuatro scripts nativos actualizados con cero fallos. Se preservaron con hashes
+verificados los binarios previos en `_storage/collector-releases/2026-11-05-before-logging`;
+el ZIP previo del socio permanece intacto. No se modificaron EAs de trading,
+inputs ni cursores. El fix de strings validado en Activity se conserva en la
+versión instalada; la evidencia y limitaciones están en
 [robustez de collectors](../../docs/development/mt5-collector-resilience.md).
 
 El logger escribe por terminal en `MQL5\Files\TradingLab\logs\` archivos
@@ -25,7 +28,8 @@ logging en `OnTradeTransaction`.
 - `TradingLabTelemetry.mq5`: snapshot v1 vigente de cuenta, posiciones, órdenes
   pendientes y una ventana reciente de deals.
 - `TradingLabActivity.mq5`: piloto v2 de actividad histórica con deals, órdenes
-  finalizadas y recuperación por tramos. La nueva versión requiere validación e instalación manual.
+  finalizadas y recuperación por tramos. La instalación de la versión con logging
+  fue manual y supervisada.
 
 ## Collector vigente v1
 

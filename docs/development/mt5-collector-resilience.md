@@ -1,16 +1,18 @@
 # Collectors MT5: recuperación y trabajo acotado
 
-Estado: pruebas nativas ejecutadas por el operador e instalación supervisada en
-Juampi. Captura y ACK central comprobados tras corregir el arranque de Activity.
-Corte breve del relay y reanudación comprobados. Siguen pendientes las pruebas
-operacionales de 401/403, desconexión del broker y carga.
+Estado: cuatro pruebas nativas actualizadas ejecutadas con cero fallos e
+instalación supervisada de Telemetry `0.2.1` y Activity `activity-0.7.1` en Juampi
+el 2026-11-05. ACK central y logging JSONL comprobados en corte breve del relay.
+Siguen pendientes las pruebas operacionales de 401/403, desconexión del broker y
+carga.
 
 Rama: `feature/mt5-collector-resilience`, desde `fix/relay-multiple-listeners`.
-Runtime instalado: Telemetry `0.2.0`, Activity `activity-0.7.0`. El fix de strings
-de estas versiones ya fue validado operacionalmente. Las versiones preparadas
-Telemetry `0.2.1` y Activity `activity-0.7.1` aún no están instaladas. Contratos
-v1/v2, rutas, identidades y claves de cursor existentes se conservan. No requiere
-migrar SQLite ni cambiar API, base de datos o tokens.
+Runtime instalado: Telemetry `0.2.1`, Activity `activity-0.7.1`. Se preservaron
+con hashes verificados los binarios previos en
+`_storage/collector-releases/2026-11-05-before-logging`; el ZIP antiguo del socio
+permanece intacto. No se modificaron EAs de trading, inputs ni cursores.
+Contratos v1/v2, rutas, identidades y claves de cursor existentes se conservan.
+No requiere migrar SQLite ni cambiar API, base de datos o tokens.
 
 ## Estados y recuperación
 
@@ -162,19 +164,39 @@ trading ni un reemplazo del outbox y la reconciliación.
 
 La prueba nueva `tests/mql5/collector_logger_test.mq5` usa dobles de filesystem,
 reloj y `Print`, sin acciones reales, y cubre agrupación JSON, rate limit,
-recuperación, cuota, rotación, retención propia y fallos de E/S. Los collectors y
-los cuatro scripts nativos compilaron con 0 errores y 0 warnings usando RoboForex;
-esto no afirma ejecución de los nuevos scripts nativos. Las pruebas Python de
-logging comprueban integración y guardas de fuente; no ejecutan MQL5.
+recuperación, cuota, rotación, retención propia y fallos de E/S. El usuario
+ejecutó los cuatro scripts nativos actualizados con cero fallos. Los collectors y
+los cuatro scripts compilaron con 0 errores y 0 warnings usando RoboForex. Las
+pruebas Python de logging comprueban integración y guardas de fuente; no ejecutan
+MQL5.
 
-Antes de instalar, ejecutar manualmente los cuatro scripts nativos:
-`collector_common_test.mq5`, `telemetry_outbox_test.mq5`,
-`activity_collector_test.mq5` y `collector_logger_test.mq5`, verificando `0
-failure(s)` en cada uno. Después de retirar los collectors actuales, copiar los
-dos `.ex5`, los tres headers (`TradingLabCollectorCommon.mqh`,
-`TradingLabActivityState.mqh` y `TradingLabCollectorLog.mqh`) y los dos `.mq5`;
-preservar inputs, tokens, SourceIds y cursores. Probar un corte del relay y
-verificar en los archivos propios un `WARN` y el `RESOLVED` correspondiente, sin
-ruido de eventos sanos en los Expertos. No borrar variables `TL2.ACT.*`, recrear
-la base ni reiniciar EAs de trading para aplicar este refactor. Registrar versión
-y hashes siguiendo [la operación de collectors](mt5-collector-operations.md).
+### Aceptación operacional del logging (2026-11-05)
+
+Tras ejecutar los cuatro scripts actualizados con cero fallos, se instalaron bajo
+supervisión en Juampi los dos `.ex5`, los tres headers (`TradingLabCollectorCommon.mqh`,
+`TradingLabActivityState.mqh` y `TradingLabCollectorLog.mqh`) y los dos `.mq5`.
+Los hashes de los archivos instalados se verificaron. Las consultas de solo
+lectura a la API y su base confirmaron ACK central con las versiones nuevas.
+No se tocaron EAs de trading, inputs ni cursores.
+
+En el corte breve del relay, Telemetry escribió en su archivo JSONL del día UTC
+`20261104` un `WARN` a `2026-11-04T23:07:59Z` y `RESOLVED` a
+`2026-11-04T23:09:12Z`: cinco ocurrencias, cuatro suprimidas, 72.985 s de
+duración, secuencia inicial 21 y resuelta 25. También registró un único
+`snapshot_dropped` con `reason=retry_limit` (`occurrences=1`), conforme a la
+política vigente; no fue un desborde y no se oculta ni se interpreta como prueba
+de recuperación de todos los snapshots.
+
+Activity escribió `WARN` a `2026-11-04T23:08:01Z` y `RESOLVED` a
+`2026-11-04T23:09:29Z`: cinco ocurrencias, cuatro suprimidas, 87.984 s y la misma
+secuencia 3 en ambos registros. Los archivos están en
+`MQL5/Files/TradingLab/logs/` con nombres por collector, SourceId y fecha UTC;
+las horas UTC del 4 de noviembre corresponden al 5 de noviembre en Madrid.
+
+Tras restablecer el relay, la salud indicó cola, pendientes, rechazos y errores
+en cero; los datos v1/v2 volvieron a recibir ACK central. Esto valida el corte
+breve y los eventos de logging observados, no todos los snapshots de Telemetry,
+ni las pruebas de carga, 401/403 o desconexión del broker. Mantener inputs,
+tokens, SourceIds y cursores; no borrar variables `TL2.ACT.*`, recrear la base ni
+reiniciar EAs de trading para este cambio. Registrar versión y hashes siguiendo
+[la operación de collectors](mt5-collector-operations.md).

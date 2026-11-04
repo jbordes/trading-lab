@@ -5,8 +5,22 @@ No abren, cierran ni modifican operaciones y no aceptan instrucciones remotas.
 
 La revisión de diseño, recuperación automática, límites y pruebas de las nuevas
 versiones se documenta en [robustez de collectors](../../docs/development/mt5-collector-resilience.md).
-Se deben copiar también `TradingLabCollectorCommon.mqh` y `TradingLabActivityState.mqh`
-al compilar estas versiones. Su instalación no es automática.
+Al compilar las versiones preparadas se deben incluir tres headers:
+`TradingLabCollectorCommon.mqh`, `TradingLabActivityState.mqh` y
+`TradingLabCollectorLog.mqh`. Telemetry `0.2.1` y Activity `activity-0.7.1`
+están preparadas, pero todavía no instaladas. El runtime instalado sigue en
+Telemetry `0.2.0` y Activity `activity-0.7.0`; el fix de strings de esas versiones
+fue validado operacionalmente y esa evidencia se conserva en
+[robustez de collectors](../../docs/development/mt5-collector-resilience.md).
+
+El logger escribe por terminal en `MQL5\Files\TradingLab\logs\` archivos
+`telemetry-<SourceId>-YYYYMMDD.jsonl` o `activity-<SourceId>-YYYYMMDD.jsonl`
+(en el nombre, `:` de SourceId se sustituye por `~`; fecha UTC). Emite `WARN`,
+`ERROR` y `RESOLVED` al cerrar una incidencia; no registra INFO ni eventos healthy
+de inicio/parada. Los Expertos solo registran errores críticos y un aviso si el
+sink falla o alcanza la cuota. Los registros son acotados y no incluyen tokens,
+headers, payloads ni credenciales. No se usa `FILE_COMMON` ni se ejecuta E/S de
+logging en `OnTradeTransaction`.
 
 - `TradingLabTelemetry.mq5`: snapshot v1 vigente de cuenta, posiciones, órdenes
   pendientes y una ventana reciente de deals.

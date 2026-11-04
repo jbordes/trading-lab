@@ -120,12 +120,12 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
         self.assertIn("DELIVERY_ACCESS_BLOCKED", sender)
         self.assertIn("transport.Observe(status, now_ms)", sender)
-        self.assertNotIn('pending.body = ""', sender.split("CollectorDelivery previous", 1)[1])
+        self.assertNotIn('pending.body = ""', sender.split("CollectorDelivery delivery", 1)[1])
         self.assertIn("StopForSafety()", sender)
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.7.0"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.7.1"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]

@@ -21,19 +21,51 @@ from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.relay import RelayIngress
 from tradinglab.telemetry.relay_queue import RelayConflict, RelayStorageError
 
+_VALIDATION_REJECTIONS = {
+    "El cuerpo no es JSON UTF-8 válido": "invalid_json",
+    "Ventana de actividad inválida": "invalid_activity_window",
+    "Registro fuera de la ventana": "row_outside_window",
+    "Estado y conteos inconsistentes": "invalid_collection_counts",
+    "Volúmenes de orden inconsistentes": "invalid_order_volumes",
+    "Orden completada antes de su creación": "invalid_order_times",
+    "Colección limitada a 200 registros": "collection_limit",
+    "Cursores de página inconsistentes": "invalid_page_cursors",
+    "Página de actividad vacía o demasiado grande": "invalid_page_size",
+    "Estado de página inconsistente": "invalid_page_status",
+    "Schema v2 no admitido": "invalid_schema",
+    "event_id no corresponde a sesión y secuencia": "invalid_event_id",
+}
+
+
+def _validation_rejection(error: TelemetryValidationError) -> str:
+    """Return only fixed codes, never values or field names from untrusted input."""
+    message = str(error)
+    if message.startswith(("Faltan campos en ", "Campos no admitidos en ")):
+        return "invalid_fields"
+    return _VALIDATION_REJECTIONS.get(message, "invalid_message")
+
 
 class RelayDiagnostics:
     """Fixed-cardinality process counters; never retain request data."""
 
-    _REASONS = frozenset(
-        {
-            "host_missing",
-            "host_multiple",
-            "host_not_allowed",
-            "origin_not_allowed",
-            "unauthorized",
-        }
-    ) | frozenset(reason.value for reason in AuthorizationRejection)
+    _REASONS = (
+        frozenset(
+            {
+                "host_missing",
+                "host_multiple",
+                "host_not_allowed",
+                "origin_not_allowed",
+                "unauthorized",
+                "invalid_message",
+                "invalid_fields",
+                "ambiguous_framing",
+                "incomplete_body",
+                "malformed_http",
+            }
+        )
+        | frozenset(reason.value for reason in AuthorizationRejection)
+        | frozenset(_VALIDATION_REJECTIONS.values())
+    )
 
     def __init__(self) -> None:
         self._counts: dict[str, int] = {}
@@ -91,6 +123,13 @@ def create_relay_server(
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
+        def send_error(
+            self, code: int, message: str | None = None, explain: str | None = None
+        ) -> None:
+            if code == 400:
+                counters.reject("malformed_http")
+            super().send_error(code, message, explain)
+
         def handle(self) -> None:
             try:
                 super().handle()
@@ -132,6 +171,7 @@ def create_relay_server(
                         {
                             "storage": "relay-outbox",
                             "ack_scope": "local",
+                            "diagnostics_version": 2,
                             "ingress_rejections": counters.snapshot(),
                             **ingress.queue.status(now=time.time()),
                         },
@@ -151,6 +191,7 @@ def create_relay_server(
                 or len(self.headers.get_all("Content-Length", [])) != 1
                 or len(self.headers.get_all("Authorization", [])) != 1
             ):
+                counters.reject("ambiguous_framing")
                 self._json(400, {"error": "ambiguous_framing"})
                 return
             if self.headers.get_content_type() != "application/json":
@@ -165,6 +206,7 @@ def create_relay_server(
                 return
             body = self.rfile.read(size)
             if len(body) != size:
+                counters.reject("incomplete_body")
                 self._json(400, {"error": "incomplete_body"})
                 return
             version = self.path.split("/")[1]
@@ -186,7 +228,8 @@ def create_relay_server(
             except V2StaleSequenceError:
                 self._json(409, {"error": "stale_sequence"})
                 return
-            except TelemetryValidationError:
+            except TelemetryValidationError as exc:
+                counters.reject(_validation_rejection(exc))
                 self._json(400, {"error": "invalid_message"})
                 return
             except RelayStorageError, sqlite3.Error:

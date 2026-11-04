@@ -73,6 +73,16 @@ void Check(const bool condition, const string label)
 }
 void OnStart()
 {
+   // Regression: the production timer checks the untouched global state first.
+   // Assigning a fixture before this check hid a NULL/uninitialized body.
+   Check(pending.body == "" && pending.page_snapshot_id == "", "pending strings start explicitly empty");
+   Check(pagination.snapshot_id == "" && saved_recent_page.snapshot_id == "" &&
+         saved_deep_page.snapshot_id == "", "pagination strings start explicitly empty");
+   char initial_bytes[];
+   ResetLastError();
+   Check(StringToCharArray(pending.body, initial_bytes, 0, WHOLE_ARRAY, CP_UTF8) == 1 &&
+         GetLastError() == 0, "fresh body is initialized UTF-8, not NULL (4009)");
+   Check(!TrySendPending(0) && sends == 0 && flushes == 0, "fresh state sends no phantom batch");
    pending.body = "original-batch";
    pending.from_msc = 10000;
    pending.to_msc = 20000;
@@ -121,5 +131,12 @@ void OnStart()
    Check(BuildPositionReconcilePayload(9000, position) == 1, "closed position evidence built");
    fake_deals = 201;
    Check(BuildPositionReconcilePayload(9000, position) == 0, "oversized position is not falsely complete");
+   pending.body = "encoding-failure-fixture";
+   fake_status = LOCAL_ENCODING_FAILURE;
+   transport.Reset();
+   TrySendPending(60001);
+   Check(capture_state == CAPTURE_STOPPED && pending.body == "encoding-failure-fixture",
+         "local preparation error stops without discarding batch");
+   Check(confirmed_from_msc == 15000 && flushes == 1, "local preparation failure never commits cursor");
    PrintFormat("TradingLab activity tests: %d failure(s)", failures);
 }

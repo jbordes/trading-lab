@@ -2,6 +2,7 @@
 #property version   "1.000"
 #property strict
 #include "TradingLabCollectorCommon.mqh"
+#include "TradingLabCollectorLog.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
@@ -19,7 +20,8 @@ input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.2.0";
+const string COLLECTOR_VERSION = "0.2.1";
+const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
 // Bounded, volatile FIFO: preserve retry identity, prefer fresh samples on overflow.
@@ -31,6 +33,8 @@ int outbox_head = 0;
 int outbox_count = 0;
 ulong dropped_samples = 0;
 CollectorTransport transport;
+CollectorLogger logger;
+int last_request_error = 0;
 int head_attempts = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
@@ -47,34 +51,35 @@ bool IsLoopbackIngestUrl(const string url)
 #ifndef TELEMETRY_QUEUE_TEST
 int OnInit()
 {
+   logger.Configure("telemetry", SourceId, COLLECTOR_VERSION);
    if(!IsLoopbackIngestUrl(IngestUrl))
    {
-      Print("TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
+      logger.Error("invalid_configuration", "TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsCollectorToken(Token))
    {
-      Print("TradingLab telemetry: configure a local test token with at least 24 characters");
+      logger.Error("invalid_configuration", "TradingLab telemetry: configure a local test token with at least 24 characters");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsSafeIdentifier(SourceId))
    {
-      Print("TradingLab telemetry: SourceId contains unsupported characters");
+      logger.Error("invalid_configuration", "TradingLab telemetry: SourceId contains unsupported characters");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(IntervalSeconds < 2 || IntervalSeconds > 60)
    {
-      Print("TradingLab telemetry: IntervalSeconds must be between 2 and 60");
+      logger.Error("invalid_configuration", "TradingLab telemetry: IntervalSeconds must be between 2 and 60");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(RequestTimeoutMs < 500 || RequestTimeoutMs > IntervalSeconds * 1000 / 4)
    {
-      Print("TradingLab telemetry: timeout must be >=500ms and <=quarter of sample interval");
+      logger.Error("invalid_configuration", "TradingLab telemetry: timeout must be >=500ms and <=quarter of sample interval");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(MaxItemsPerSnapshot < 1 || MaxItemsPerSnapshot > 500)
    {
-      Print("TradingLab telemetry: MaxItemsPerSnapshot must be between 1 and 500");
+      logger.Error("invalid_configuration", "TradingLab telemetry: MaxItemsPerSnapshot must be between 1 and 500");
       return INIT_PARAMETERS_INCORRECT;
    }
 
@@ -86,16 +91,16 @@ int OnInit()
       HistoryLookbackSeconds < 60 || HistoryLookbackSeconds > 86400 ||
       MaxDealsPerSnapshot < 1 || MaxDealsPerSnapshot > 200)
    {
-      Print("TradingLab telemetry: history window must be 60..86400 seconds, deals 1..200");
+      logger.Error("invalid_configuration", "TradingLab telemetry: history window must be 60..86400 seconds, deals 1..200");
       return INIT_PARAMETERS_INCORRECT;
    }
    session_id = "session-" + CompactUtcTimestamp() + "-" + IntegerToString((long)GetTickCount64());
    if(!EventSetTimer(IntervalSeconds))
    {
-      PrintFormat("TradingLab telemetry: cannot start timer (%d)", GetLastError());
+      logger.Error("timer_failed", StringFormat("TradingLab telemetry: cannot start timer (%d)", GetLastError()));
       return INIT_FAILED;
    }
-   Print("TradingLab telemetry: read-only spike started");
+   // Healthy lifecycle events do not emit routine log entries.
    return INIT_SUCCEEDED;
 }
 
@@ -105,7 +110,7 @@ void OnDeinit(const int reason)
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("shutdown");
-   PrintFormat("TradingLab telemetry: stopped (%d)", reason);
+   // Healthy lifecycle events do not emit routine log entries.
 }
 
 
@@ -150,14 +155,14 @@ bool CheckPilotSafety()
    if(observed == CAPTURE_WAIT_BROKER)
    {
       if(capture_state != CAPTURE_WAIT_BROKER)
-         Print("TradingLab telemetry: broker unavailable; waiting without advancing capture");
+         logger.Warn("broker_unavailable", "TradingLab telemetry: broker unavailable; waiting without advancing capture");
       capture_state = CAPTURE_WAIT_BROKER;
       return false;
    }
    if(observed == CAPTURE_READY)
    {
       if(capture_state == CAPTURE_WAIT_BROKER)
-         Print("TradingLab telemetry: approved broker connection restored");
+         logger.Resolve("broker_unavailable");
       capture_state = CAPTURE_READY;
       return true;
    }
@@ -165,7 +170,7 @@ bool CheckPilotSafety()
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("pilot_guard");
-   Print("TradingLab telemetry: pilot guard stopped capture; review demo identity and reattach EA");
+   logger.Error("identity_guard_stopped", "TradingLab telemetry: pilot guard stopped capture; review demo identity and reattach EA");
    return false;
 }
 #endif
@@ -183,9 +188,7 @@ void RemoveHead()
 void RecordDrop(const ulong sequence, const string reason)
 {
    dropped_samples++;
-   if(dropped_samples == 1 || (dropped_samples & (dropped_samples - 1)) == 0)
-      PrintFormat("TradingLab telemetry: dropped sequence=%I64u reason=%s total=%I64u",
-               sequence, reason, dropped_samples);
+   logger.Warn("snapshot_dropped", StringFormat("reason=%s total=%I64u", reason, dropped_samples), sequence);
 }
 
 
@@ -228,28 +231,30 @@ bool TrySendQueued(const ulong now_ms)
    if(capture_state == CAPTURE_STOPPED || capture_state == CAPTURE_WAIT_BROKER)
       return false;
    head_attempts++;
-   CollectorDelivery previous = transport.State();
    CollectorDelivery delivery = transport.Observe(status, now_ms);
    if(delivery == DELIVERY_ACK)
    {
-      if(previous == DELIVERY_ACCESS_BLOCKED)
-         Print("TradingLab telemetry: receiver access restored");
+      logger.Resolve("receiver_access_blocked", outbox_sequence[outbox_head]);
+      logger.Resolve("receiver_unavailable", outbox_sequence[outbox_head]);
       RemoveHead();
       return true;
    }
    if(delivery == DELIVERY_ACCESS_BLOCKED)
    {
-      if(previous != DELIVERY_ACCESS_BLOCKED)
-         Print("TradingLab telemetry: receiver access blocked; probing every 60 seconds");
+      logger.Warn("receiver_access_blocked", "access blocked; probing every 60 seconds",
+                  outbox_sequence[outbox_head], status, last_request_error);
       return false;
    }
    if(delivery == DELIVERY_FATAL)
    {
-      PrintFormat("TradingLab telemetry: invalid/conflicting message HTTP %d; review required", status);
+      logger.Error("delivery_stopped", "delivery stopped; review required",
+                   outbox_sequence[outbox_head], status, last_request_error);
       capture_state = CAPTURE_STOPPED;
       EventKillTimer();
       return false;
    }
+   logger.Warn("receiver_unavailable", "delivery retry scheduled", outbox_sequence[outbox_head],
+               status, last_request_error);
    if(head_attempts >= 5)
       DropHead("retry_limit");
    return false;
@@ -281,8 +286,10 @@ int SendMessage(const string body)
    int encoded = StringToCharArray(body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
    if(encoded <= 1)
    {
-      Print("TradingLab telemetry: cannot encode the payload");
-      return 400;
+      last_request_error = GetLastError();
+      logger.Error("encoding_failed", "cannot encode payload; no HTTP request sent",
+                   sequence_number, 0, last_request_error);
+      return LOCAL_ENCODING_FAILURE;
    }
    ArrayResize(request_body, encoded - 1);
 
@@ -296,13 +303,9 @@ int SendMessage(const string body)
       response_body,
       response_headers
    );
-   if(status == 200 || status == 202)
-      return status;
-
-   if(status == -1)
-      PrintFormat("TradingLab telemetry: request failed (%d)", GetLastError());
-   else
-      PrintFormat("TradingLab telemetry: receiver returned HTTP %d", status);
+   last_request_error = GetLastError();
+   // Preserve the actual return separately from local errors. Values such as
+   // 1001 are not labelled HTTP; the transport retains its existing retry policy.
    return status;
 }
 #endif

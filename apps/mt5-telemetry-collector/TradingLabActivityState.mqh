@@ -14,6 +14,22 @@ struct ActivityPageKey
 };
 struct ActivityPendingBatch
 {
+   ActivityPendingBatch()
+   {
+      body = "";
+      page_snapshot_id = "";
+      from_msc = 0;
+      to_msc = 0;
+      blocks_recovery = false;
+      is_recent = false;
+      is_position_reconcile = false;
+      is_heartbeat = false;
+      is_paged = false;
+      page_has_more = false;
+      page_through.time_msc = 0;
+      page_through.entity_type = 0;
+      page_through.ticket = 0;
+   }
    string body;
    long from_msc;
    long to_msc;
@@ -28,6 +44,17 @@ struct ActivityPendingBatch
 };
 struct ActivityPagination
 {
+   ActivityPagination()
+   {
+      active = false;
+      is_recent = false;
+      from_msc = 0;
+      to_msc = 0;
+      after.time_msc = 0;
+      after.entity_type = 0;
+      after.ticket = 0;
+      snapshot_id = "";
+   }
    bool active;
    bool is_recent;
    long from_msc;

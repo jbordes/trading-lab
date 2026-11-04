@@ -23,6 +23,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2AuthorizationError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.contract import TelemetryValidationError
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.ingest import create_telemetry_server
 from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
@@ -56,6 +57,58 @@ def message(sequence: int = 1) -> bytes:
 
 
 class RelayTest(unittest.TestCase):
+    def test_framing_diagnostic_and_version_are_visible_without_request_values(self) -> None:
+        server = create_relay_server(self.ingress, port=0)
+        url = self.server(server)
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v2/telemetry")
+            connection.putheader("Content-Length", "2")
+            connection.putheader("Content-Type", "application/json")
+            connection.endheaders(b"{}")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+            self.assertEqual(json.loads(response.read()), {"error": "ambiguous_framing"})
+        finally:
+            connection.close()
+        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+            health = json.load(response)
+        self.assertEqual(health["diagnostics_version"], 2)
+        self.assertEqual(health["ingress_rejections"], {"ambiguous_framing": 1})
+
+    def test_validation_diagnostics_never_echo_body_or_exception_values(self) -> None:
+        server = create_relay_server(self.ingress, port=0)
+        url = self.server(server)
+        for detail in (
+            "Estado y conteos inconsistentes",
+            "Campos no admitidos en mensaje: private-marker",
+            "private-unknown-marker",
+        ):
+            with patch.object(self.ingress, "accept", side_effect=TelemetryValidationError(detail)):
+                request = urllib.request.Request(
+                    url + "/v2/telemetry",
+                    data=message(),
+                    headers={
+                        "Authorization": f"Bearer {LOCAL}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request, timeout=3)
+                self.assertEqual(caught.exception.code, 400)
+                self.assertEqual(json.load(caught.exception), {"error": "invalid_message"})
+        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+            health = json.load(response)
+        self.assertEqual(
+            health["ingress_rejections"],
+            {
+                "invalid_collection_counts": 1,
+                "invalid_fields": 1,
+                "invalid_message": 1,
+            },
+        )
+        self.assertNotIn("private-", json.dumps(health))
+
     def test_header_rejection_diagnostics_are_bounded_and_do_not_echo_headers(self) -> None:
         server = create_relay_server(self.ingress, port=0)
         url = self.server(server)

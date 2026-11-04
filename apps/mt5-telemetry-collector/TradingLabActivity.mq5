@@ -2,6 +2,7 @@
 #property version   "1.000"
 #property strict
 #include "TradingLabCollectorCommon.mqh"
+#include "TradingLabCollectorLog.mqh"
 #include "TradingLabActivityState.mqh"
 
 // Read-only v2 activity collector. It never sends or modifies trading orders.
@@ -27,9 +28,10 @@ input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.7.0";
+const string COLLECTOR_VERSION = "activity-0.7.1";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
+const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
 string cursor_key = "";
@@ -57,6 +59,8 @@ bool startup_pending = true;
 bool trade_activity_pending = false;
 CollectorCaptureState capture_state = CAPTURE_READY;
 CollectorTransport transport;
+CollectorLogger logger;
+int last_request_error = 0;
 int send_attempts = 0;
 // MQL5 requires a literal size for a static array declaration.
 TransactionHint transaction_hints[128];
@@ -73,25 +77,26 @@ ulong last_hint_position_id = 0;
 #ifndef ACTIVITY_COLLECTOR_TEST
 int OnInit()
 {
+   logger.Configure("activity", SourceId, COLLECTOR_VERSION);
    if(!IsLoopbackIngestUrl(IngestUrl))
    {
-      Print("TradingLab activity: only a loopback v2 endpoint is accepted");
+      logger.Error("invalid_configuration", "TradingLab activity: only a loopback v2 endpoint is accepted");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsCollectorToken(Token))
    {
-      Print("TradingLab activity: configure a local token with at least 24 characters");
+      logger.Error("invalid_configuration", "TradingLab activity: configure a local token with at least 24 characters");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsSafeIdentifier(SourceId))
    {
-      Print("TradingLab activity: SourceId contains unsupported characters");
+      logger.Error("invalid_configuration", "TradingLab activity: SourceId contains unsupported characters");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(IntervalSeconds < 2 || IntervalSeconds > 300 || RequestTimeoutMs < 500 ||
       RequestTimeoutMs > IntervalSeconds * 1000 / 2)
    {
-      Print("TradingLab activity: interval or timeout is outside the pilot limits");
+      logger.Error("invalid_configuration", "TradingLab activity: interval or timeout is outside the pilot limits");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(MaxHistoryRowsPerCycle < 10 || MaxHistoryRowsPerCycle > 2000 ||
@@ -103,7 +108,7 @@ int OnInit()
       RecentCadenceSeconds < IntervalSeconds || RecentCadenceSeconds > 3600 ||
       HeartbeatSeconds < IntervalSeconds || HeartbeatSeconds > 3600)
    {
-      Print("TradingLab activity: review history window, overlap, limit and explicit start");
+      logger.Error("invalid_configuration", "TradingLab activity: review history window, overlap, limit and explicit start");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(ExpectedDemoLogin <= 0 || ExpectedDemoServer == "")
@@ -114,14 +119,14 @@ int OnInit()
       return INIT_FAILED;
    if(!EventSetTimer(IntervalSeconds))
    {
-      PrintFormat("TradingLab activity: cannot start timer (%d)", GetLastError());
+      logger.Error("timer_failed", StringFormat("TradingLab activity: cannot start timer (%d)", GetLastError()));
       return INIT_FAILED;
    }
    if(recovery_blocked)
-      Print("TradingLab activity: deep recovery is blocked; recent capture remains independent");
+      logger.Warn("deep_recovery_blocked", "TradingLab activity: deep recovery is blocked; recent capture remains independent");
    if(recent_recovery_blocked)
-      Print("TradingLab activity: recent recovery is blocked at a saturated minimum window");
-   Print("TradingLab activity: read-only recent and deep recovery started");
+      logger.Warn("recent_recovery_blocked", "TradingLab activity: recent recovery is blocked at a saturated minimum window");
+   // Healthy lifecycle events do not emit routine log entries.
    return INIT_SUCCEEDED;
 }
 
@@ -130,9 +135,9 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    if(pending.body != "")
-      PrintFormat("TradingLab activity: unconfirmed range retained by cursor (%I64d..%I64d)",
-                  pending.from_msc, pending.to_msc);
-   PrintFormat("TradingLab activity: stopped (%d)", reason);
+      logger.Warn("unconfirmed_range", StringFormat("TradingLab activity: unconfirmed range retained by cursor (%I64d..%I64d)",
+                  pending.from_msc, pending.to_msc));
+   // Healthy lifecycle events do not emit routine log entries.
 }
 
 
@@ -208,7 +213,7 @@ void OnTimer()
          return;
       if(pagination.snapshot_id != "" && pending.page_snapshot_id != pagination.snapshot_id)
       {
-         Print("TradingLab activity: paged history changed; restarting the window");
+         logger.Warn("history_changed", "TradingLab activity: paged history changed; restarting the window");
          pagination.after.time_msc = 0;
          pagination.after.entity_type = 0;
          pagination.after.ticket = 0;
@@ -369,12 +374,18 @@ bool TrySendPending(const ulong now_ms)
    int status = SendMessage(pending.body);
    if(capture_state != CAPTURE_READY)
       return false;
+   if(status == LOCAL_ENCODING_FAILURE)
+   {
+      logger.Error("encoding_failed", "TradingLab activity: local batch preparation failed; cursor unchanged; stopped");
+      StopForSafety();
+      return false;
+   }
    if(send_attempts < 2147483647)
       send_attempts++;
    if(status == 200 || status == 202)
    {
-      if(transport.State() == DELIVERY_ACCESS_BLOCKED)
-         Print("TradingLab activity: receiver access restored");
+      logger.Resolve("receiver_access_blocked", sequence_number);
+      logger.Resolve("receiver_unavailable", sequence_number);
       if(pending.is_heartbeat)
       {
          pending.body = "";
@@ -396,7 +407,7 @@ bool TrySendPending(const ulong now_ms)
          string selected_blocked_key = pending.is_recent ? recent_blocked_key : blocked_key;
          if(!PersistValue(selected_blocked_key, pending.from_msc))
          {
-            Print("TradingLab activity: cannot persist blocked recovery marker");
+            logger.Error("cursor_persistence_failed", "TradingLab activity: cannot persist blocked recovery marker");
             StopForSafety();
             return false;
          }
@@ -404,8 +415,8 @@ bool TrySendPending(const ulong now_ms)
             recent_recovery_blocked = true;
          else
             recovery_blocked = true;
-         PrintFormat("TradingLab activity: saturated range requires operator review (%I64d..%I64d)",
-                     pending.from_msc, pending.to_msc);
+         logger.Error("recovery_saturated", StringFormat("TradingLab activity: saturated range requires operator review (%I64d..%I64d)",
+                     pending.from_msc, pending.to_msc));
          pending.body = "";
          pending.blocks_recovery = false;
          ResetRetryState();
@@ -421,22 +432,22 @@ bool TrySendPending(const ulong now_ms)
       }
       return true;
    }
-   CollectorDelivery previous = transport.State();
    CollectorDelivery delivery = transport.Observe(status, now_ms);
    if(delivery == DELIVERY_ACCESS_BLOCKED)
    {
-      if(previous != DELIVERY_ACCESS_BLOCKED)
-         Print("TradingLab activity: receiver access blocked; preserving batch and probing every 60 seconds");
+      logger.Warn("receiver_access_blocked", "preserving batch; probing every 60 seconds",
+                  sequence_number, status, last_request_error);
       return false;
    }
    if(delivery == DELIVERY_FATAL)
    {
-      PrintFormat("TradingLab activity: receiver rejected the batch with HTTP %d; stopped", status);
+      logger.Error("delivery_stopped", "receiver rejected batch; stopped",
+                   sequence_number, status, last_request_error);
       StopForSafety();
       return false;
    }
-   if(send_attempts == 1 || (send_attempts & (send_attempts - 1)) == 0)
-      PrintFormat("TradingLab activity: retrying the same unconfirmed batch (attempt %d)", send_attempts);
+   logger.Warn("receiver_unavailable", StringFormat("same batch retry; attempt=%d", send_attempts),
+               sequence_number, status, last_request_error);
    return false;
 }
 
@@ -476,7 +487,7 @@ bool FinalizeConfirmedBatch()
    string selected_cursor_key = pending.is_recent ? recent_cursor_key : cursor_key;
    if(next_cursor <= selected_cursor || !PersistValue(selected_cursor_key, next_cursor))
    {
-      Print("TradingLab activity: cannot persist confirmed recovery cursor");
+      logger.Error("cursor_persistence_failed", "TradingLab activity: cannot persist confirmed recovery cursor");
       StopForSafety();
       return false;
    }
@@ -507,8 +518,8 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
    ResetLastError();
    if(position_id <= 0 || !HistorySelectByPosition((ulong)position_id))
    {
-      PrintFormat("TradingLab activity: cannot select position %I64d history (%d)",
-                  position_id, GetLastError());
+      logger.Warn("position_history_failed", StringFormat("TradingLab activity: cannot select position %I64d history (%d)",
+                  position_id, GetLastError()));
       return -1;
    }
 
@@ -516,14 +527,14 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
    int order_total = HistoryOrdersTotal();
    if(deal_total < 1 || order_total < 1)
    {
-      PrintFormat("TradingLab activity: position %I64d has incomplete history; skipped",
-                  position_id);
+      logger.Warn("position_incomplete", StringFormat("TradingLab activity: position %I64d has incomplete history; skipped",
+                  position_id));
       return 0;
    }
    if(deal_total > MaxItemsPerCollection || order_total > MaxItemsPerCollection)
    {
-      PrintFormat("TradingLab activity: position %I64d exceeds collection limit; skipped",
-                  position_id);
+      logger.Warn("position_limit", StringFormat("TradingLab activity: position %I64d exceeds collection limit; skipped",
+                  position_id));
       return 0;
    }
 
@@ -545,8 +556,8 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
       if(ticket == 0 || GetLastError() != 0 || row_position_id != position_id ||
          time_msc <= 0 || !MathIsValidNumber(volume) || volume < 0.0)
       {
-         PrintFormat("TradingLab activity: position %I64d deal history is invalid; skipped",
-                     position_id);
+         logger.Warn("position_invalid", StringFormat("TradingLab activity: position %I64d deal history is invalid; skipped",
+                     position_id));
          return 0;
       }
       if(deal_type == DEAL_TYPE_BUY)
@@ -555,8 +566,8 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
          signed_volume -= volume;
       else
       {
-         PrintFormat("TradingLab activity: position %I64d has a non-trading deal; skipped",
-                     position_id);
+         logger.Warn("position_non_trading", StringFormat("TradingLab activity: position %I64d has a non-trading deal; skipped",
+                     position_id));
          return 0;
       }
       if(!has_event_time || time_msc < from_msc)
@@ -584,8 +595,8 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
       if(ticket == 0 || GetLastError() != 0 || done_msc <= 0 ||
          (order_position_id != position_id && position_by_id != position_id))
       {
-         PrintFormat("TradingLab activity: position %I64d order history is invalid; skipped",
-                     position_id);
+         logger.Warn("position_invalid", StringFormat("TradingLab activity: position %I64d order history is invalid; skipped",
+                     position_id));
          return 0;
       }
       if((long)ticket == position_id)
@@ -606,8 +617,8 @@ int BuildPositionReconcilePayload(const long position_id, string &payload)
 
    if(!has_event_time || !has_opening_order || MathAbs(signed_volume) > 0.00000001)
    {
-      PrintFormat("TradingLab activity: position %I64d is open or cannot be proven complete; skipped",
-                  position_id);
+      logger.Warn("position_open", StringFormat("TradingLab activity: position %I64d is open or cannot be proven complete; skipped",
+                  position_id));
       return 0;
    }
 
@@ -637,7 +648,7 @@ void AddCandidatePosition(const long position_id)
          return;
    if(candidate_position_count >= MaxItemsPerCollection || candidate_position_count >= 200)
    {
-      Print("TradingLab activity: cannot retain position reconciliation candidate");
+      logger.Error("candidate_capacity", "TradingLab activity: cannot retain position reconciliation candidate");
       StopForSafety();
       return;
    }
@@ -669,8 +680,8 @@ void ContinuePositionReconciliation()
          return;
       if(!PayloadSizeIsValid(envelope))
       {
-         PrintFormat("TradingLab activity: position %I64d evidence exceeds payload limit; skipped",
-                     position_id);
+         logger.Warn("position_payload_limit", StringFormat("TradingLab activity: position %I64d evidence exceeds payload limit; skipped",
+                     position_id));
          candidate_position_index++;
          continue;
       }
@@ -717,19 +728,19 @@ bool CheckPilotSafety()
    if(observed == CAPTURE_WAIT_BROKER)
    {
       if(capture_state != CAPTURE_WAIT_BROKER)
-         Print("TradingLab activity: broker unavailable; waiting without advancing capture");
+         logger.Warn("broker_unavailable", "TradingLab activity: broker unavailable; waiting without advancing capture");
       capture_state = CAPTURE_WAIT_BROKER;
       return false;
    }
    if(observed == CAPTURE_READY)
    {
       if(capture_state == CAPTURE_WAIT_BROKER)
-         Print("TradingLab activity: approved broker connection restored");
+         logger.Resolve("broker_unavailable");
       capture_state = CAPTURE_READY;
       return true;
    }
    StopForSafety();
-   Print("TradingLab activity: pilot guard stopped capture; review demo identity and reattach EA");
+   logger.Error("identity_guard_stopped", "TradingLab activity: pilot guard stopped capture; review demo identity and reattach EA");
    return false;
 }
 
@@ -744,13 +755,29 @@ int SendMessage(const string body)
    string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + Token + "\r\n";
    int encoded = StringToCharArray(body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
    if(encoded <= 1)
-      return 400;
+   {
+      last_request_error = GetLastError();
+      logger.Error("encoding_failed", "local UTF-8 preparation failed; no HTTP request sent",
+                   sequence_number, 0, last_request_error);
+      return LOCAL_ENCODING_FAILURE;
+   }
    ArrayResize(request_body, encoded - 1);
    ResetLastError();
    int status = WebRequest("POST", IngestUrl, headers, RequestTimeoutMs,
                            request_body, response_body, response_headers);
-   if(status == -1)
-      PrintFormat("TradingLab activity: request failed (%d)", GetLastError());
+   last_request_error = GetLastError();
+   if(status == 400)
+   {
+      // Print only fixed diagnostic codes, never an arbitrary response or the batch.
+      string response = CharArrayToString(response_body, 0, WHOLE_ARRAY, CP_UTF8);
+      string diagnostic = "unrecognized_response";
+      string known_errors[] = {"ambiguous_framing", "incomplete_body", "invalid_message"};
+      for(int index = 0; index < ArraySize(known_errors); index++)
+         if(StringFind(response, "\"" + known_errors[index] + "\"") >= 0)
+            diagnostic = known_errors[index];
+      logger.Error("invalid_message_diagnostic", StringFormat("TradingLab activity: HTTP 400 diagnostic=%s request_bytes=%d response_bytes=%d",
+                  diagnostic, ArraySize(request_body), ArraySize(response_body)));
+   }
    return status;
 }
 
@@ -766,7 +793,7 @@ string BuildActivityPayload(const string reason, const long from_msc, const long
    ResetLastError();
    if(to_msc < from_msc || !HistorySelect((datetime)from_seconds, (datetime)to_seconds))
    {
-      PrintFormat("TradingLab activity: HistorySelect failed (%d)", GetLastError());
+      logger.Warn("history_select_failed", StringFormat("TradingLab activity: HistorySelect failed (%d)", GetLastError()));
       return "";
    }
    if(HistoryDealsTotal() > MaxItemsPerCollection ||
@@ -783,7 +810,7 @@ string BuildActivityPayload(const string reason, const long from_msc, const long
    string orders = BuildHistoricalOrders(from_msc, to_msc, order_total, valid);
    if(!valid)
    {
-      Print("TradingLab activity: history read returned invalid data");
+      logger.Warn("history_invalid", "TradingLab activity: history read returned invalid data");
       return "";
    }
    bool deals_truncated = deal_total > MaxItemsPerCollection;
@@ -820,7 +847,7 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
    ResetLastError();
    if(to_msc < from_msc || !HistorySelect((datetime)from_seconds, (datetime)to_seconds))
    {
-      PrintFormat("TradingLab activity: paged HistorySelect failed (%d)", GetLastError());
+      logger.Warn("history_select_failed", StringFormat("TradingLab activity: paged HistorySelect failed (%d)", GetLastError()));
       return "";
    }
 
@@ -897,7 +924,7 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
    int order_total = page_scan.order_total;
    if(key_count < 1)
    {
-      Print("TradingLab activity: paged range has no records after its cursor");
+      logger.Warn("page_empty", "TradingLab activity: paged range has no records after its cursor");
       return "";
    }
 
@@ -1215,7 +1242,7 @@ bool PayloadSizeIsValid(const string body)
    int size = Utf8Size(body);
    if(size < 1 || size > MAX_PAYLOAD_BYTES)
    {
-      PrintFormat("TradingLab activity: payload size rejected (%d)", size);
+      logger.Error("payload_size", StringFormat("TradingLab activity: payload size rejected (%d)", size));
       return false;
    }
    return true;
@@ -1253,7 +1280,7 @@ bool InitializeRecovery()
       return false;
    if((long)HistoryStartServerTime > now_seconds)
    {
-      Print("TradingLab activity: HistoryStartServerTime must not be in the future");
+      logger.Error("invalid_configuration", "TradingLab activity: HistoryStartServerTime must not be in the future");
       StopForSafety();
       return false;
    }
@@ -1275,7 +1302,7 @@ bool InitializeRecovery()
       if(restored < confirmed_from_msc || restored > now_seconds * 1000 ||
          (double)restored != stored)
       {
-         Print("TradingLab activity: stored cursor is invalid; remove it after operator review");
+         logger.Error("invalid_configuration", "TradingLab activity: stored cursor is invalid; remove it after operator review");
          StopForSafety();
          return false;
       }
@@ -1288,7 +1315,7 @@ bool InitializeRecovery()
       if(restored < (long)HistoryStartServerTime * 1000 ||
          restored > now_seconds * 1000 || (double)restored != stored)
       {
-         Print("TradingLab activity: stored recent cursor is invalid; review it manually");
+         logger.Error("invalid_configuration", "TradingLab activity: stored recent cursor is invalid; review it manually");
          StopForSafety();
          return false;
       }

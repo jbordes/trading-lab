@@ -13,6 +13,7 @@ from tradinglab.telemetry.admission_v2 import (
     ProducerRole,
     TradingEventsProducerDirectory,
 )
+from tradinglab.telemetry.contract import TelemetryEnvelope
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
@@ -82,13 +83,27 @@ class PersistentV2TelemetryReceiver:
             self._require_open()
             authorized = self._directory.authorize(body, authorization)
             stored = self._registry.store_authorized(authorized, received_at=self._clock())
-            if stored.disposition.value == "duplicate":
-                self._duplicates += 1
-            else:
-                self._accepted += 1
-                self._out_of_order += int(stored.out_of_order)
-                self._gaps += stored.sequence_gap
-            return stored
+            return self._record(stored)
+
+    def _accept_validated(self, envelope: TelemetryEnvelope, authorization: str) -> StoredV2Message:
+        """Accept after the HTTP boundary has parsed and schema-validated the body."""
+
+        with self._lock:
+            self._require_open()
+            authorized = self._directory.authorize_envelope(envelope, authorization)
+            stored = self._registry._store_validated_authorized(
+                authorized, received_at=self._clock()
+            )
+            return self._record(stored)
+
+    def _record(self, stored: StoredV2Message) -> StoredV2Message:
+        if stored.disposition.value == "duplicate":
+            self._duplicates += 1
+        else:
+            self._accepted += 1
+            self._out_of_order += int(stored.out_of_order)
+            self._gaps += stored.sequence_gap
+        return stored
 
     def state(self) -> dict[str, int | str]:
         with self._lock:

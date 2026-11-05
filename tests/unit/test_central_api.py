@@ -117,13 +117,63 @@ class CentralApiTest(unittest.TestCase):
             self.assertEqual(database.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 1)
             for table in ("telemetry_messages", "telemetry_v2_messages"):
                 self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
-
         copied = BackupPlan(
             self.root, self.settings.database.name, self.root, (CENTRAL_SCHEMA_VERSION,)
         ).apply()
         with closing(sqlite3.connect(copied.directory / "data.sqlite3")) as database:
             for table in ("telemetry_messages", "telemetry_v2_messages"):
                 self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
+
+    def test_ingest_reuses_api_validated_envelopes_across_storage_layers(self) -> None:
+        raw_snapshot = json.dumps(snapshot_message(), separators=(",", ":")).encode()
+        with (
+            patch(
+                "tradinglab.telemetry.central_api.parse_envelope", wraps=parse_envelope
+            ) as parse_v1,
+            patch(
+                "tradinglab.telemetry.sqlite_store.parse_envelope", wraps=parse_envelope
+            ) as restore_v1,
+        ):
+            response = self.client.post(
+                "/api/account-state",
+                content=raw_snapshot,
+                headers={
+                    "Authorization": f"Bearer {self.settings.snapshot_ingest}",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(parse_v1.call_count, 1)
+        # One parse remains intentional: verify the committed SQLite snapshot/hash.
+        self.assertEqual(restore_v1.call_count, 1)
+
+        raw_events = (FIXTURES / "activity-canceled-order.json").read_bytes()
+        with (
+            patch(
+                "tradinglab.telemetry.central_api.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as parse_v2,
+            patch(
+                "tradinglab.telemetry.admission_v2.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as reparse_admission,
+            patch(
+                "tradinglab.telemetry.sqlite_store_v2.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as reparse_storage,
+        ):
+            response = self.client.post(
+                "/api/trading-events",
+                content=raw_events,
+                headers={
+                    "Authorization": f"Bearer {self.settings.activity_ingest}",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(parse_v2.call_count, 1)
+        self.assertEqual(reparse_admission.call_count, 0)
+        self.assertEqual(reparse_storage.call_count, 0)
 
     def test_v1_health_requires_read_permission_and_exposes_no_payload(self) -> None:
         for key in (self.settings.snapshot_ingest, self.settings.trading_read):

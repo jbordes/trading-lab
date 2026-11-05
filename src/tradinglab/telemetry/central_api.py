@@ -316,7 +316,7 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         except ValidationError:
             raise HTTPException(400, "invalid_message") from None
         result = await anyio.to_thread.run_sync(
-            services(request).trading_events.accept, raw, authorization
+            services(request).trading_events._accept_validated, envelope, authorization
         )
         response.status_code = 200 if result.disposition.value == "duplicate" else 202
         return m.TradingEventsAck(

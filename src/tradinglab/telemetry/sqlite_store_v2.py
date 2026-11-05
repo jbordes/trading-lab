@@ -322,9 +322,33 @@ class V2TelemetryRegistry:
 
         if not isinstance(authorized, AuthorizedEnvelope):
             raise ValueError("Mensaje autorizado inválido")
-        received = _timestamp(received_at)
         canonical_bytes = authorized.envelope.canonical_bytes()
         envelope = parse_envelope_v2(canonical_bytes)
+        return self._persist_authorized(envelope, authorized, canonical_bytes, received_at)
+
+    def _store_validated_authorized(
+        self,
+        authorized: AuthorizedEnvelope,
+        *,
+        received_at: datetime,
+    ) -> StoredV2Message:
+        """Persist an envelope validated by the API and producer directory."""
+
+        if not isinstance(authorized, AuthorizedEnvelope):
+            raise ValueError("Mensaje autorizado inv\u00e1lido")
+        envelope = authorized.envelope
+        return self._persist_authorized(
+            envelope, authorized, envelope.canonical_bytes(), received_at
+        )
+
+    def _persist_authorized(
+        self,
+        envelope: TelemetryEnvelope,
+        authorized: AuthorizedEnvelope,
+        canonical_bytes: bytes,
+        received_at: datetime,
+    ) -> StoredV2Message:
+        received = _timestamp(received_at)
         canonical = canonical_bytes.decode("utf-8")
         digest = hashlib.sha256(canonical_bytes).hexdigest()
         captured = _timestamp(datetime.fromisoformat(envelope.captured_at))

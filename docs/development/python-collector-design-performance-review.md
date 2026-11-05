@@ -77,18 +77,27 @@ instalaciones, tests nativos ni benchmarks.
   `test_telemetry_v2_persistent_http`; 8 nuevas se repitieron tras el ajuste
   final. `fast` correcto; no se ejecutó `full` local.
 
-### PY03 — Parseo de snapshot repetido en varias fronteras
+### PY03 — Parseo de snapshot repetido en varias fronteras — resuelto
 
 - **Prioridad:** media. **Ubicación:** `central_api.py`,
   `persisted_view.py:store_message`, `sqlite_store.py:store_message`.
-- Snapshot se parsea en API, se serializa a bytes canónicos y vuelve a parsearse
-  en vista y registro; la vista refresca desde SQLite. Events tiene trayecto
-  relacionado entre API y directorio. Hay trabajo repetido y reglas distribuidas;
-  costo temporal no medido.
-- **Propuesta:** evaluar frontera tipada validada compartida sin retirar guardas
-  externas, autorización, hash ni canonicalización.
-- **Aceptación:** preservar resultados para malformados, duplicados, fuera de
-  orden y refresh posterior al commit.
+- En el ingreso account-state, el API validaba el cuerpo, lo pasaba a bytes
+  canónicos y las capas de vista/SQLite volvían a parsearlo antes del commit.
+  Trading-events también repetía el parseo entre API, autorización y SQLite.
+- **Cambio:** las capas internas reutilizan el envelope validado. Las interfaces
+  públicas que reciben bytes (`store_message` y `authorize`) conservan el parseo
+  completo; la API conserva autenticación, validación de contrato/Pydantic,
+  autorización de productor, canonicalización, hashes, transacción y
+  verificación del registro comprometido desde SQLite. La escritura v2 sigue
+  contrastando cuenta, rol, fuente e identidad con la base.
+- **Evidencia:** una prueba HTTP instrumenta los parseos: account-state reduce
+  de tres parseos de escritura/lectura a uno de entrada más el parseo intencional
+  al restaurar/verificar SQLite; trading-events reduce los parseos internos a
+  cero tras el parseo HTTP. No se afirma una mejora de latencia medida.
+- **Aceptación:** los tests de almacenamiento, autorización y receiver conservan
+  validación, duplicados, conflictos, secuencias y restauración. La integración
+  HTTP FastAPI añadida queda pendiente de ejecutar en un entorno con sus
+  dependencias instaladas.
 
 ### PY04 — Métricas de ciclos con potencial de escalabilidad
 
@@ -189,13 +198,19 @@ parcial, no método por método. Pendiente revisión completa de autenticación 
 servicio web del dashboard, métricas de ciclos y detalle de operaciones,
 configuración/secretos, backup, jobs, bootstrap, CLI y harness/tests.
 
-Orden propuesto, no aprobación de implementación:
+Orden actualizado tras la decisión de aplazar la revisión de collectors y
+pruebas manuales hasta el final:
 
-1. PY01 y PY02 quedan guardados; priorizar PY06 con tests dirigidos y contrato
-   explícito de deduplicación.
-2. MQ01 y MQ02 antes de instalar en cuenta con historial denso.
-3. PY03, PY04 y PY07.
-4. Evaluar PY05 con conectividad remota y mediciones.
+1. PY01, PY02, PY03 y PY06 están implementados en la rama de revisión; PR/CI y
+   merge humano siguen pendientes.
+2. Continuar con PY04 y PY07 mediante cambios pequeños, pruebas afectadas y sin
+   agregar cache ni agregación persistida sin evidencia.
+3. Evaluar PY05 cuando haya conectividad remota y mediciones representativas.
+4. Al final, retomar MQ01/MQ02 y las pruebas manuales MQL5.
+
+La garantía de retención de cada snapshot Telemetry también queda como decisión
+futura: definir primero si se requieren todas las muestras durante interrupciones;
+no se implementa una outbox durable dentro del EA en esta revisión.
 
 Referencias oficiales MQL5:
 

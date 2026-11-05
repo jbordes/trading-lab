@@ -174,6 +174,22 @@ class TradingEventsProducerDirectory:
 
         producer = self._authenticate(authorization)
         envelope = parse_envelope_v2(body)
+        return self._authorize_envelope(envelope, producer)
+
+    def authorize_envelope(
+        self,
+        envelope: TelemetryEnvelope,
+        authorization: str,
+    ) -> AuthorizedEnvelope:
+        """Authorize an envelope already validated by the API contract parser."""
+
+        if not isinstance(envelope, TelemetryEnvelope):
+            raise ValueError("Se requiere un envelope v2 validado")
+        producer = self._authenticate(authorization)
+        return self._authorize_envelope(envelope, producer)
+
+    @staticmethod
+    def _authorize_envelope(envelope: TelemetryEnvelope, producer: _Producer) -> AuthorizedEnvelope:
         allowed_kind = {
             ProducerRole.LIVE: "live_snapshot",
             ProducerRole.ACTIVITY: "activity_batch",

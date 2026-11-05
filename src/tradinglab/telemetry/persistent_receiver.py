@@ -57,11 +57,14 @@ class PersistentTelemetryReceiver:
         self._closed = False
 
     def accept(self, envelope: TelemetryEnvelope) -> IngestOutcome:
+        """Persist an envelope parsed and validated by the API boundary."""
+        if not isinstance(envelope, TelemetryEnvelope):
+            raise ValueError("Se requiere un envelope de telemetría validado")
         if envelope.source_id != self._source_id:
             raise MessageAdmissionError("Fuente no autorizada por este receptor")
         with self._lock:
             self._require_open()
-            result = self._view.store_message(envelope.canonical_bytes(), received_at=self._clock())
+            result = self._view._store_validated_envelope(envelope, received_at=self._clock())
             if result.duplicate:
                 self._duplicates += 1
             else:

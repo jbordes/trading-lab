@@ -8,6 +8,8 @@ from datetime import date
 from html import escape
 from pathlib import Path
 
+from tradinglab.telemetry.remote_host import tailscale_hostname
+
 
 @dataclass(frozen=True, slots=True)
 class WindowsTask:
@@ -55,22 +57,23 @@ class WindowsTask:
 def task_plan(
     root: Path,
     storage: Path,
-    secrets_file: Path,
     *,
     start_date: date,
+    tailscale_host: str | None = None,
 ) -> tuple[WindowsTask, WindowsTask]:
+    api_arguments = (
+        str(root / "scripts" / "run_central_api_job.py"),
+        "--data-dir",
+        str(storage),
+    )
+    if tailscale_host is not None:
+        api_arguments += ("--tailscale-host", tailscale_hostname(tailscale_host))
     python = root / ".venv" / "Scripts" / "python.exe"
     receivers = WindowsTask(
-        name="TradingLab Telemetry Receivers",
-        description="Receptores locales read-only de TradingLab; no inicia ni modifica MT5.",
+        name="TradingLab Central API",
+        description="API central de TradingLab sobre una SQLite; no inicia ni modifica MT5.",
         command=python,
-        arguments=(
-            str(root / "scripts" / "run_telemetry_receivers_job.py"),
-            "--storage-root",
-            str(storage),
-            "--secrets-file",
-            str(secrets_file),
-        ),
+        arguments=api_arguments,
         working_directory=root,
         trigger_xml="<LogonTrigger><Enabled>true</Enabled></LogonTrigger>",
         restart_count=3,

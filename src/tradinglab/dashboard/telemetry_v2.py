@@ -7,8 +7,10 @@ import math
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from time import monotonic
 
 from tradinglab.dashboard.snapshot import DashboardReadError
 from tradinglab.dashboard.telemetry import (
@@ -34,6 +36,7 @@ from tradinglab.telemetry.contract import (
 )
 
 TELEMETRY_READ_TOKEN_ENV = "TRADINGLAB_TELEMETRY_READ_TOKEN"
+CYCLE_METRICS_BUDGET_SECONDS = 4.0
 _RESPONSE_FIELDS = {
     "account_id",
     "entity_type",
@@ -359,9 +362,9 @@ class LoopbackV2HistoryClient:
             or not 0.05 <= timeout_seconds <= 30
         ):
             raise ValueError("Timeout v2 fuera de rango")
-        self._activity_url = f"http://127.0.0.1:{port}/v2/activity"
-        self._cycles_url = f"http://127.0.0.1:{port}/v2/position-cycles"
-        self._cycle_magics_url = f"http://127.0.0.1:{port}/v2/position-cycle-magics"
+        self._activity_url = f"http://127.0.0.1:{port}/api/trading/activity"
+        self._cycles_url = f"http://127.0.0.1:{port}/api/trading/position-cycles"
+        self._cycle_magics_url = f"http://127.0.0.1:{port}/api/trading/position-cycle-magics"
         self._authorization = f"Bearer {read_authorization}"
         self._source_id = activity_source_id
         self._timeout = float(timeout_seconds)
@@ -378,6 +381,7 @@ class LoopbackV2HistoryClient:
         magic_number: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> TelemetryDealPage:
         parameters: dict[str, str | int] = {
             "entity": "deal",
@@ -394,8 +398,7 @@ class LoopbackV2HistoryClient:
             headers={"Authorization": self._authorization, "Accept": "application/json"},
         )
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                body = response.read(MAX_BODY_BYTES + 1)
+            body = self._history_body(request, timeout_seconds)
         except urllib.error.HTTPError as exc:
             exc.close()
             if 300 <= exc.code < 400:
@@ -481,6 +484,7 @@ class LoopbackV2HistoryClient:
         include_details: bool = True,
         limit: int = 50,
         cursor: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> TelemetryPositionCyclePage:
         parameters: dict[str, str | int] = {"limit": limit}
         if owner_magic is not None:
@@ -505,8 +509,7 @@ class LoopbackV2HistoryClient:
             headers={"Authorization": self._authorization, "Accept": "application/json"},
         )
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                body = response.read(MAX_BODY_BYTES + 1)
+            body = self._history_body(request, timeout_seconds)
         except urllib.error.HTTPError as exc:
             exc.close()
             if 300 <= exc.code < 400:
@@ -529,6 +532,35 @@ class LoopbackV2HistoryClient:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DashboardReadError("El receptor devolvió ciclos v2 inválidos") from exc
+
+    def _history_body(
+        self, request: urllib.request.Request, timeout_seconds: float | None
+    ) -> bytes:
+        """Bound I/O and check elapsed time even when the peer keeps sending bytes."""
+        if timeout_seconds is not None and (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("Presupuesto de lectura inválido")
+        deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
+        io_timeout = (
+            self._timeout if timeout_seconds is None else min(self._timeout, timeout_seconds)
+        )
+        body = bytearray()
+        with self._opener.open(request, timeout=io_timeout) as response:
+            while len(body) <= MAX_BODY_BYTES:
+                if deadline is not None and monotonic() >= deadline:
+                    raise DashboardReadError("Se agotó el tiempo de lectura del historial")
+                # read1 avoids waiting for a full chunk while a peer slowly drips bytes.
+                chunk = response.read1(min(65536, MAX_BODY_BYTES + 1 - len(body)))
+                if deadline is not None and monotonic() >= deadline:
+                    raise DashboardReadError("Se agotó el tiempo de lectura del historial")
+                if not chunk:
+                    break
+                body.extend(chunk)
+        return bytes(body)
 
     def position_cycle_magics(self) -> tuple[str, ...]:
         request = urllib.request.Request(
@@ -1074,8 +1106,23 @@ class LoopbackV2HistoryClient:
 class V2HistoryProvider:
     """Expose v2 recovered deals and existing metric formulas to the dashboard."""
 
-    def __init__(self, client: LoopbackV2HistoryClient) -> None:
+    def __init__(
+        self,
+        client: LoopbackV2HistoryClient,
+        *,
+        metrics_budget_seconds: float = CYCLE_METRICS_BUDGET_SECONDS,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        if (
+            isinstance(metrics_budget_seconds, bool)
+            or not isinstance(metrics_budget_seconds, (int, float))
+            or not math.isfinite(metrics_budget_seconds)
+            or not 0 < metrics_budget_seconds <= 30
+        ):
+            raise ValueError("El presupuesto de métricas debe ser mayor que 0 y hasta 30 segundos")
         self._client = client
+        self._metrics_budget = float(metrics_budget_seconds)
+        self._clock = clock
 
     def deal_history(
         self,
@@ -1128,12 +1175,22 @@ class V2HistoryProvider:
         owner_magic: str | None = None,
         owner_magics: tuple[str, ...] = (),
     ) -> TelemetryCyclePerformance:
+        deadline = self._clock() + self._metrics_budget
+
+        def remaining() -> float:
+            seconds = deadline - self._clock()
+            if seconds <= 0:
+                raise DashboardReadError("Se agotó el tiempo de cálculo de métricas")
+            return seconds
+
         evidence = self._client.deal_history(
             from_msc=from_msc,
             to_msc=to_msc,
             magic_number=owner_magic,
             limit=1,
+            timeout_seconds=remaining(),
         )
+        remaining()
         if evidence.coverage is None:
             raise DashboardReadError("El receptor no informó cobertura de deals")
         combined = StreamingWorkbookMetrics()
@@ -1142,6 +1199,7 @@ class V2HistoryProvider:
         cursor: str | None = None
         account_id: str | None = None
         source_id: str | None = None
+        last_key: tuple[int, int] | None = None
         while True:
             page = self._client.position_cycles(
                 owner_magic=owner_magic,
@@ -1153,7 +1211,9 @@ class V2HistoryProvider:
                 include_details=False,
                 limit=100,
                 cursor=cursor,
+                timeout_seconds=remaining(),
             )
+            remaining()
             if account_id is not None and page.account_id != account_id:
                 raise DashboardReadError("La cuenta cambió durante el cálculo")
             if source_id is not None and page.source_id != source_id:
@@ -1161,7 +1221,12 @@ class V2HistoryProvider:
             account_id = page.account_id
             source_id = page.source_id
             for item in page.cycles:
+                remaining()
                 cycle = item.cycle
+                key = (cycle.last_event_at_msc, int(cycle.position_id))
+                if last_key is not None and key <= last_key:
+                    raise DashboardReadError("El receptor retrocedió o repitió ciclos")
+                last_key = key
                 if not cycle.eligible_for_autonomous_metrics or cycle.owner_magic is None:
                     continue
                 available_magics.add(cycle.owner_magic)
@@ -1182,12 +1247,18 @@ class V2HistoryProvider:
             next_cursor = page.next_cursor
             if next_cursor is None:
                 break
-            if next_cursor == cursor or not page.cycles:
+            if (
+                not page.cycles
+                or last_key is None
+                or next_cursor != f"{last_key[0]}:{last_key[1]}"
+                or next_cursor == cursor
+            ):
                 raise DashboardReadError("El receptor no avanzó la paginación de ciclos")
             cursor = next_cursor
         if account_id is None or source_id is None:
             raise DashboardReadError("El receptor no informó la cuenta")
         combined_snapshot = combined.snapshot()
+        remaining()
         prepared = {
             "account_id": account_id,
             "source_id": source_id,
@@ -1210,6 +1281,7 @@ class V2HistoryProvider:
             "available_magics": sorted(available_magics),
             "selected_magics": list(owner_magics),
         }
+        remaining()
         return TelemetryCyclePerformance(
             account_id,
             source_id,

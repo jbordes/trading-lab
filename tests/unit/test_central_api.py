@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -18,26 +22,168 @@ from tradinglab.dashboard.telemetry import LoopbackTelemetryClient
 from tradinglab.dashboard.telemetry_v2 import LoopbackV2HistoryClient, V2HistoryProvider
 from tradinglab.telemetry import api_models as models
 from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
+from tradinglab.telemetry.backup import BackupPlan
 from tradinglab.telemetry.central_api import CentralSettings, create_central_app
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, parse_envelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_delivery import validate_central_ack
 from tradinglab.telemetry.relay_queue import RelayQueue, create_relay_database
-from tradinglab.telemetry.sqlite_store import create_database, open_registry
-from tradinglab.telemetry.sqlite_store_v2 import V2StorageError
+from tradinglab.telemetry.sqlite_store import MessageAdmissionError, open_registry
+from tradinglab.telemetry.sqlite_store_v2 import V2StorageError, open_v2_registry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
 
 
 class CentralApiTest(unittest.TestCase):
+    def test_previous_routes_and_wire_names_are_not_accepted(self) -> None:
+        headers = {"Authorization": f"Bearer {self.settings.snapshot_ingest}"}
+        self.assertEqual(
+            self.client.post("/v1/telemetry", json=snapshot_message(), headers=headers).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/v2/telemetry", json=models.EXAMPLE_TRADING_EVENTS, headers=headers
+            ).status_code,
+            404,
+        )
+        self.assertEqual(self.client.get("/v1/snapshot").status_code, 404)
+        old = snapshot_message()
+        old["schema_version"] = "mt5-telemetry-v1"
+        self.assertEqual(
+            self.client.post("/api/account-state", json=old, headers=headers).status_code, 400
+        )
+        old_events = {**models.EXAMPLE_TRADING_EVENTS, "schema_version": "mt5-telemetry-v2"}
+        self.assertEqual(
+            self.client.post(
+                "/api/trading-events",
+                json=old_events,
+                headers={"Authorization": f"Bearer {self.settings.live_ingest}"},
+            ).status_code,
+            400,
+        )
+        paths = self.client.get("/openapi.json").json()["paths"]
+        self.assertTrue(all(path.startswith("/api/") or path == "/health" for path in paths))
+
+    def test_startup_rejects_cross_account_or_wrong_role_sources(self) -> None:
+        for settings in (
+            replace(self.settings, account_id="another-account"),
+            replace(self.settings, source_id="synthetic-activity"),
+        ):
+            with self.subTest(settings=settings.source_id), self.assertRaises(ValueError):
+                with TestClient(create_central_app(settings)):
+                    self.fail("No debe iniciar con identidad de cuenta o rol incorrectos")
+
+    def test_v1_rejects_wrong_masked_account_and_activity_source(self) -> None:
+        message = snapshot_message()
+        message["payload"]["account"]["login_masked"] = "****9999"
+        response = self.client.post(
+            "/api/account-state",
+            json=message,
+            headers={"Authorization": f"Bearer {self.settings.snapshot_ingest}"},
+        )
+        self.assertEqual(response.status_code, 403, response.text)
+        message = snapshot_message()
+        message["source_id"] = "synthetic-activity"
+        with (
+            open_registry(self.settings.database) as registry,
+            self.assertRaises(MessageAdmissionError),
+        ):
+            registry.store_message(json.dumps(message).encode(), received_at=datetime.now(UTC))
+
+    def test_concurrent_contracts_commit_to_one_file_and_deduplicate(self) -> None:
+        messages = (
+            ("/api/account-state", self.settings.snapshot_ingest, snapshot_message()),
+            (
+                "/api/trading-events",
+                self.settings.activity_ingest,
+                json.loads((FIXTURES / "activity-canceled-order.json").read_text()),
+            ),
+        )
+
+        def send(item):
+            route, token, payload = item
+            return self.client.post(
+                route, json=payload, headers={"Authorization": f"Bearer {token}"}
+            )
+
+        for expected in (202, 200):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                for response in pool.map(send, messages):
+                    self.assertEqual(response.status_code, expected, response.text)
+        with closing(sqlite3.connect(self.settings.database)) as database:
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 1)
+            for table in ("telemetry_messages", "telemetry_v2_messages"):
+                self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
+        copied = BackupPlan(
+            self.root, self.settings.database.name, self.root, (CENTRAL_SCHEMA_VERSION,)
+        ).apply()
+        with closing(sqlite3.connect(copied.directory / "data.sqlite3")) as database:
+            for table in ("telemetry_messages", "telemetry_v2_messages"):
+                self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
+
+    def test_ingest_reuses_api_validated_envelopes_across_storage_layers(self) -> None:
+        raw_snapshot = json.dumps(snapshot_message(), separators=(",", ":")).encode()
+        with (
+            patch(
+                "tradinglab.telemetry.central_api.parse_envelope", wraps=parse_envelope
+            ) as parse_v1,
+            patch(
+                "tradinglab.telemetry.sqlite_store.parse_envelope", wraps=parse_envelope
+            ) as restore_v1,
+        ):
+            response = self.client.post(
+                "/api/account-state",
+                content=raw_snapshot,
+                headers={
+                    "Authorization": f"Bearer {self.settings.snapshot_ingest}",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(parse_v1.call_count, 1)
+        # One parse remains intentional: verify the committed SQLite snapshot/hash.
+        self.assertEqual(restore_v1.call_count, 1)
+
+        raw_events = (FIXTURES / "activity-canceled-order.json").read_bytes()
+        with (
+            patch(
+                "tradinglab.telemetry.central_api.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as parse_v2,
+            patch(
+                "tradinglab.telemetry.admission_v2.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as reparse_admission,
+            patch(
+                "tradinglab.telemetry.sqlite_store_v2.parse_envelope_v2",
+                wraps=parse_envelope_v2,
+            ) as reparse_storage,
+        ):
+            response = self.client.post(
+                "/api/trading-events",
+                content=raw_events,
+                headers={
+                    "Authorization": f"Bearer {self.settings.activity_ingest}",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(parse_v2.call_count, 1)
+        self.assertEqual(reparse_admission.call_count, 0)
+        self.assertEqual(reparse_storage.call_count, 0)
+
     def test_v1_health_requires_read_permission_and_exposes_no_payload(self) -> None:
-        for key in (self.settings.v1_ingest, self.settings.v2_read):
-            response = self.client.get("/v1/health", headers={"Authorization": f"Bearer {key}"})
+        for key in (self.settings.snapshot_ingest, self.settings.trading_read):
+            response = self.client.get(
+                "/api/accounts/health", headers={"Authorization": f"Bearer {key}"}
+            )
             self.assertEqual(response.status_code, 401)
         response = self.client.get(
-            "/v1/health", headers={"Authorization": f"Bearer {self.settings.v1_read}"}
+            "/api/accounts/health",
+            headers={"Authorization": f"Bearer {self.settings.account_read}"},
         )
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("latest", response.json())
@@ -67,24 +213,24 @@ class CentralApiTest(unittest.TestCase):
             self.assertTrue(server.started, "La API de prueba no inició")
             producers = (
                 RelayProducer(
-                    "v1",
+                    "account-state",
                     "demo-terminal-01",
                     "demo",
-                    ProducerRole.LIVE,
+                    ProducerRole.SNAPSHOT,
                     ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-                    f"http://127.0.0.1:{port}/v1/telemetry",
+                    f"http://127.0.0.1:{port}/api/account-state",
                     "synthetic-local-live-key-12345",
-                    self.settings.v1_ingest,
+                    self.settings.snapshot_ingest,
                 ),
                 RelayProducer(
-                    "v2",
+                    "trading-events",
                     "synthetic-activity",
                     "demo",
                     ProducerRole.ACTIVITY,
                     ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-                    f"http://127.0.0.1:{port}/v2/telemetry",
+                    f"http://127.0.0.1:{port}/api/trading-events",
                     "synthetic-local-activity-key-12345",
-                    self.settings.v2_activity,
+                    self.settings.activity_ingest,
                 ),
             )
             queue_path = self.root / "outbox.sqlite3"
@@ -93,7 +239,7 @@ class CentralApiTest(unittest.TestCase):
             try:
                 ingress = RelayIngress(queue, producers)
                 ingress.accept(
-                    "v2",
+                    "trading-events",
                     (FIXTURES / "activity-canceled-order.json").read_bytes(),
                     f"Bearer {producers[1].local_token}",
                     now=1,
@@ -106,7 +252,7 @@ class CentralApiTest(unittest.TestCase):
                     ),
                     strict=True,
                 ):
-                    ingress.accept(producer.version, raw, f"Bearer {producer.local_token}", now=1)
+                    ingress.accept(producer.contract, raw, f"Bearer {producer.local_token}", now=1)
                 forwarder = RelayForwarder(queue, producers)
                 forwarder.run_once(now=2)
                 forwarder.run_once(now=3)
@@ -114,7 +260,7 @@ class CentralApiTest(unittest.TestCase):
                     self.assertIsNone(queue.next(producer.stream, now=1000))
             finally:
                 queue.close()
-            key = self.settings.v1_read
+            key = self.settings.account_read
             live = LoopbackTelemetryClient(
                 token=key,
                 source_id="demo-terminal-01",
@@ -126,7 +272,7 @@ class CentralApiTest(unittest.TestCase):
             history = live.account_history(from_msc=1792000000000, to_msc=1793000000000)
             self.assertTrue(history["points"])
             activity = LoopbackV2HistoryClient(
-                read_authorization=self.settings.v2_read,
+                read_authorization=self.settings.trading_read,
                 activity_source_id="synthetic-activity",
                 port=port,
             )
@@ -151,25 +297,24 @@ class CentralApiTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        v1 = self.root / "v1.sqlite3"
-        create_database(v1)
-        with open_registry(v1) as registry:
+        database = self.root / "central.sqlite3"
+        create_central_database(database)
+        stamp = datetime.now(UTC)
+        with open_v2_registry(database) as registry:
             registry.register_account(
-                "demo", "Demo", "DEMO-SERVER", "USD", created_at=datetime.now(UTC)
+                "demo",
+                "Demo",
+                ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
+                created_at=stamp,
             )
-            registry.register_source("demo-terminal-01", "demo", created_at=datetime.now(UTC))
-        v2 = V2ProvisionPlan(
-            self.root,
-            "v2.sqlite3",
-            "demo",
-            "Demo",
-            ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-            "synthetic-live",
-            "synthetic-activity",
-        ).apply()
+            registry.register_source("synthetic-live", "demo", ProducerRole.LIVE, created_at=stamp)
+            registry.register_source(
+                "synthetic-activity", "demo", ProducerRole.ACTIVITY, created_at=stamp
+            )
+        with open_registry(database) as registry:
+            registry.register_source("demo-terminal-01", "demo", created_at=stamp)
         self.settings = CentralSettings(
-            v1,
-            v2,
+            database,
             "demo-terminal-01",
             "demo",
             *(f"synthetic-central-api-key-number-{i}" for i in range(5)),
@@ -184,47 +329,52 @@ class CentralApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         schema = response.json()
         self.assertTrue(schema["openapi"].startswith("3."))
-        operation = schema["paths"]["/v2/telemetry"]["post"]
+        operation = schema["paths"]["/api/trading-events"]["post"]
         self.assertIn("requestBody", operation)
         self.assertIn("202", operation["responses"])
         self.assertNotIn("422", operation["responses"])
         self.assertTrue(operation["security"])
-        self.assertIn("V2Activity", schema["components"]["schemas"])
+        self.assertIn("TradingActivityBatch", schema["components"]["schemas"])
         self.assertIn("HistoryOrder", schema["components"]["schemas"])
         self.assertEqual(self.client.get("/docs").status_code, 200)
-        self.assertNotIn(self.settings.v2_live, response.text)
+        self.assertNotIn(self.settings.live_ingest, response.text)
 
-    def test_durable_v1_ingestion_duplicate_and_read_separation(self) -> None:
+    def test_durable_snapshot_ingestion_duplicate_and_read_separation(self) -> None:
         message = snapshot_message()
-        headers = {"Authorization": f"Bearer {self.settings.v1_ingest}"}
+        headers = {"Authorization": f"Bearer {self.settings.snapshot_ingest}"}
         for expected in (202, 200):
-            response = self.client.post("/v1/telemetry", json=message, headers=headers)
+            response = self.client.post("/api/account-state", json=message, headers=headers)
             self.assertEqual(response.status_code, expected, response.text)
-        path = "/v1/snapshot?source_id=demo-terminal-01"
+        path = "/api/accounts/snapshot?source_id=demo-terminal-01"
         self.assertEqual(self.client.get(path, headers=headers).status_code, 401)
-        read = {"Authorization": f"Bearer {self.settings.v1_read}"}
+        read = {"Authorization": f"Bearer {self.settings.account_read}"}
         self.assertEqual(self.client.get(path, headers=read).status_code, 200)
         self.assertEqual(
-            self.client.post("/v1/telemetry", json=message, headers=read).status_code, 401
+            self.client.post("/api/account-state", json=message, headers=read).status_code, 401
         )
 
     def test_v2_fixtures_and_durable_queries(self) -> None:
         body = json.loads((FIXTURES / "activity-canceled-order.json").read_text(encoding="utf-8"))
-        headers = {"Authorization": f"Bearer {self.settings.v2_activity}"}
-        response = self.client.post("/v2/telemetry", json=body, headers=headers)
+        headers = {"Authorization": f"Bearer {self.settings.activity_ingest}"}
+        response = self.client.post("/api/trading-events", json=body, headers=headers)
         self.assertEqual(response.status_code, 202, response.text)
-        read = {"Authorization": f"Bearer {self.settings.v2_read}"}
+        read = {"Authorization": f"Bearer {self.settings.trading_read}"}
         response = self.client.get(
-            "/v2/activity?entity=order&from_msc=1792656000000&to_msc=1792656060001", headers=read
+            "/api/trading/activity?entity=order&from_msc=1792656000000&to_msc=1792656060001",
+            headers=read,
         )
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(response.json()["items"]), 1)
-        for path in ("/v2/activity-progress", "/v2/position-cycle-magics", "/v2/position-cycles"):
+        for path in (
+            "/api/trading/activity-progress",
+            "/api/trading/position-cycle-magics",
+            "/api/trading/position-cycles",
+        ):
             self.assertEqual(self.client.get(path, headers=read).status_code, 200)
 
     def test_invalid_json_duplicate_keys_and_bool_sequence_are_rejected_without_422(self) -> None:
         headers = {
-            "Authorization": f"Bearer {self.settings.v2_live}",
+            "Authorization": f"Bearer {self.settings.live_ingest}",
             "Content-Type": "application/json",
         }
         body = (FIXTURES / "heartbeat.json").read_text(encoding="utf-8")
@@ -233,11 +383,12 @@ class CentralApiTest(unittest.TestCase):
             body.replace('"sequence": 2', '"sequence": true'),
             body.replace('"sequence": 2', '"sequence": 2, "sequence": 2'),
         ):
-            response = self.client.post("/v2/telemetry", content=value, headers=headers)
+            response = self.client.post("/api/trading-events", content=value, headers=headers)
             self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(
             self.client.get(
-                "/v2/activity", headers={"Authorization": f"Bearer {self.settings.v2_read}"}
+                "/api/trading/activity",
+                headers={"Authorization": f"Bearer {self.settings.trading_read}"},
             ).status_code,
             400,
         )
@@ -246,9 +397,9 @@ class CentralApiTest(unittest.TestCase):
         for path in FIXTURES.glob("*.json"):
             with self.subTest(path=path.name):
                 envelope = parse_envelope_v2(path.read_bytes())
-                models.V2_REQUEST.validate_python(envelope.as_dict())
-        parse_envelope(json.dumps(models.EXAMPLE_V1).encode())
-        parse_envelope_v2(json.dumps(models.EXAMPLE_V2).encode())
+                models.TRADING_EVENTS_REQUEST.validate_python(envelope.as_dict())
+        parse_envelope(json.dumps(models.EXAMPLE_ACCOUNT_STATE).encode())
+        parse_envelope_v2(json.dumps(models.EXAMPLE_TRADING_EVENTS).encode())
 
     def test_openapi_component_references_resolve(self) -> None:
         schema = self.client.get("/openapi.json").json()
@@ -268,16 +419,19 @@ class CentralApiTest(unittest.TestCase):
 
     def test_limits_auth_origin_and_query_validation(self) -> None:
         producer = {
-            "Authorization": f"Bearer {self.settings.v2_live}",
+            "Authorization": f"Bearer {self.settings.live_ingest}",
             "Content-Type": "application/json",
         }
         self.assertEqual(
             self.client.post(
-                "/v2/telemetry", content=b"x" * (MAX_BODY_BYTES + 1), headers=producer
+                "/api/trading-events", content=b"x" * (MAX_BODY_BYTES + 1), headers=producer
             ).status_code,
             413,
         )
-        self.assertEqual(self.client.post("/v2/telemetry", json=models.EXAMPLE_V2).status_code, 401)
+        self.assertEqual(
+            self.client.post("/api/trading-events", json=models.EXAMPLE_TRADING_EVENTS).status_code,
+            401,
+        )
         self.assertEqual(
             self.client.get("/health", headers={"Host": "attacker.invalid"}).status_code, 400
         )
@@ -285,49 +439,52 @@ class CentralApiTest(unittest.TestCase):
             self.client.get("/health", headers={"Origin": "https://attacker.invalid"}).status_code,
             403,
         )
-        read = {"Authorization": f"Bearer {self.settings.v2_read}"}
+        read = {"Authorization": f"Bearer {self.settings.trading_read}"}
         for query in ("limit=1&limit=2", "unknown=1", "limit=01", "closed_only=1"):
             self.assertEqual(
-                self.client.get("/v2/position-cycles?" + query, headers=read).status_code, 400
+                self.client.get("/api/trading/position-cycles?" + query, headers=read).status_code,
+                400,
             )
 
     def test_populated_cycle_and_v1_history_response_models(self) -> None:
-        headers = {"Authorization": f"Bearer {self.settings.v2_activity}"}
+        headers = {"Authorization": f"Bearer {self.settings.activity_ingest}"}
         body = json.loads(
             (FIXTURES / "activity-position-reconcile.json").read_text(encoding="utf-8")
         )
-        response = self.client.post("/v2/telemetry", json=body, headers=headers)
+        response = self.client.post("/api/trading-events", json=body, headers=headers)
         self.assertEqual(response.status_code, 202, response.text)
-        read = {"Authorization": f"Bearer {self.settings.v2_read}"}
-        response = self.client.get("/v2/position-cycles?closed_only=true", headers=read)
+        read = {"Authorization": f"Bearer {self.settings.trading_read}"}
+        response = self.client.get("/api/trading/position-cycles?closed_only=true", headers=read)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.json()["items"])
         self.client.post(
-            "/v1/telemetry",
+            "/api/account-state",
             json=snapshot_message(),
-            headers={"Authorization": f"Bearer {self.settings.v1_ingest}"},
+            headers={"Authorization": f"Bearer {self.settings.snapshot_ingest}"},
         )
-        read1 = {"Authorization": f"Bearer {self.settings.v1_read}"}
-        for path in ("deals", "account-history"):
+        read1 = {"Authorization": f"Bearer {self.settings.account_read}"}
+        for path in ("deals", "history"):
             response = self.client.get(
-                f"/v1/{path}?source_id=demo-terminal-01&from_msc=1792000000000&to_msc=1792300000000",
+                f"/api/accounts/{path}?source_id=demo-terminal-01&from_msc=1792000000000&to_msc=1792300000000",
                 headers=read1,
             )
             self.assertEqual(response.status_code, 200, response.text)
 
     def test_producer_roles_are_enforced_and_ack_matches_relay_contract(self) -> None:
         raw = (FIXTURES / "activity-canceled-order.json").read_bytes()
-        live = {"Authorization": f"Bearer {self.settings.v2_live}"}
-        activity = {"Authorization": f"Bearer {self.settings.v2_activity}"}
+        live = {"Authorization": f"Bearer {self.settings.live_ingest}"}
+        activity = {"Authorization": f"Bearer {self.settings.activity_ingest}"}
         self.assertEqual(
             self.client.post(
-                "/v2/telemetry", content=raw, headers={**live, "Content-Type": "application/json"}
+                "/api/trading-events",
+                content=raw,
+                headers={**live, "Content-Type": "application/json"},
             ).status_code,
             403,
         )
         for expected in (202, 200):
             response = self.client.post(
-                "/v2/telemetry",
+                "/api/trading-events",
                 content=raw,
                 headers={**activity, "Content-Type": "application/json"},
             )
@@ -336,37 +493,37 @@ class CentralApiTest(unittest.TestCase):
                 response.status_code,
                 response.headers["content-type"],
                 response.content,
-                version="v2",
+                contract="trading-events",
             )
         self.assertEqual(
-            self.client.get("/v2/activity-progress", headers=activity).status_code, 401
+            self.client.get("/api/trading/activity-progress", headers=activity).status_code, 401
         )
 
     def test_accepted_messages_survive_reopening_services(self) -> None:
-        headers = {"Authorization": f"Bearer {self.settings.v1_ingest}"}
-        response = self.client.post("/v1/telemetry", json=snapshot_message(), headers=headers)
+        headers = {"Authorization": f"Bearer {self.settings.snapshot_ingest}"}
+        response = self.client.post("/api/account-state", json=snapshot_message(), headers=headers)
         self.assertEqual(response.status_code, 202)
         reopened_app = create_central_app(self.settings)
         with TestClient(reopened_app, base_url="http://127.0.0.1") as reopened:
-            response = reopened.post("/v1/telemetry", json=snapshot_message(), headers=headers)
+            response = reopened.post("/api/account-state", json=snapshot_message(), headers=headers)
             self.assertEqual(response.status_code, 200, response.text)
             validate_central_ack(
                 response.status_code,
                 response.headers["content-type"],
                 response.content,
-                version="v1",
+                contract="account-state",
             )
         self.assertFalse(hasattr(reopened_app.state, "services"))
 
     def test_storage_failure_returns_no_ack_and_no_internal_details(self) -> None:
-        receiver = self.app.state.services.v2
+        receiver = self.app.state.services.trading_events
         with patch.object(
             type(receiver), "accept", side_effect=V2StorageError("private database path")
         ):
             response = self.client.post(
-                "/v2/telemetry",
-                json=models.EXAMPLE_V2,
-                headers={"Authorization": f"Bearer {self.settings.v2_live}"},
+                "/api/trading-events",
+                json=models.EXAMPLE_TRADING_EVENTS,
+                headers={"Authorization": f"Bearer {self.settings.live_ingest}"},
             )
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json(), {"error": "storage_unavailable"})

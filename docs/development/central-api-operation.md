@@ -1,18 +1,38 @@
 # API central FastAPI: operación local
 
-Estado: operativa y validada en el piloto local Juampi el 5 de noviembre de
-2026. No está desplegada en Mac ni producción y no sustituye EAs de trading.
+Estado: el piloto local anterior fue validado en Juampi el 5 de noviembre de
+2026. El contrato descriptivo y esquema 7 están en la rama actual, pendientes de
+integración y revisión; no están instalados. No sustituye EAs de trading.
 
-El dashboard admite v1/v2 en el mismo puerto mediante `--central-api-port`.
-Ver [arranque conjunto y pruebas](central-api-dashboard.md). El diagnóstico
-`GET /v1/health` requiere lectura v1 y no expone el snapshot; `/health` permanece
-mínimo y público.
+El dashboard admite las lecturas de cuenta y trading en el mismo puerto mediante
+`--central-api-port`. Ver [arranque conjunto y operación](central-api-dashboard.md).
+`GET /api/accounts/health` requiere credencial de lectura de cuenta; `/health`
+permanece mínimo y público.
 
 ## Qué cambia
 
-El comando `scripts/central_api.py` sirve ingesta y lecturas v1/v2 en un único
-puerto. Utiliza las dos bases durables existentes y abre/cierra sus receptores
-mediante lifespan. No crea ni migra las bases durante el arranque.
+El comando `scripts/central_api.py` sirve ingesta y lecturas descriptivas en un
+único puerto. El contrato nuevo usa `central.sqlite3`, esquema global 7 y no
+crea ni migra la base durante el arranque.
+
+Al iniciar, la API valida esquema, identidad y fuentes sin reconstruir el
+historial completo de actividad. Esto no equivale a una auditoría completa de
+payloads: la comprobación explícita `account_evidence` conserva la verificación
+de hashes y sus validaciones, y puede leer la evidencia histórica. El snapshot
+actual sí puede leerse en el arranque. No cambian el esquema 7 ni la regla de no
+migrar automáticamente.
+
+Las consultas de actividad usan lectores SQLite independientes en modo de solo
+lectura. Las lecturas admitidas comparten una transacción consistente entre
+página y coverage dentro de cada solicitud, no entre páginas. Se admiten hasta
+dos a la vez sin esperar en cola; el límite cooperativo es de 2 s, con progreso
+SQL cada 1000 operaciones y espera de locks SQLite de hasta 0.1 s. No es una
+interrupción instantánea ni elimina toda contención SQLite. Si se satura o vence
+el presupuesto, la API devuelve el error existente `503 storage_unavailable`,
+nunca datos parciales. El lector cierra su conexión y libera cupo incluso ante
+fallos; durante el cierre del receptor las consultas ya admitidas pueden
+terminar y las nuevas se rechazan. El ingreso mantiene escritura atómica y ACK
+posterior al commit.
 
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
@@ -25,35 +45,32 @@ dependen de esa UI. No se guarda la autorización entre recargas y se desactiva
 el validador externo de Swagger. Los ejemplos son sintéticos: reemplazar fuente,
 identidad y fechas antes de probar una ingesta. Usar un directorio y bases de prueba.
 
-Las rutas `/v1/telemetry`, `/v1/snapshot`, `/v1/deals`, `/v1/account-history`,
-`/v2/telemetry`, `/v2/activity`, `/v2/activity-progress`, `/v2/position-cycles` y
-`/v2/position-cycle-magics` están disponibles con modelos documentados. Los
-receptores legacy y sus catálogos `/docs` y `/docs.json` continúan en el repo
-solo para compatibilidad si se inician en puertos separados. En la topología
-validada, los collectors envían al relay `8776/8777`, éste reenvía a FastAPI
-`8781` y el dashboard `8775` lee FastAPI. No iniciar receptores legacy en esos
-puertos ocupados.
+El contrato nuevo ofrece `POST /api/account-state` y `POST /api/trading-events`,
+además de las lecturas `/api/accounts/*` y `/api/trading/*`. Las rutas antiguas
+y los receptores separados son históricos; no se deben usar como configuración
+del nuevo contrato. En el piloto local validado, los collectors envían al relay
+`8776/8777`, éste reenvía a FastAPI `8781` y el dashboard `8775` lee FastAPI.
 
 ## Preparación
 
 Sincronizar el entorno: `uv sync --locked`. Se usa Python 3.14 y las versiones
 de FastAPI, Pydantic, Uvicorn y herramientas de prueba fijadas en `uv.lock`.
 
-Provisionar las bases locales v1 y v2/esquema 5 por sus comandos independientes.
-Mantenerlas en un directorio privado de disco local, fuera de Git y de carpetas
-sincronizadas. La fuente v1 y la cuenta v2 ya deben estar registradas. Ver
-[creación v5](create-sqlite-v5.md) y [operación v1](telemetry-operation.md).
+Crear y provisionar una base central/esquema 7 nueva con el bootstrap remoto.
+Mantenerla en un directorio privado de disco local, fuera de Git y de carpetas
+sincronizadas. La cuenta y las tres fuentes de estado de cuenta, live y activity
+deben estar registradas. El arranque no convierte las bases del piloto anterior.
 
 Configurar cinco credenciales distintas en el entorno o en un archivo ignorado
 `.env.central`, con asignaciones `NOMBRE=valor`, sin comillas:
 
 | Variable | Uso |
 | --- | --- |
-| `CENTRAL_V1_INGEST` | Productor/relay de estado vivo v1 |
-| `CENTRAL_V1_READ` | Lecturas v1 |
-| `CENTRAL_V2_LIVE` | Productor/relay live v2, si se utiliza |
-| `CENTRAL_V2_ACTIVITY` | Productor/relay de actividad v2 |
-| `CENTRAL_V2_READ` | Lecturas v2 |
+| `CENTRAL_SNAPSHOT_INGEST` | Ingesta de estado de cuenta |
+| `CENTRAL_ACCOUNT_READ` | Lecturas de cuenta |
+| `CENTRAL_LIVE_INGEST` | Ingesta de trading live |
+| `CENTRAL_ACTIVITY_INGEST` | Ingesta de actividad |
+| `CENTRAL_TRADING_READ` | Lecturas de trading |
 
 Todas deben tener 24..256 caracteres ASCII imprimibles sin espacios. Ninguna es
 el token humano del dashboard. Los tokens centrales de ingesta deben coincidir
@@ -65,18 +82,28 @@ El archivo admite exclusivamente estas cinco variables y el entorno prevalece.
 Ejemplo Windows, reemplazando rutas e identidades:
 
 ```text
-uv run python scripts/central_api.py --v1-db "C:\TradingLabData\piloto.sqlite3" --v2-db "C:\TradingLabData\piloto-v2.sqlite3" --source-id demo-terminal-01 --account-id account-demo --secrets-file .env.central --port 8781
+uv run python scripts/central_api.py --db "C:\TradingLabData\central.sqlite3" --source-id demo-terminal-01 --account-id account-demo --secrets-file .env.central --port 8781
 ```
 
 En macOS utilizar rutas absolutas `/Users/tu_usuario/TradingLabData/...`. El
-comando se limita a loopback, un worker y concurrencia acotada. No acepta headers
-proxy de clientes. El servicio privado HTTPS/Tailscale y sus reglas de Host/Origin
-se resolverán antes del despliegue remoto; no basta con cambiar el bind a público.
+comando se limita a loopback, un worker y concurrencia acotada. No confía en
+headers proxy de clientes. Para HTTPS terminado en un proxy privado, añadir
+`--allowed-host mac.nombre-tailnet.ts.net --public-origin https://mac.nombre-tailnet.ts.net`.
+Son dos permisos diferentes: el Host destino y el Origin público del navegador.
+El origen debe ser HTTPS, pertenecer a un host permitido y especificar el puerto
+si no es 443. Sin comodines, rutas ni barra final. Ambos argumentos son repetibles.
+`run_remote_host.py --tailscale-host <FQDN>` configura los dos para HTTPS/443.
 
-Un lock asociado a la base v2 evita otra instancia de esta CLI sobre ese mismo
-archivo. No impide abrir intencionadamente otros lectores/receptores; durante el
-piloto usar solo un escritor central por base. Detener con Ctrl+C para cerrar
-recursos mediante lifespan.
+Loopback admite el mismo esquema, host y puerto de la petición; los orígenes
+públicos requieren configuración explícita incluso si coinciden con el Host.
+El relay sigue funcionando sin Origin y todas las rutas protegidas mantienen
+Bearer. No se habilita CORS entre sitios ni confianza en `X-Forwarded-*`.
+La conectividad y TLS reales siguen sujetos a la
+[preparación del host](remote-host-setup.md#9-conectividad-privada-con-tailscale);
+no basta con cambiar el bind a público.
+
+Un lock asociado a la base evita otra instancia de esta CLI sobre el mismo
+archivo. Detener con Ctrl+C para cerrar recursos mediante lifespan.
 
 ## Semántica y verificaciones
 
@@ -103,9 +130,10 @@ no promete que cada etiqueta de error de los handlers antiguos sea idéntica.
 Las garantías de aceptación, idempotencia y tipos de negocio se conservan.
 
 La integración local validada envía el relay a ambos targets:
-`http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`. El ACK central y la persistencia fueron
-confirmados. El despliegue privado remoto, TLS/Tailscale y cualquier operación
+`http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. La verificación de ACK central y
+persistencia para el contrato nuevo queda pendiente de su implementación y
+cutover coordinado. El despliegue privado remoto, TLS/Tailscale y cualquier operación
 con cuentas reales siguen pendientes. Cambiar targets de una cola existente
 exige un corte planificado porque están vinculados a la identidad del stream.
 No reutilizar la cola operativa a ciegas.

@@ -1,12 +1,12 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.000"
+#property version   "1.100"
 #property strict
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
-input string IngestUrl = "http://127.0.0.1:8766/v1/telemetry";
+input string IngestUrl = "http://127.0.0.1:8766/api/account-state";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string SourceId = "demo-terminal-01";
 input int IntervalSeconds = 5;
@@ -19,8 +19,8 @@ input int MaxDealsPerSnapshot = 200;
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
-const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.2.1";
+const string SCHEMA_VERSION = "mt5-account-state-v1";
+const string COLLECTOR_VERSION = "0.3.0";
 const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
@@ -44,7 +44,7 @@ CollectorCaptureState capture_state = CAPTURE_READY;
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/v1/telemetry");
+   return IsLoopbackCollectorUrl(url, "/api/account-state");
 }
 
 

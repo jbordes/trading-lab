@@ -10,28 +10,35 @@ from contextlib import closing
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from tradinglab.dashboard.telemetry_v2 import (
+    LoopbackV2HistoryClient,
+    TelemetryCyclePerformance,
+    TelemetryPositionCycle,
+    TelemetryPositionCyclePage,
+    V2HistoryProvider,
+)
+from tradinglab.metrics.position_cycles import CycleExclusion
 from tradinglab.telemetry.admission_v2 import (
     AdmissionDisposition,
     AuthorizedEnvelope,
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
+    TradingEventsProducerDirectory,
     V2AuthorizationError,
     V2ConflictError,
-    V2ProducerDirectory,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.composition_v2 import compose_account
-from tradinglab.telemetry.sqlite_store import create_database
+from tradinglab.telemetry.http_contracts_v2 import position_cycle_item
+from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
 from tradinglab.telemetry.sqlite_store_v2 import (
-    DATABASE_SCHEMA_VERSION,
     V2RegistrationConflictError,
     V2StorageError,
     V2TelemetryRegistry,
-    create_v2_database,
-    migrate_v2_database_v3_to_v4,
-    migrate_v2_database_v4_to_v5,
     open_v2_registry,
 )
 
@@ -70,8 +77,8 @@ def body(
     return json.dumps(value).encode()
 
 
-def directory() -> V2ProducerDirectory:
-    return V2ProducerDirectory(
+def directory() -> TradingEventsProducerDirectory:
+    return TradingEventsProducerDirectory(
         (
             ProducerRegistration(
                 "account-demo",
@@ -96,6 +103,22 @@ def authorized(name: str, sequence: int | None = None) -> AuthorizedEnvelope:
     return directory().authorize(body(name, sequence), f"Bearer {credential}")
 
 
+def authorized_cycle_observation(
+    session: str,
+    captured_at: str,
+    *,
+    profit: float = 10,
+    magic: str = "11122",
+) -> AuthorizedEnvelope:
+    value = fixture("activity-position-reconcile")
+    value.update(session_id=session, sequence=1, event_id=f"{session}:1", captured_at=captured_at)
+    value["payload"]["deals"]["items"][-1]["profit"] = profit
+    for collection in ("deals", "orders"):
+        for item in value["payload"][collection]["items"]:
+            item["magic_number"] = magic
+    return directory().authorize(json.dumps(value).encode(), f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
 def authorized_page(
     sequence: int,
     *,
@@ -104,6 +127,9 @@ def authorized_page(
     after_time: str,
     after_ticket: str,
     has_more: bool,
+    deal_total: int = 2,
+    order_total: int = 0,
+    snapshot_id: str = "p:1792656000000:1792656060000:2:0",
 ) -> AuthorizedEnvelope:
     value = fixture("activity-truncated")
     value["sequence"] = sequence
@@ -112,10 +138,10 @@ def authorized_page(
     deal["ticket"] = ticket
     deal["time_msc"] = time_msc
     status = "partial" if has_more else "paged_complete"
-    value["payload"]["deals"] = {"status": status, "total": 2, "items": [deal]}
-    value["payload"]["orders"] = {"status": status, "total": 0, "items": []}
+    value["payload"]["deals"] = {"status": status, "total": deal_total, "items": [deal]}
+    value["payload"]["orders"] = {"status": status, "total": order_total, "items": []}
     value["payload"]["pagination"] = {
-        "snapshot_id": "p:1792656000000:1792656060000:2:0",
+        "snapshot_id": snapshot_id,
         "after": {
             "time_msc": after_time,
             "entity_type": "deal",
@@ -157,12 +183,136 @@ def authorized_order_observation(
 
 
 class V2SqliteTest(unittest.TestCase):
+    def test_newer_cycle_conflict_excludes_old_result_until_resolved(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session, captured, profit in (
+                ("old", "2026-10-22T08:02:00Z", 10),
+                ("conflict-a", "2026-10-22T08:03:00Z", 20),
+                ("conflict-b", "2026-10-22T08:03:00Z", 30),
+            ):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, captured, profit=profit),
+                    received_at=self.now,
+                )
+        # The qualification survives reopening and applies to lightweight metric reads too.
+        with open_v2_registry(self.path) as registry:
+            for include_details in (True, False):
+                page = registry.position_cycles("account-demo", include_details=include_details)
+                item = page.items[0]
+                self.assertEqual(item.cycle.observed_net_result, Decimal("9.8"))
+                self.assertEqual(item.cycle.exclusions, (CycleExclusion.CONFLICTING_EVIDENCE,))
+                self.assertFalse(item.cycle.eligible_for_autonomous_metrics)
+                self.assertIsNone(item.cycle.definitive_net_result)
+                metrics = TelemetryCyclePerformance(
+                    "account-demo",
+                    "synthetic-activity",
+                    0,
+                    2**62,
+                    None,
+                    (TelemetryPositionCycle(item.message_id, item.captured_at, item.cycle),),
+                    {},
+                ).as_dict()
+                self.assertEqual(metrics["trade_count"], 0)
+                self.assertEqual(metrics["net_profit"], 0)
+                client = LoopbackV2HistoryClient(
+                    read_authorization="synthetic-read-credential-safe-length",
+                    activity_source_id="synthetic-activity",
+                )
+                parsed = client._position_cycle(
+                    json.loads(json.dumps(position_cycle_item(item))), "account-demo"
+                )
+                self.assertEqual(parsed.cycle.exclusions, item.cycle.exclusions)
+                transport = Mock(spec=LoopbackV2HistoryClient)
+                transport.deal_history.return_value.coverage = {"status": "complete"}
+                transport.position_cycles.return_value = TelemetryPositionCyclePage(
+                    "account-demo", "synthetic-activity", None, (parsed,), None
+                )
+                streamed = (
+                    V2HistoryProvider(transport)
+                    .cycle_performance_metrics(from_msc=0, to_msc=2**62)
+                    .as_dict()
+                )
+                self.assertEqual(streamed["trade_count"], 0)
+                self.assertEqual(streamed["net_profit"], 0)
+                self.assertEqual(streamed["by_ea"], [])
+            registry.store_authorized(
+                authorized_cycle_observation("resolved", "2026-10-22T08:04:00Z", profit=40),
+                received_at=self.now,
+            )
+            cycle = registry.position_cycles("account-demo").items[0].cycle
+            self.assertTrue(cycle.eligible_for_autonomous_metrics)
+            self.assertEqual(cycle.exclusions, ())
+            self.assertEqual(cycle.definitive_net_result, Decimal("39.8"))
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT eligible, exclusions_json FROM position_cycle_observations"
+                ).fetchall(),
+                [(1, "[]")] * 4,
+            )
+
+    def test_cycle_without_unambiguous_capture_waits_for_consistent_evidence(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session, profit in (("variant-a", 20), ("variant-b", 30)):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, "2026-10-22T08:03:00Z", profit=profit),
+                    received_at=self.now,
+                )
+            self.assertEqual(registry.position_cycles("account-demo").items, ())
+            registry.store_authorized(
+                authorized_cycle_observation("resolved", "2026-10-22T08:04:00Z"),
+                received_at=self.now,
+            )
+            self.assertTrue(
+                registry.position_cycles("account-demo")
+                .items[0]
+                .cycle.eligible_for_autonomous_metrics
+            )
+
+    def test_identical_cycle_captures_are_not_a_conflict(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session in ("copy-a", "copy-b"):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, "2026-10-22T08:03:00Z"),
+                    received_at=self.now,
+                )
+            page = registry.position_cycles("account-demo")
+            self.assertEqual(len(page.items), 1)
+            self.assertTrue(page.items[0].cycle.eligible_for_autonomous_metrics)
+
+    def test_magic_filter_cannot_resurrect_old_revision_or_hide_other_owner_conflict(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_cycle_observation("old", "2026-10-22T08:02:00Z"),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                authorized_cycle_observation("new-owner", "2026-10-22T08:03:00Z", magic="22222"),
+                received_at=self.now,
+            )
+            for filters in ({"owner_magic": "11122"}, {"owner_magics": ("11122",)}):
+                self.assertEqual(registry.position_cycles("account-demo", **filters).items, ())
+            self.assertEqual(
+                registry.position_cycles("account-demo", owner_magic="22222")
+                .items[0]
+                .cycle.owner_magic,
+                "22222",
+            )
+            registry.store_authorized(
+                authorized_cycle_observation("conflicting-owner", "2026-10-22T08:03:00Z"),
+                received_at=self.now,
+            )
+            for filters in ({"owner_magic": "11122"}, {"owner_magics": ("11122", "22222")}):
+                page = registry.position_cycles("account-demo", **filters)
+                self.assertEqual(len(page.items), 1)
+                self.assertIn(CycleExclusion.CONFLICTING_EVIDENCE, page.items[0].cycle.exclusions)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "telemetry-v2.sqlite3"
         self.now = datetime(2026, 10, 22, 8, 30, tzinfo=UTC)
-        create_v2_database(self.path)
+        create_central_database(self.path)
         with open_v2_registry(self.path) as registry:
             registry.register_account("account-demo", "Demo", IDENTITY, created_at=self.now)
             registry.register_source(
@@ -176,6 +326,123 @@ class V2SqliteTest(unittest.TestCase):
                 "account-demo",
                 ProducerRole.ACTIVITY,
                 created_at=self.now,
+            )
+
+    def test_account_registration_is_scoped_and_does_not_read_messages(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            other_identity = ProducerIdentity("****9999", "OTHER-SERVER", "EUR")
+            registry.register_account("other-account", "Other", other_identity, created_at=self.now)
+            registry.register_source(
+                "other-live", "other-account", ProducerRole.LIVE, created_at=self.now
+            )
+            registry.store_authorized(authorized("live-empty"), received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            denied_reads: list[str] = []
+
+            def metadata_only(action: int, table: str, *_: object) -> int:
+                if action == sqlite3.SQLITE_READ and table in {
+                    "telemetry_v2_messages",
+                    "telemetry_messages",
+                }:
+                    denied_reads.append(table)
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(metadata_only)
+            registry = V2TelemetryRegistry(connection)
+            registration = registry.account_registration("account-demo")
+            self.assertEqual(registration.account_id, "account-demo")
+            self.assertEqual(registration.label, "Demo")
+            self.assertEqual(registration.identity, IDENTITY)
+            self.assertEqual(
+                [(source.source_id, source.role) for source in registration.sources],
+                [
+                    ("synthetic-activity", ProducerRole.ACTIVITY),
+                    ("synthetic-live", ProducerRole.LIVE),
+                ],
+            )
+            self.assertEqual(
+                registry.account_registration("other-account").identity, other_identity
+            )
+            self.assertEqual(denied_reads, [])
+
+    def test_account_registration_rejects_missing_or_invalid_account(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            with self.assertRaises(V2AuthorizationError):
+                registry.account_registration("unknown-account")
+            with self.assertRaises(ValueError):
+                registry.account_registration("../invalid-account")
+            self.assertEqual(registry.account_registration("account-demo").identity, IDENTITY)
+
+    def test_receiver_startup_does_not_read_empty_or_populated_message_tables(self) -> None:
+        connect = sqlite3.connect
+        denied_reads: list[str] = []
+
+        def metadata_only(action: int, table: str, *_: object) -> int:
+            if action == sqlite3.SQLITE_READ and table in {
+                "telemetry_v2_messages",
+                "telemetry_messages",
+            }:
+                denied_reads.append(table)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        def connect_without_history(*args: object, **kwargs: object) -> sqlite3.Connection:
+            connection = connect(*args, **kwargs)
+            # Schema validation builds an empty reference schema in memory;
+            # forbid historical reads only on the actual database under test.
+            if args[0] != ":memory:":
+                connection.set_authorizer(metadata_only)
+            return connection
+
+        for count in (0, 128):
+            if count:
+                with open_v2_registry(self.path) as registry:
+                    for sequence in range(1, count + 1):
+                        message = directory().authorize(
+                            body("live-empty", sequence), f"Bearer {LIVE_CREDENTIAL}"
+                        )
+                        registry.store_authorized(message, received_at=self.now)
+            with (
+                self.subTest(messages=count),
+                patch(
+                    "tradinglab.telemetry.sqlite_store_v2.sqlite3.connect",
+                    side_effect=connect_without_history,
+                ),
+            ):
+                receiver = PersistentV2TelemetryReceiver(
+                    self.path,
+                    account_id="account-demo",
+                    live_authorization=LIVE_CREDENTIAL,
+                    activity_authorization=ACTIVITY_CREDENTIAL,
+                )
+                try:
+                    self.assertEqual(receiver.state()["status"], "ready")
+                finally:
+                    receiver.close()
+        self.assertEqual(denied_reads, [])
+
+    def test_receiver_startup_rejects_missing_roles_even_with_other_account_sources(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.register_account(
+                "incomplete-account", "Incomplete", IDENTITY, created_at=self.now
+            )
+            registry.register_source(
+                "incomplete-live", "incomplete-account", ProducerRole.LIVE, created_at=self.now
+            )
+        with self.assertRaises(ValueError):
+            PersistentV2TelemetryReceiver(
+                self.path,
+                account_id="incomplete-account",
+                live_authorization=LIVE_CREDENTIAL,
+                activity_authorization=ACTIVITY_CREDENTIAL,
+            )
+        with self.assertRaises(V2AuthorizationError):
+            PersistentV2TelemetryReceiver(
+                self.path,
+                account_id="unknown-account",
+                live_authorization=LIVE_CREDENTIAL,
+                activity_authorization=ACTIVITY_CREDENTIAL,
             )
 
     def rows(self) -> list[tuple[object, ...]]:
@@ -223,7 +490,7 @@ class V2SqliteTest(unittest.TestCase):
                     "activity_batch",
                     captured,
                     captured,
-                    "mt5-telemetry-v2",
+                    "mt5-trading-events-v1",
                     "synthetic-fixture",
                     "{}",
                     "0" * 64,
@@ -266,20 +533,19 @@ class V2SqliteTest(unittest.TestCase):
             connection.commit()
         return start_msc, start_msc + count * step_msc
 
-    def test_schema_is_isolated_exact_and_never_replaces_files(self) -> None:
+    def test_schema_is_shared_exact_and_never_replaces_files(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
                 connection.execute("PRAGMA user_version").fetchone()[0],
-                DATABASE_SCHEMA_VERSION,
+                CENTRAL_SCHEMA_VERSION,
             )
         with self.assertRaises(FileExistsError):
-            create_v2_database(self.path)
+            create_central_database(self.path)
 
         other = self.path.with_name("v1.sqlite3")
-        create_database(other)
-        with self.assertRaises(V2StorageError):
-            with open_v2_registry(other):
-                pass
+        create_central_database(other)
+        with open_v2_registry(other):
+            pass
 
     def test_multi_year_cycles_are_complete_paginated_and_indexed(self) -> None:
         start_msc, to_msc = self.insert_synthetic_cycles(2500)
@@ -435,7 +701,7 @@ class V2SqliteTest(unittest.TestCase):
         for after_commit in (False, True):
             with self.subTest(after_commit=after_commit):
                 path = self.path.with_name(f"commit-{after_commit}.sqlite3")
-                create_v2_database(path)
+                create_central_database(path)
                 with open_v2_registry(path) as registry:
                     registry.register_account("account-demo", "Demo", IDENTITY, created_at=self.now)
                     registry.register_source(
@@ -493,6 +759,7 @@ class V2SqliteTest(unittest.TestCase):
             connection.commit()
 
         with open_v2_registry(self.path) as registry:
+            self.assertEqual(registry.account_registration("account-demo").identity, IDENTITY)
             with self.assertRaises(V2StorageError):
                 registry.account_messages("account-demo")
 
@@ -663,6 +930,152 @@ class V2SqliteTest(unittest.TestCase):
                 0,
             )
 
+    def _store_two_page_chain(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_page(
+                    10,
+                    ticket="18446744073709551614",
+                    time_msc="1792656030000",
+                    after_time="0",
+                    after_ticket="0",
+                    has_more=True,
+                ),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                authorized_page(
+                    11,
+                    ticket="18446744073709551615",
+                    time_msc="1792656030000",
+                    after_time="1792656030000",
+                    after_ticket="18446744073709551614",
+                    has_more=False,
+                ),
+                received_at=self.now,
+            )
+
+    def test_chain_query_decodes_only_page_links_and_preserves_uint64_tickets(self) -> None:
+        self._store_two_page_chain()
+        original_loads = json.loads
+
+        def compact_page(encoded: str) -> dict[str, object]:
+            page = original_loads(encoded)
+            self.assertEqual(set(page), {"snapshot_id", "after", "through", "has_more"})
+            return page
+
+        with (
+            closing(sqlite3.connect(self.path)) as connection,
+            patch(
+                "tradinglab.telemetry.sqlite_store_v2.json.loads", side_effect=compact_page
+            ) as decode,
+        ):
+            self.assertTrue(
+                V2TelemetryRegistry._has_complete_pagination_chain(
+                    connection,
+                    "account-demo",
+                    "synthetic-activity",
+                    1792656000000,
+                    1792656060000,
+                    "p:1792656000000:1792656060000:2:0",
+                    2,
+                    0,
+                )
+            )
+            self.assertEqual(decode.call_count, 2)
+
+    def test_chain_query_scopes_identity_window_snapshot_and_totals(self) -> None:
+        self._store_two_page_chain()
+        selection = {
+            "account_id": "account-demo",
+            "source_id": "synthetic-activity",
+            "from_msc": 1792656000000,
+            "to_msc": 1792656060000,
+            "snapshot_id": "p:1792656000000:1792656060000:2:0",
+            "deal_total": 2,
+            "order_total": 0,
+        }
+        with closing(sqlite3.connect(self.path)) as connection:
+            for changes in (
+                {"account_id": "other-account"},
+                {"source_id": "synthetic-live"},
+                {"from_msc": 1792656000001},
+                {"to_msc": 1792656060001},
+                {"snapshot_id": "other-snapshot"},
+                {"deal_total": 3},
+                {"order_total": 1},
+            ):
+                with self.subTest(changes=changes):
+                    self.assertFalse(
+                        V2TelemetryRegistry._has_complete_pagination_chain(
+                            connection, **(selection | changes)
+                        )
+                    )
+
+    def test_final_page_with_incompatible_prefix_totals_rolls_back(self) -> None:
+        for index, totals in enumerate(({"deal_total": 3}, {"order_total": 1})):
+            with self.subTest(totals=totals), open_v2_registry(self.path) as registry:
+                snapshot = f"incompatible-{index}"
+                registry.store_authorized(
+                    authorized_page(
+                        20 + index * 2,
+                        ticket="1",
+                        time_msc="1792656030000",
+                        after_time="0",
+                        after_ticket="0",
+                        has_more=True,
+                        snapshot_id=snapshot,
+                        **totals,
+                    ),
+                    received_at=self.now,
+                )
+                with self.assertRaises(V2StorageError):
+                    registry.store_authorized(
+                        authorized_page(
+                            21 + index * 2,
+                            ticket="2",
+                            time_msc="1792656030000",
+                            after_time="1792656030000",
+                            after_ticket="1",
+                            has_more=False,
+                            snapshot_id=snapshot,
+                        ),
+                        received_at=self.now,
+                    )
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0], 2
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0
+            )
+
+    def test_final_page_cannot_bridge_a_gap_in_durable_chain(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_page(
+                    10,
+                    ticket="1",
+                    time_msc="1792656030000",
+                    after_time="0",
+                    after_ticket="0",
+                    has_more=True,
+                ),
+                received_at=self.now,
+            )
+            with self.assertRaises(V2StorageError):
+                registry.store_authorized(
+                    authorized_page(
+                        11,
+                        ticket="3",
+                        time_msc="1792656030000",
+                        after_time="1792656030000",
+                        after_ticket="2",
+                        has_more=False,
+                    ),
+                    received_at=self.now,
+                )
+
     def test_more_than_twelve_months_survives_restart_without_retention_cutoff(self) -> None:
         old_at = datetime(2025, 8, 1, 12, tzinfo=UTC)
         recent_at = datetime(2026, 10, 20, 12, tzinfo=UTC)
@@ -755,61 +1168,6 @@ class V2SqliteTest(unittest.TestCase):
                 ],
                 1,
             )
-
-    def test_v3_migration_creates_verified_backup_and_backfills_cycles(self) -> None:
-        with open_v2_registry(self.path) as registry:
-            registry.store_authorized(
-                authorized("activity-position-reconcile"), received_at=self.now
-            )
-        with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("DROP INDEX position_cycle_observations_query")
-            connection.execute("DROP TABLE position_cycle_observations")
-            connection.execute("PRAGMA user_version = 3")
-
-        backup = self.path.with_name("telemetry-v2-before-v4.sqlite3")
-        self.assertEqual(migrate_v2_database_v3_to_v4(self.path, backup), 1)
-
-        with closing(sqlite3.connect(backup)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
-            self.assertIsNone(
-                connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name = 'position_cycle_observations'"
-                ).fetchone()
-            )
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        backup_v4 = self.path.with_name("telemetry-v2-before-v5.sqlite3")
-        migrate_v2_database_v4_to_v5(self.path, backup_v4)
-        with closing(sqlite3.connect(backup_v4)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        with open_v2_registry(self.path) as registry:
-            cycles = registry.position_cycles("account-demo")
-        self.assertEqual(len(cycles.items), 1)
-        self.assertEqual(cycles.items[0].cycle.position_id, "600000000000000001")
-
-    def test_v4_migration_adds_verified_multi_year_query_indexes(self) -> None:
-        with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("DROP INDEX position_cycle_observations_revision")
-            connection.execute("DROP INDEX position_cycle_observations_magic_query")
-            connection.execute("PRAGMA user_version = 4")
-        backup = self.path.with_name("telemetry-v2-v4-backup.sqlite3")
-
-        migrate_v2_database_v4_to_v5(self.path, backup)
-
-        with closing(sqlite3.connect(backup)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        with open_v2_registry(self.path) as registry:
-            self.assertEqual(registry.position_cycles("account-demo").items, ())
-        with closing(sqlite3.connect(self.path)) as connection:
-            indexes = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'index'"
-                ).fetchall()
-            }
-        self.assertIn("position_cycle_observations_revision", indexes)
-        self.assertIn("position_cycle_observations_magic_query", indexes)
 
     def test_position_cycles_use_stable_keyset_pagination(self) -> None:
         second = fixture("activity-position-reconcile")

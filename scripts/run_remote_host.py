@@ -32,8 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         if any(
             not (directory / name).is_file() or (directory / name).is_symlink()
             for name in (
-                "central-v1.sqlite3",
-                "central-v2.sqlite3",
+                "central.sqlite3",
                 ".env.central",
             )
         ):
@@ -42,12 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Host incompleto o configuración inválida; no se inició la API.", file=sys.stderr)
         return 1
     command = [
-        "--v1-db",
-        str(directory / "central-v1.sqlite3"),
-        "--v2-db",
-        str(directory / "central-v2.sqlite3"),
+        "--db",
+        str(directory / "central.sqlite3"),
         "--source-id",
-        config.v1_source_id,
+        config.snapshot_source_id,
         "--account-id",
         config.account_id,
         "--secrets-file",
@@ -56,7 +53,14 @@ def main(argv: list[str] | None = None) -> int:
         str(config.port),
     ]
     if args.tailscale_host:
-        command.extend(("--allowed-host", args.tailscale_host))
+        command.extend(
+            (
+                "--allowed-host",
+                args.tailscale_host,
+                "--public-origin",
+                f"https://{args.tailscale_host}",
+            )
+        )
     return central_main(command)
 
 

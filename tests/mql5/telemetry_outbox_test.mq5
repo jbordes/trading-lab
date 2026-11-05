@@ -158,17 +158,17 @@ void TestHistoryRecovery()
 
 void TestPilotGuards()
 {
-   Check(IsLoopbackIngestUrl("http://127.0.0.1:8766/v1/telemetry"), "local endpoint allowed");
-   Check(IsLoopbackIngestUrl("http://127.0.0.1:65535/v1/telemetry"), "maximum port allowed");
+   Check(IsLoopbackIngestUrl("http://127.0.0.1:8766/api/account-state"), "local endpoint allowed");
+   Check(IsLoopbackIngestUrl("http://127.0.0.1:65535/api/account-state"), "maximum port allowed");
    string invalid[] = {
-      "http://127.0.0.1:8766@external.example/v1/telemetry",
-      "http://127.0.0.1:8766/v1/telemetry?url=external",
-      "http://127.0.0.1:8766/v1/telemetry#fragment",
-      "http://localhost:8766/v1/telemetry", "http://127.0.0.1:0/v1/telemetry",
-      "http://127.0.0.1:65536/v1/telemetry", "http://127.0.0.1:08766/v1/telemetry",
-      "http://127.0.0.1:+8766/v1/telemetry", "http://127.0.0.1:8766/other",
-      "http://127.0.0.1:8766\\@external.example/v1/telemetry",
-      "http://127.0.0.1:8766/v1/telemetry\r\n", "https://127.0.0.1:8766/v1/telemetry"
+      "http://127.0.0.1:8766@external.example/api/account-state",
+      "http://127.0.0.1:8766/api/account-state?url=external",
+      "http://127.0.0.1:8766/api/account-state#fragment",
+      "http://localhost:8766/api/account-state", "http://127.0.0.1:0/api/account-state",
+      "http://127.0.0.1:65536/api/account-state", "http://127.0.0.1:08766/api/account-state",
+      "http://127.0.0.1:+8766/api/account-state", "http://127.0.0.1:8766/other",
+      "http://127.0.0.1:8766\\@external.example/api/account-state",
+      "http://127.0.0.1:8766/api/account-state\r\n", "https://127.0.0.1:8766/api/account-state"
    };
    for(int i = 0; i < ArraySize(invalid); i++)
       Check(!IsLoopbackIngestUrl(invalid[i]), "ambiguous or remote URL rejected");

@@ -1,5 +1,15 @@
 # Operación del piloto de recuperación histórica v2
 
+> Guía histórica del piloto con bases independientes. La topología de FastAPI
+> usa una base central; el contrato descriptivo/esquema 7 está pendiente de
+> revisión y corte. Prepare el host remoto
+> con [su manual](remote-host-setup.md); no use esta guía para ese bootstrap.
+> Para el contrato nuevo, consulte [la guía de cutover](descriptive-api-cutover.md).
+> Los comandos de arranque y registro de tareas Windows aquí mostrados se
+> retiraron; no los ejecute ni los aplique a tareas instaladas.
+> `run_telemetry_maintenance.py` ahora respalda únicamente una base central; el
+> mantenimiento antiguo de dos archivos requiere el código de su piloto original.
+
 Este procedimiento mantiene el estado vivo actual en v1 y obtiene el historial
 recuperable mediante `TradingLabActivity` y SQLite v2. Solo se usa en la terminal
 demo Juampi. No modificar ni instalarlo en la terminal del socio.

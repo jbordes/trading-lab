@@ -1,14 +1,15 @@
 # Revisión completa de diseño y buenas prácticas Python
 
-**Estado:** pendiente; solicitada el 2026-11-04. No se ha realizado una auditoría
-completa de estas características sobre todo el proyecto.
+**Estado:** iniciada el 2026-11-05; revisión estática parcial realizada, no es
+una auditoría completa ni incluye benchmarks. Ver [revisión inicial de diseño y
+rendimiento](python-collector-design-performance-review.md).
 
 ## Alcance
 
 Revisar el código Python de `src/tradinglab/`, `scripts/` y las pruebas relevantes.
 Incluir APIs, collectors/adaptadores Python, persistencia, métricas, dashboard,
-configuración, jobs y harness. Las revisiones recientes del relay y la API fueron
-parciales y no sustituyen esta tarea.
+configuración, jobs y harness. La revisión parcial no sustituye la cobertura
+restante descrita en el informe enlazado.
 
 ## Aspectos a evaluar
 
@@ -25,6 +26,9 @@ parciales y no sustituyen esta tarea.
 - Tipos y validación de interfaces públicas, errores útiles y control de recursos.
 - Testabilidad de reloj, red, procesos, aleatoriedad y persistencia; detectar
   pruebas demasiado acopladas a detalles de implementación.
+- Rendimiento: complejidad de recorridos, memoria acotada, paginación, contención,
+  parseos e I/O repetidos; aplicar las guías consultadas según el contexto, sin
+  introducir librerías, cachés o concurrencia por rutina.
 
 ## Entregable y forma de ejecución
 

@@ -221,11 +221,11 @@ class LoopbackTelemetryClient:
             raise ValueError("El timeout de telemetría debe ser 0.05..30 segundos")
         query = urllib.parse.urlencode({"source_id": source_id})
         self._source_id = source_id
-        self._url = f"http://127.0.0.1:{port}/v1/snapshot?{query}"
-        health_path = "/v1/health" if central_api else "/health"
+        self._url = f"http://127.0.0.1:{port}/api/accounts/snapshot?{query}"
+        health_path = "/api/accounts/health" if central_api else "/health"
         self._health_url = f"http://127.0.0.1:{port}{health_path}"
-        self._deals_url = f"http://127.0.0.1:{port}/v1/deals"
-        self._account_history_url = f"http://127.0.0.1:{port}/v1/account-history"
+        self._deals_url = f"http://127.0.0.1:{port}/api/accounts/deals"
+        self._account_history_url = f"http://127.0.0.1:{port}/api/accounts/history"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
         self._opener = urllib.request.build_opener(

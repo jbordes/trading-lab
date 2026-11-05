@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hmac
+import re
 import sqlite3
 from contextlib import ExitStack, asynccontextmanager, closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -52,6 +54,40 @@ _ACCOUNT_READER = HTTPBearer(auto_error=False, scheme_name="AccountRead")
 _TRADING_READER = HTTPBearer(auto_error=False, scheme_name="TradingRead")
 
 
+def _origin_key(value: str) -> tuple[str, str, int]:
+    """Parse a single canonical HTTP(S) origin, never a URL with extra components."""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 2048
+        or any(not 33 <= ord(character) <= 126 for character in value)
+    ):
+        raise ValueError("Origen inválido")
+    parsed = urlsplit(value)
+    host = parsed.hostname or ""
+    port = parsed.port
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or not host
+        or any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.split(".")
+        )
+        or (port is not None and not 1 <= port <= 65535)
+        or value != f"{parsed.scheme}://{host}{f':{port}' if port is not None else ''}"
+    ):
+        raise ValueError("Origen inválido")
+    return (
+        parsed.scheme,
+        host,
+        port if port is not None else (443 if parsed.scheme == "https" else 80),
+    )
+
+
 @dataclass(frozen=True)
 class CentralSettings:
     database: Path
@@ -63,6 +99,7 @@ class CentralSettings:
     activity_ingest: str = field(repr=False)
     trading_read: str = field(repr=False)
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
+    public_origins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         keys = (
@@ -86,6 +123,15 @@ class CentralSettings:
             not host or "*" in host or "/" in host for host in self.allowed_hosts
         ):
             raise ValueError("Configure hosts explícitos")
+        if not isinstance(self.public_origins, tuple) or len(self.public_origins) > 16:
+            raise ValueError("Configure una lista acotada de orígenes públicos explícitos")
+        origins = tuple(_origin_key(origin) for origin in self.public_origins)
+        if len(set(origins)) != len(origins) or any(
+            scheme != "https" or host not in self.allowed_hosts for scheme, host, _ in origins
+        ):
+            raise ValueError(
+                "Orígenes públicos HTTPS únicos y asociados a hosts permitidos requeridos"
+            )
 
 
 @dataclass(frozen=True)
@@ -101,6 +147,8 @@ def _single_query(request: Request, allowed: set[str]) -> None:
 
 
 def create_central_app(settings: CentralSettings) -> FastAPI:
+    public_origins = frozenset(_origin_key(origin) for origin in settings.public_origins)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database = settings.database.resolve(strict=True)
@@ -166,10 +214,28 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
 
     @app.middleware("http")
     async def safe_headers(request: Request, call_next):
-        origin = request.headers.get("origin")
-        if origin and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
-            return JSONResponse({"error": "origin_not_allowed"}, status_code=403)
-        response = await call_next(request)
+        origins = request.headers.getlist("origin")
+        hosts = request.headers.getlist("host")
+        if len(hosts) != 1:
+            response = JSONResponse({"error": "invalid_host"}, status_code=400)
+        elif origins:
+            try:
+                if len(origins) != 1:
+                    raise ValueError("Orígenes duplicados")
+                origin = _origin_key(origins[0])
+                same_origin = _origin_key(f"{request.url.scheme}://{hosts[0]}")
+                local_same_origin = origin == same_origin and origin[1] in {
+                    "127.0.0.1",
+                    "localhost",
+                }
+                if not local_same_origin and origin not in public_origins:
+                    raise ValueError("Origen no permitido")
+            except ValueError:
+                response = JSONResponse({"error": "origin_not_allowed"}, status_code=403)
+            else:
+                response = await call_next(request)
+        else:
+            response = await call_next(request)
         response.headers.update(
             {
                 "Cache-Control": "no-store",

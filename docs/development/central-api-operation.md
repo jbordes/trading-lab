@@ -86,9 +86,21 @@ uv run python scripts/central_api.py --db "C:\TradingLabData\central.sqlite3" --
 ```
 
 En macOS utilizar rutas absolutas `/Users/tu_usuario/TradingLabData/...`. El
-comando se limita a loopback, un worker y concurrencia acotada. No acepta headers
-proxy de clientes. El servicio privado HTTPS/Tailscale y sus reglas de Host/Origin
-se resolverán antes del despliegue remoto; no basta con cambiar el bind a público.
+comando se limita a loopback, un worker y concurrencia acotada. No confía en
+headers proxy de clientes. Para HTTPS terminado en un proxy privado, añadir
+`--allowed-host mac.nombre-tailnet.ts.net --public-origin https://mac.nombre-tailnet.ts.net`.
+Son dos permisos diferentes: el Host destino y el Origin público del navegador.
+El origen debe ser HTTPS, pertenecer a un host permitido y especificar el puerto
+si no es 443. Sin comodines, rutas ni barra final. Ambos argumentos son repetibles.
+`run_remote_host.py --tailscale-host <FQDN>` configura los dos para HTTPS/443.
+
+Loopback admite el mismo esquema, host y puerto de la petición; los orígenes
+públicos requieren configuración explícita incluso si coinciden con el Host.
+El relay sigue funcionando sin Origin y todas las rutas protegidas mantienen
+Bearer. No se habilita CORS entre sitios ni confianza en `X-Forwarded-*`.
+La conectividad y TLS reales siguen sujetos a la
+[preparación del host](remote-host-setup.md#9-conectividad-privada-con-tailscale);
+no basta con cambiar el bind a público.
 
 Un lock asociado a la base evita otra instancia de esta CLI sobre el mismo
 archivo. Detener con Ctrl+C para cerrar recursos mediante lifespan.

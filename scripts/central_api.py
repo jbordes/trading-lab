@@ -34,6 +34,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--secrets-file", type=Path, help="Archivo local .env.central ignorado")
     parser.add_argument("--port", type=int, default=8781)
     parser.add_argument(
+        "--public-origin",
+        action="append",
+        default=[],
+        help="Origen HTTPS público exacto (esquema, host permitido y puerto); sin comodines",
+    )
+    parser.add_argument(
         "--allowed-host",
         action="append",
         default=[],
@@ -63,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             args.account_id,
             *(environment.get(name, "") for name in KEY_NAMES),
             allowed_hosts=allowed_hosts,
+            public_origins=tuple(args.public_origin),
         )
         with exclusive_job_lock(args.db.with_suffix(".central.lock")):
             app = create_central_app(settings)

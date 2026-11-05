@@ -32,6 +32,32 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RemoteHostTests(unittest.TestCase):
+    def test_scheduled_host_reaches_manual_launcher_and_https_origin(self) -> None:
+        self.prepare()
+        job = runpy.run_path(str(ROOT / "scripts/run_central_api_job.py"))["main"]
+        with patch.dict(sys.modules), patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            launcher = runpy.run_path(str(ROOT / "scripts/run_remote_host.py"))["main"]
+        with patch("tradinglab.telemetry.operational_job.run_logged", return_value=0) as run:
+            self.assertEqual(
+                job(["--data-dir", str(self.directory), "--tailscale-host", "mac.example.ts.net"]),
+                0,
+            )
+        child_command = run.call_args.args[0]
+        self.assertEqual(child_command[-2:], ["--tailscale-host", "mac.example.ts.net"])
+        with patch.dict(launcher.__globals__, central_main=lambda args: self._launch_check(args)):
+            self.assertEqual(launcher(child_command[2:]), 0)
+
+    def test_scheduled_job_rejects_invalid_host_without_launching_child(self) -> None:
+        job = runpy.run_path(str(ROOT / "scripts/run_central_api_job.py"))["main"]
+        with (
+            patch("tradinglab.telemetry.operational_job.run_logged") as run,
+            patch("sys.stderr"),
+            self.assertRaises(SystemExit) as failure,
+        ):
+            job(["--data-dir", str(self.directory), "--tailscale-host", "*.example.ts.net"])
+        self.assertEqual(failure.exception.code, 2)
+        run.assert_not_called()
+
     def test_scheduled_job_launches_only_prepared_central_api_and_records_result(self) -> None:
         self.directory.mkdir()
         (self.directory / "host.json").write_text("{}", encoding="utf-8")
@@ -317,6 +343,8 @@ class RemoteHostTests(unittest.TestCase):
         self.assertNotIn("--v2-db", args)
         self.assertIn("--allowed-host", args)
         self.assertIn("mac.example.ts.net", args)
+        self.assertIn("--public-origin", args)
+        self.assertEqual(args[args.index("--public-origin") + 1], "https://mac.example.ts.net")
         self.assertNotIn("0.0.0.0", args)
         self.assertFalse(any("synthetic-test-token" in value for value in args))
         return 0

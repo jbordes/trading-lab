@@ -53,7 +53,14 @@ def main(argv: list[str] | None = None) -> int:
         str(config.port),
     ]
     if args.tailscale_host:
-        command.extend(("--allowed-host", args.tailscale_host))
+        command.extend(
+            (
+                "--allowed-host",
+                args.tailscale_host,
+                "--public-origin",
+                f"https://{args.tailscale_host}",
+            )
+        )
     return central_main(command)
 
 

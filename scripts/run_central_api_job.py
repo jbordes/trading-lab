@@ -20,9 +20,15 @@ def main(argv: list[str] | None = None) -> int:
         run_logged,
         write_job_status,
     )
+    from tradinglab.telemetry.remote_host import tailscale_hostname
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument(
+        "--tailscale-host",
+        type=tailscale_hostname,
+        help="FQDN público exacto de Tailscale; opcional",
+    )
     args = parser.parse_args(argv)
     try:
         if not args.data_dir.is_absolute() or args.data_dir.is_symlink():
@@ -40,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
             "--data-dir",
             str(storage),
         ]
+        if args.tailscale_host:
+            command.extend(("--tailscale-host", args.tailscale_host))
         with exclusive_job_lock(operations / "central-api.lock"):
             write_job_status(status, job="central-api", state="running", detail="Inicio")
             return_code = run_logged(

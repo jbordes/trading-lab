@@ -172,10 +172,11 @@ class RelayQueue:
             if out_of_order and envelope.kind != "activity_batch":
                 raise V2StaleSequenceError("Secuencia antigua desconocida en flujo estricto")
             gap = max(0, envelope.sequence - high - 1)
-            count, size = self._db.execute(
-                "SELECT records,pending_bytes FROM usage WHERE id=1"
-            ).fetchone()
-            if count >= self._max_records or size + len(body) > self._max_bytes:
+            size = self._db.execute("SELECT pending_bytes FROM usage WHERE id=1").fetchone()[0]
+            active_count = self._db.execute(
+                "SELECT count(*) FROM messages WHERE state != 'acked'"
+            ).fetchone()[0]
+            if active_count >= self._max_records or size + len(body) > self._max_bytes:
                 raise RelayStorageError("Cola llena; el mensaje no fue confirmado")
             self._db.execute(
                 "INSERT INTO messages(stream,session,sequence,event_id,digest,body,state,first_seen) "
@@ -278,8 +279,12 @@ class RelayQueue:
                 "FROM messages GROUP BY state"
             ).fetchall()
             oldest = [r[3] for r in rows if r[0] != "acked"]
+            retained_records = sum(r[1] for r in rows)
+            active_records = retained_records - sum(r[1] for r in rows if r[0] == "acked")
             return {
                 "states": {r[0]: r[1] for r in rows},
+                "active_records": active_records,
+                "retained_records": retained_records,
                 "pending_bytes": sum(r[2] for r in rows),
                 "oldest_pending_seconds": max(0, now - min(oldest)) if oldest else 0,
                 "max_records": self._max_records,

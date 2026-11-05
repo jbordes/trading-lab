@@ -113,20 +113,23 @@ instalaciones, tests nativos ni benchmarks.
 - **Aceptación:** transporte lento, ACK perdido y FIFO no causan pérdida,
   reordenamiento ni confirmación prematura.
 
-### PY06 — Límite de registros incluye ACK confirmados
+### PY06 — Límite de registros incluye ACK confirmados — resuelto
 
 - **Prioridad:** alta, riesgo operativo confirmado. **Ubicación:**
   `relay_queue.py`, `enqueue` y `finish`.
-- `enqueue` rechaza cuando `usage.records >= max_records` (100000 por defecto);
-  `finish` reduce bytes pendientes pero no el número de registros. Por ello,
-  acumular mensajes ya confirmados puede agotar el límite y detener nuevos
-  mensajes aunque red y central estén sanas. El plazo depende de la cadencia; no
-  está fijado. Los scans de estado y doble consulta de digest son secundarios.
-- **Propuesta:** definir retención/rotación segura de tombstones o separar límite
-  de pendientes de deduplicación durable. No basta aumentar el límite ni borrar
-  tombstones a ciegas sin contrato de deduplicación y horizonte acordado.
-- **Aceptación:** idempotencia tras restart, límites documentados y prueba de
-  operación prolongada sin perder la protección de duplicados.
+- La cuota `max_records` ahora cuenta solo mensajes no confirmados (`pending` y
+  `rejected`); la admisión y el conteo ocurren dentro de la misma transacción
+  serializada. Las filas `acked` siguen reteniendo identidad y hash, por lo que
+  duplicados exactos se reconocen incluso tras reiniciar, pero no bloquean nuevas
+  admisiones. `active_records` y `retained_records` hacen visible la diferencia.
+- **Límite conocido:** no se agregó borrado/compactación de huellas locales. El
+  ledger retenido sigue creciendo y requiere una política de retención separada
+  antes de operación prolongada/producción; no se deben eliminar tombstones sin
+  acordar el horizonte de deduplicación.
+- **Aceptación:** comprobado que ACKs acumulados superan una cuota pequeña sin
+  bloquear nuevas admisiones; la cuota sigue frenando pendientes, y duplicados
+  ACKed se reconocen tras reinicio. Límites y crecimiento retenido están
+  documentados.
 
 ### PY07 — Cobertura de paginación vuelve a parsear payloads
 

@@ -1,6 +1,6 @@
 # ADR-0021: Rutas descriptivas para la API central
 
-**Estado:** accepted  
+**Estado:** accepted
 **Fecha:** 2026-11-05
 
 ## Contexto

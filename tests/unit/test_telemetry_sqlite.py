@@ -9,13 +9,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from tradinglab.telemetry.sqlite_store import (  # noqa: E402
-    SCHEMA_VERSION,
     RegistrationConflictError,
     TelemetryStorageError,
-    create_database,
     open_registry,
 )
 
@@ -27,18 +27,18 @@ class TelemetrySchemaTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "telemetry.sqlite3"
-        create_database(self.path)
+        create_central_database(self.path)
         self.connection = sqlite3.connect(self.path)
         self.addCleanup(self.connection.close)
         self.connection.execute("PRAGMA foreign_keys = ON")
 
     def register(self) -> None:
         self.connection.execute(
-            "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
-            ("account-a", "Demo A", "Test-Server", "USD", STAMP),
+            "INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+            ("account-a", "Demo A", "****1234", "Test-Server", "USD", STAMP),
         )
         self.connection.execute(
-            "INSERT INTO sources VALUES (?, ?, ?)", ("source-a", "account-a", STAMP)
+            "INSERT INTO sources VALUES (?, ?, ?, ?)", ("source-a", "account-a", "snapshot", STAMP)
         )
 
     def message(self, sequence: str = "1", source: str = "source-a") -> None:
@@ -52,10 +52,21 @@ class TelemetrySchemaTest(unittest.TestCase):
 
     def test_schema_version_and_tables_survive_reopen(self) -> None:
         with closing(sqlite3.connect(self.path)) as reopened:
-            self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+            self.assertEqual(
+                reopened.execute("PRAGMA user_version").fetchone()[0], CENTRAL_SCHEMA_VERSION
+            )
             tables = reopened.execute("SELECT name FROM sqlite_master WHERE type='table'")
             self.assertEqual(
-                {row[0] for row in tables}, {"accounts", "sources", "telemetry_messages"}
+                {row[0] for row in tables},
+                {
+                    "accounts",
+                    "sources",
+                    "telemetry_messages",
+                    "telemetry_v2_messages",
+                    "activity_observations",
+                    "activity_coverage",
+                    "position_cycle_observations",
+                },
             )
 
     def test_existing_database_is_not_replaced(self) -> None:
@@ -63,30 +74,30 @@ class TelemetrySchemaTest(unittest.TestCase):
         self.connection.commit()
         before = self.path.read_bytes()
         with self.assertRaises(FileExistsError):
-            create_database(self.path)
+            create_central_database(self.path)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_extension_and_missing_parent_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            create_database(self.path.with_suffix(".txt"))
+            create_central_database(self.path.with_suffix(".txt"))
         missing = self.path.parent / "absent" / "data.sqlite3"
         with self.assertRaises(FileNotFoundError):
-            create_database(missing)
+            create_central_database(missing)
         self.assertFalse(missing.parent.exists())
 
     def test_setup_failure_is_explicit_and_keeps_reserved_file(self) -> None:
         failed = self.path.parent / "failed.sqlite3"
         with patch("tradinglab.telemetry.sqlite_store.sqlite3.connect", side_effect=sqlite3.Error):
-            with self.assertRaises(TelemetryStorageError):
-                create_database(failed)
+            with self.assertRaises(RuntimeError):
+                create_central_database(failed)
         self.assertTrue(failed.exists())
         with self.assertRaises(FileExistsError):
-            create_database(failed)
+            create_central_database(failed)
 
     def test_unknown_account_and_source_rejected(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute(
-                "INSERT INTO sources VALUES (?, ?, ?)", ("unknown", "missing", STAMP)
+                "INSERT INTO sources VALUES (?, ?, ?, ?)", ("unknown", "missing", "snapshot", STAMP)
             )
         with self.assertRaises(sqlite3.IntegrityError):
             self.message()
@@ -94,8 +105,8 @@ class TelemetrySchemaTest(unittest.TestCase):
     def test_source_account_cannot_be_reassigned(self) -> None:
         self.register()
         self.connection.execute(
-            "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
-            ("account-b", "Demo B", "Test-Server", "USD", STAMP),
+            "INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+            ("account-b", "Demo B", "****1234", "Test-Server", "USD", STAMP),
         )
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute("UPDATE sources SET account_id = 'account-b'")
@@ -116,7 +127,7 @@ class TelemetrySchemaTest(unittest.TestCase):
     def test_different_sources_do_not_collide_and_rollback_is_atomic(self) -> None:
         self.register()
         self.connection.execute(
-            "INSERT INTO sources VALUES (?, ?, ?)", ("source-b", "account-a", STAMP)
+            "INSERT INTO sources VALUES (?, ?, ?, ?)", ("source-b", "account-a", "live", STAMP)
         )
         self.connection.commit()
         self.message()
@@ -143,19 +154,23 @@ class TelemetryRegistryTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "registry.sqlite3"
-        create_database(self.path)
+        create_central_database(self.path)
         self.now = datetime(2026, 10, 20, 12, tzinfo=UTC)
 
     def test_register_repeat_reopen_and_preserve_original_date(self) -> None:
         with open_registry(self.path) as registry:
             self.assertTrue(
-                registry.register_account("a", "Demo", "Test", "USD", created_at=self.now)
+                registry.register_account(
+                    "a", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+                )
             )
             self.assertTrue(registry.register_source("source-a", "a", created_at=self.now))
         with open_registry(self.path) as registry:
             later = self.now + timedelta(days=1)
             self.assertFalse(
-                registry.register_account("a", "Demo", "Test", "USD", created_at=later)
+                registry.register_account(
+                    "a", "Demo", "Test", "USD", login_masked="****1234", created_at=later
+                )
             )
             self.assertFalse(registry.register_source("source-a", "a", created_at=later))
         with closing(sqlite3.connect(self.path)) as connection:
@@ -167,11 +182,17 @@ class TelemetryRegistryTest(unittest.TestCase):
 
     def test_conflicts_rollback_and_registry_remains_usable(self) -> None:
         with open_registry(self.path) as registry:
-            registry.register_account("a", "Demo", "Test", "USD", created_at=self.now)
-            registry.register_account("b", "Demo", "Test", "USD", created_at=self.now)
+            registry.register_account(
+                "a", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+            )
+            registry.register_account(
+                "b", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+            )
             registry.register_source("source-a", "a", created_at=self.now)
             with self.assertRaises(RegistrationConflictError):
-                registry.register_account("a", "Changed", "Test", "USD", created_at=self.now)
+                registry.register_account(
+                    "a", "Changed", "Test", "USD", login_masked="****1234", created_at=self.now
+                )
             with self.assertRaises(RegistrationConflictError):
                 registry.register_source("source-a", "b", created_at=self.now)
             with self.assertRaises(ValueError):
@@ -189,7 +210,9 @@ class TelemetryRegistryTest(unittest.TestCase):
                 ("a", "Demo", self.now.replace(tzinfo=None)),
             ):
                 with self.subTest(identity=identity, label=label), self.assertRaises(ValueError):
-                    registry.register_account(identity, label, "Test", "USD", created_at=stamp)
+                    registry.register_account(
+                        identity, label, "Test", "USD", login_masked="****1234", created_at=stamp
+                    )
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(connection.execute("SELECT count(*) FROM accounts").fetchone(), (0,))
 
@@ -209,31 +232,46 @@ class TelemetryRegistryTest(unittest.TestCase):
 
     def test_rejects_missing_guard_even_with_correct_version(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("DROP TRIGGER sources_no_reassignment")
+            connection.execute("DROP TRIGGER sources_no_identity_change")
         with self.assertRaises(TelemetryStorageError), open_registry(self.path):
             self.fail("No debe abrir un esquema alterado")
 
     def test_rejects_broken_foreign_key(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("INSERT INTO sources VALUES ('s', 'missing', ?)", (STAMP,))
+            connection.execute(
+                "INSERT INTO sources VALUES ('s', 'missing', 'snapshot', ?)", (STAMP,)
+            )
             connection.commit()
-        with self.assertRaises(TelemetryStorageError), open_registry(self.path):
-            self.fail("No debe abrir relaciones inválidas")
+        with closing(sqlite3.connect(self.path)) as connection:
+            from tradinglab.telemetry.central_schema import validate_central_schema
+
+            with self.assertRaises(ValueError):
+                validate_central_schema(connection, check_integrity=True)
 
     def test_concurrent_registries_observe_committed_registration(self) -> None:
         with open_registry(self.path) as first, open_registry(self.path) as second:
-            self.assertTrue(first.register_account("a", "Demo", "Test", "USD", created_at=self.now))
+            self.assertTrue(
+                first.register_account(
+                    "a", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+                )
+            )
             self.assertFalse(
-                second.register_account("a", "Demo", "Test", "USD", created_at=self.now)
+                second.register_account(
+                    "a", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+                )
             )
             with self.assertRaises(RegistrationConflictError):
-                second.register_account("a", "Other", "Test", "USD", created_at=self.now)
+                second.register_account(
+                    "a", "Other", "Test", "USD", login_masked="****1234", created_at=self.now
+                )
 
     def test_context_closes_connection_after_caller_error(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "caller"), open_registry(self.path) as registry:
             raise RuntimeError("caller")
         with self.assertRaises(TelemetryStorageError):
-            registry.register_account("a", "Demo", "Test", "USD", created_at=self.now)
+            registry.register_account(
+                "a", "Demo", "Test", "USD", login_masked="****1234", created_at=self.now
+            )
 
 
 if __name__ == "__main__":

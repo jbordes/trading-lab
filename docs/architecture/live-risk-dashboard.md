@@ -2,7 +2,9 @@
 
 **Fecha inicial:** 2026-10-14
 
-**Estado operativo revisado:** 2026-11-05, piloto local validado; despliegue remoto pendiente.
+**Estado operativo revisado:** 2026-11-05, piloto local validado; contrato
+descriptivo/esquema 7 en rama actual, pendiente de integración y corte supervisado;
+despliegue remoto pendiente.
 
 **Estado:** vigente para el piloto
 
@@ -19,7 +21,7 @@ El Excel deja de ser el producto prioritario. Podrá reaparecer como exportació
 ## Flujo vigente del piloto
 
 ```text
-Telemetry v1 + Activity v2 -> relay local 8776/8777 -> FastAPI 8781 -> SQLite local
+Collectors estado de cuenta + trading -> relay local 8776/8777 -> FastAPI 8781 -> central.sqlite3 (schema 7)
                                                         ^
                                                         |
                                                  dashboard 8775
@@ -127,9 +129,10 @@ referencia del servidor MT5. La conversión a hora local solo se realiza cuando 
 instante y la zona u offset del broker son explícitos; no se adivina una zona a
 partir del reloj de la VPS.
 
-Como referencia de compatibilidad, la primera integración conserva receptor y dashboard como procesos
-separados. El receptor expone la última muestra de una fuente mediante
-`GET /v1/snapshot?source_id=<id>`, autenticado y limitado a loopback. Cada consulta
+Como referencia histórica de compatibilidad, la primera integración conserva
+receptor y dashboard como procesos separados. El contrato descriptivo expone la
+última muestra mediante `GET /api/accounts/snapshot?source_id=<id>`, autenticado.
+Cada consulta
 exige exactamente un identificador válido y los mensajes de otras fuentes no
 pueden desplazar su resultado. Un adaptador del lado servidor del dashboard vuelve
 a validar el contrato y el `source_id` esperado, y degrada la vista cuando la
@@ -156,12 +159,12 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 ## Estado y persistencia
 
-- V1 persiste observaciones de cuenta en SQLite. Los buffers de lectura son
+- V1 persiste observaciones de cuenta en la SQLite central. Los buffers de lectura son
   acotados y descartables; no sustituyen ese historial persistido.
-- V2 persiste en SQLite mensajes, cobertura, deals, órdenes y ciclos de posición.
+- V2 persiste en el mismo archivo los mensajes, cobertura, deals, órdenes y ciclos de posición.
   SQLite es la fuente de verdad local del historial piloto.
 - El diagnóstico MT5 puede seguir generando evidencia inmutable bajo `_storage/`.
-- Las proyecciones de ciclos y los índices de consulta ya existen en SQLite v2.
+- Las proyecciones de ciclos y los índices de consulta forman parte del esquema central 6.
   Una caché futura será acotada; no habrá una proyección histórica ilimitada en RAM.
 - PostgreSQL y TimescaleDB no forman parte del piloto; requieren evidencia de
   concurrencia, volumen o centralización.

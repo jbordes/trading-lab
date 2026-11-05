@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from unittest.mock import patch
 
+from storage_fixtures import TradingTestPlan
 from test_mt5_telemetry import snapshot_message
 
 from tradinglab.telemetry.admission_v2 import (
@@ -23,13 +24,13 @@ from tradinglab.telemetry.admission_v2 import (
     V2AuthorizationError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.contract import TelemetryValidationError
 from tradinglab.telemetry.http_server import BoundedTelemetryServer
 from tradinglab.telemetry.ingest import create_telemetry_server
 from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
 from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_config import load_relay_producers
 from tradinglab.telemetry.relay_delivery import HttpRelayTransport
@@ -40,7 +41,7 @@ from tradinglab.telemetry.relay_queue import (
     RelayStorageError,
     create_relay_database,
 )
-from tradinglab.telemetry.sqlite_store import create_database, open_registry
+from tradinglab.telemetry.sqlite_store import open_registry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
 LOCAL = "synthetic-local-relay-credential-01"
@@ -57,12 +58,36 @@ def message(sequence: int = 1) -> bytes:
 
 
 class RelayTest(unittest.TestCase):
+    def test_old_queue_bindings_require_explicit_cutover(self) -> None:
+        self.queue.bind("v2:old-source", "old-contract-binding")
+        before = self.queue.status(now=10)
+        with self.assertRaises(RelayStorageError):
+            RelayIngress(self.queue, (self.producer,))
+        self.assertEqual(self.queue.status(now=10), before)
+
+    def test_pending_sources_cannot_be_silently_removed(self) -> None:
+        second = replace(
+            self.producer,
+            source_id="second-source",
+            local_token=LOCAL + "2",
+            central_token=CENTRAL + "2",
+        )
+        ingress = RelayIngress(self.queue, (self.producer, second))
+        body = json.loads(message())
+        body["source_id"] = second.source_id
+        ingress.accept(
+            "trading-events", json.dumps(body).encode(), f"Bearer {second.local_token}", now=10
+        )
+        with self.assertRaises(RelayStorageError):
+            RelayIngress(self.queue, (self.producer,))
+        self.assertEqual(self.queue.status(now=10)["states"], {"pending": 1})
+
     def test_framing_diagnostic_and_version_are_visible_without_request_values(self) -> None:
         server = create_relay_server(self.ingress, port=0)
         url = self.server(server)
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
         try:
-            connection.putrequest("POST", "/v2/telemetry")
+            connection.putrequest("POST", "/api/trading-events")
             connection.putheader("Content-Length", "2")
             connection.putheader("Content-Type", "application/json")
             connection.endheaders(b"{}")
@@ -86,7 +111,7 @@ class RelayTest(unittest.TestCase):
         ):
             with patch.object(self.ingress, "accept", side_effect=TelemetryValidationError(detail)):
                 request = urllib.request.Request(
-                    url + "/v2/telemetry",
+                    url + "/api/trading-events",
                     data=message(),
                     headers={
                         "Authorization": f"Bearer {LOCAL}",
@@ -161,7 +186,9 @@ class RelayTest(unittest.TestCase):
             }
             if origin is not None:
                 headers["Origin"] = origin
-            request = urllib.request.Request(url + "/v2/telemetry", data=message(), headers=headers)
+            request = urllib.request.Request(
+                url + "/api/trading-events", data=message(), headers=headers
+            )
             try:
                 response = urllib.request.urlopen(request, timeout=3)
             except urllib.error.HTTPError as error:
@@ -190,10 +217,10 @@ class RelayTest(unittest.TestCase):
         role = json.loads((FIXTURES / "activity-canceled-order.json").read_bytes())
         role["source_id"] = self.producer.source_id
         for path, body in (
-            ("/v2/telemetry", source),
-            ("/v2/telemetry", identity),
-            ("/v2/telemetry", role),
-            ("/v1/telemetry", snapshot_message()),
+            ("/api/trading-events", source),
+            ("/api/trading-events", identity),
+            ("/api/trading-events", role),
+            ("/api/account-state", snapshot_message()),
         ):
             request = urllib.request.Request(
                 url + path,
@@ -213,7 +240,7 @@ class RelayTest(unittest.TestCase):
                 "source_mismatch": 1,
                 "identity_mismatch": 1,
                 "role_mismatch": 1,
-                "version_mismatch": 1,
+                "contract_mismatch": 1,
             },
         )
         self.assertEqual(health["states"], {})
@@ -222,11 +249,12 @@ class RelayTest(unittest.TestCase):
     def test_two_listeners_share_one_queue_authentication_and_deduplication(self) -> None:
         live = replace(
             self.producer,
-            version="v1",
+            contract="account-state",
+            role=ProducerRole.SNAPSHOT,
             source_id="demo-terminal-01",
-            target="http://127.0.0.1:8776/v1/telemetry",
-            local_token=LOCAL + "v1",
-            central_token=CENTRAL + "v1",
+            target="http://127.0.0.1:8776/api/account-state",
+            local_token=LOCAL + "account-state",
+            central_token=CENTRAL + "account-state",
         )
         ingress = RelayIngress(self.queue, (live, self.producer))
         with relay_listeners(ingress, (0, 0)) as servers:
@@ -234,14 +262,14 @@ class RelayTest(unittest.TestCase):
             for url, path, raw, key, expected in (
                 (
                     first,
-                    "/v1/telemetry",
+                    "/api/account-state",
                     json.dumps(snapshot_message()).encode(),
                     live.local_token,
                     202,
                 ),
-                (second, "/v2/telemetry", message(), LOCAL, 202),
-                (first, "/v2/telemetry", message(), LOCAL, 200),
-                (second, "/v2/telemetry", message(), "invalid", 401),
+                (second, "/api/trading-events", message(), LOCAL, 202),
+                (first, "/api/trading-events", message(), LOCAL, 200),
+                (second, "/api/trading-events", message(), "invalid", 401),
             ):
                 request = urllib.request.Request(
                     url + path,
@@ -298,12 +326,12 @@ class RelayTest(unittest.TestCase):
         self.queue = RelayQueue(self.path)
         self.addCleanup(lambda: self.queue.close())
         self.producer = RelayProducer(
-            "v2",
+            "trading-events",
             "synthetic-live",
             "account-demo",
             ProducerRole.LIVE,
             ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-            "http://127.0.0.1:8777/v2/telemetry",
+            "http://127.0.0.1:8777/api/trading-events",
             LOCAL,
             CENTRAL,
         )
@@ -311,7 +339,7 @@ class RelayTest(unittest.TestCase):
         self.transport = HttpRelayTransport()
 
     def enqueue(self, sequence: int = 1) -> tuple[bool, int, bool]:
-        return self.ingress.accept("v2", message(sequence), f"Bearer {LOCAL}", now=10)
+        return self.ingress.accept("trading-events", message(sequence), f"Bearer {LOCAL}", now=10)
 
     def server(self, server) -> str:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -326,7 +354,7 @@ class RelayTest(unittest.TestCase):
         return f"http://127.0.0.1:{server.server_port}"
 
     def central_v2(self) -> str:
-        db = V2ProvisionPlan(
+        db = TradingTestPlan(
             self.root,
             "central.sqlite3",
             "account-demo",
@@ -353,7 +381,9 @@ class RelayTest(unittest.TestCase):
         changed = json.loads(message())
         changed["collector_version"] = "changed"
         with self.assertRaises(RelayConflict):
-            self.ingress.accept("v2", json.dumps(changed).encode(), f"Bearer {LOCAL}", now=11)
+            self.ingress.accept(
+                "trading-events", json.dumps(changed).encode(), f"Bearer {LOCAL}", now=11
+            )
         with self.assertRaises(RelayStorageError):
             self.enqueue(2)
         self.assertEqual(self.queue.status(now=20)["states"], {"pending": 1})
@@ -378,9 +408,9 @@ class RelayTest(unittest.TestCase):
         create_relay_database(path)
         queue = RelayQueue(path)
         self.addCleanup(queue.close)
-        producer = replace(self.producer, target=url + "/v2/telemetry")
+        producer = replace(self.producer, target=url + "/api/trading-events")
         ingress = RelayIngress(queue, (producer,))
-        ingress.accept("v2", message(), f"Bearer {LOCAL}", now=10)
+        ingress.accept("trading-events", message(), f"Bearer {LOCAL}", now=10)
         forwarder = RelayForwarder(queue, ingress.producers, transport=self.transport)
         original = self.transport.send
 
@@ -395,7 +425,7 @@ class RelayTest(unittest.TestCase):
         forwarder.run_once(now=12)
         self.assertEqual(queue.status(now=12)["states"], {"acked": 1})
         self.assertEqual(queue.status(now=12)["pending_bytes"], 0)
-        self.assertFalse(ingress.accept("v2", message(), f"Bearer {LOCAL}", now=13)[0])
+        self.assertFalse(ingress.accept("trading-events", message(), f"Bearer {LOCAL}", now=13)[0])
 
     def test_rejected_source_blocks_following_messages(self) -> None:
         self.enqueue()
@@ -437,16 +467,16 @@ class RelayTest(unittest.TestCase):
             self.producer,
             source_id="synthetic-activity",
             role=ProducerRole.ACTIVITY,
-            target=url + "/v2/telemetry",
+            target=url + "/api/trading-events",
             central_token=ACTIVITY,
         )
         ingress = RelayIngress(self.queue, (producer,))
         body = (FIXTURES / "activity-canceled-order.json").read_bytes()
-        ingress.accept("v2", body, f"Bearer {LOCAL}", now=10)
+        ingress.accept("trading-events", body, f"Bearer {LOCAL}", now=10)
         RelayForwarder(self.queue, ingress.producers).run_once(now=10)
         self.assertEqual(self.queue.status(now=10)["states"], {"acked": 1})
         request = urllib.request.Request(
-            url + "/v2/activity?entity=order&from_msc=1792656000000&to_msc=1792656060001",
+            url + "/api/trading/activity?entity=order&from_msc=1792656000000&to_msc=1792656060001",
             headers={"Authorization": f"Bearer {READ}"},
         )
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -471,7 +501,9 @@ class RelayTest(unittest.TestCase):
         self.enqueue()
         body = json.loads(message())
         body["source_id"] = second.source_id
-        ingress.accept("v2", json.dumps(body).encode(), f"Bearer {second.local_token}", now=10)
+        ingress.accept(
+            "trading-events", json.dumps(body).encode(), f"Bearer {second.local_token}", now=10
+        )
 
         def send(producer, body):
             return (
@@ -502,9 +534,9 @@ class RelayTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_relay_producers(config, {})
         for target in (
-            "http://example.com/v2/telemetry",
-            "https://user:password@example.com/v2/telemetry",
-            "https://example.com/v2/telemetry?token=value",
+            "http://example.com/api/trading-events",
+            "https://user:password@example.com/api/trading-events",
+            "https://example.com/api/trading-events?token=value",
         ):
             with self.subTest(target=target), self.assertRaises(ValueError):
                 replace(self.producer, target=target)
@@ -512,7 +544,7 @@ class RelayTest(unittest.TestCase):
     def test_storage_failure_does_not_return_a_local_success(self) -> None:
         url = self.server(create_relay_server(self.ingress, port=0))
         request = urllib.request.Request(
-            url + "/v2/telemetry",
+            url + "/api/trading-events",
             data=message(),
             headers={
                 "Authorization": f"Bearer {LOCAL}",
@@ -535,7 +567,7 @@ class RelayTest(unittest.TestCase):
         url = self.server(create_relay_server(self.ingress, port=0))
         for token, expected in (("invalid", 401), (LOCAL, 202), (LOCAL, 200)):
             request = urllib.request.Request(
-                url + "/v2/telemetry",
+                url + "/api/trading-events",
                 data=message(),
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -554,26 +586,35 @@ class RelayTest(unittest.TestCase):
 
     def test_v1_forwarding_and_separate_central_read_credential(self) -> None:
         db = self.root / "central-v1.sqlite3"
-        create_database(db)
+        create_central_database(db)
         with open_registry(db) as registry:
             registry.register_account(
-                "a", "Demo", "DEMO-SERVER", "USD", created_at=datetime.now(UTC)
+                "a",
+                "Demo",
+                "DEMO-SERVER",
+                "USD",
+                login_masked="****1234",
+                created_at=datetime.now(UTC),
             )
             registry.register_source("demo-terminal-01", "a", created_at=datetime.now(UTC))
         backend = PersistentTelemetryReceiver(db, source_id="demo-terminal-01")
         self.addCleanup(backend.close)
         url = self.server(create_telemetry_server(backend, token=CENTRAL, read_token=READ, port=0))
         producer = replace(
-            self.producer, version="v1", source_id="demo-terminal-01", target=url + "/v1/telemetry"
+            self.producer,
+            contract="account-state",
+            role=ProducerRole.SNAPSHOT,
+            source_id="demo-terminal-01",
+            target=url + "/api/account-state",
         )
         ingress = RelayIngress(self.queue, (producer,))
         body = json.dumps(snapshot_message()).encode()
-        ingress.accept("v1", body, f"Bearer {LOCAL}", now=10)
+        ingress.accept("account-state", body, f"Bearer {LOCAL}", now=10)
         RelayForwarder(self.queue, ingress.producers).run_once(now=10)
         self.assertEqual(self.queue.status(now=10)["states"], {"acked": 1})
         for token, expected in ((CENTRAL, 401), (READ, 200)):
             request = urllib.request.Request(
-                url + "/v1/snapshot?source_id=demo-terminal-01",
+                url + "/api/accounts/snapshot?source_id=demo-terminal-01",
                 headers={"Authorization": f"Bearer {token}"},
             )
             try:
@@ -588,7 +629,9 @@ class RelayTest(unittest.TestCase):
         changed = json.loads(message())
         changed["source_id"] = "other-source"
         with self.assertRaises(V2AuthorizationError):
-            self.ingress.accept("v2", json.dumps(changed).encode(), f"Bearer {LOCAL}", now=10)
+            self.ingress.accept(
+                "trading-events", json.dumps(changed).encode(), f"Bearer {LOCAL}", now=10
+            )
         self.assertEqual(self.queue.status(now=10)["states"], {})
 
     def test_response_deadline_preserves_message_when_central_never_finishes_body(self) -> None:
@@ -615,9 +658,9 @@ class RelayTest(unittest.TestCase):
         create_relay_database(path)
         queue = RelayQueue(path)
         self.addCleanup(queue.close)
-        producer = replace(self.producer, target=url + "/v2/telemetry")
+        producer = replace(self.producer, target=url + "/api/trading-events")
         ingress = RelayIngress(queue, (producer,))
-        ingress.accept("v2", message(), f"Bearer {LOCAL}", now=10)
+        ingress.accept("trading-events", message(), f"Bearer {LOCAL}", now=10)
         try:
             RelayForwarder(
                 queue, ingress.producers, transport=HttpRelayTransport(timeout=0.05)

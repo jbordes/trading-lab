@@ -18,6 +18,7 @@ MAX_TOKEN_LENGTH = 512
 
 
 class ProducerRole(StrEnum):
+    SNAPSHOT = "snapshot"
     LIVE = "live"
     ACTIVITY = "activity"
 
@@ -34,7 +35,7 @@ class AuthorizationRejection(StrEnum):
     SOURCE = "source_mismatch"
     ROLE = "role_mismatch"
     IDENTITY = "identity_mismatch"
-    VERSION = "version_mismatch"
+    CONTRACT = "contract_mismatch"
     PRODUCER = "producer_not_allowed"
 
 
@@ -131,7 +132,7 @@ class _Producer:
     authorization_digest: bytes
 
 
-class V2ProducerDirectory:
+class TradingEventsProducerDirectory:
     """Authenticate a configured producer and authorize its v2 message role."""
 
     def __init__(self, registrations: tuple[ProducerRegistration, ...]) -> None:
@@ -144,6 +145,8 @@ class V2ProducerDirectory:
         for registration in registrations:
             if not isinstance(registration, ProducerRegistration):
                 raise ValueError("Registro de productor inválido")
+            if registration.role not in (ProducerRole.LIVE, ProducerRole.ACTIVITY):
+                raise ValueError("El contrato de eventos requiere rol live o activity")
             digest = _authorization_digest(registration.token)
             account_role = (registration.account_id, registration.role)
             if registration.source_id in sources:
@@ -223,11 +226,11 @@ class InMemoryV2Admission:
 
     def __init__(
         self,
-        directory: V2ProducerDirectory,
+        directory: TradingEventsProducerDirectory,
         *,
         max_retained_messages: int = 5_000,
     ) -> None:
-        if not isinstance(directory, V2ProducerDirectory):
+        if not isinstance(directory, TradingEventsProducerDirectory):
             raise ValueError("Directorio de productores inválido")
         if (
             isinstance(max_retained_messages, bool)

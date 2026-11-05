@@ -1,5 +1,5 @@
 {
-  "schema_version": "mt5-telemetry-v2",
+  "schema_version": "mt5-trading-events-v1",
   "collector_version": "activity-0.2.0",
   "source_id": "synthetic-activity",
   "session_id": "synthetic-session-1",

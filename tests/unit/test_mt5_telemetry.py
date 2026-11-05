@@ -33,7 +33,7 @@ def snapshot_message(
     source_id: str = "demo-terminal-01",
 ) -> dict[str, object]:
     return {
-        "schema_version": "mt5-telemetry-v1",
+        "schema_version": "mt5-account-state-v1",
         "collector_version": "0.1.0",
         "source_id": source_id,
         "session_id": "session-20261015-001",
@@ -341,7 +341,7 @@ class TelemetryServerTest(unittest.TestCase):
             b"[" * 2000 + b"]" * 2000,
         ):
             request = urllib.request.Request(
-                f"{self.base_url}/v1/telemetry",
+                f"{self.base_url}/api/account-state",
                 data=body,
                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
             )
@@ -363,7 +363,7 @@ class TelemetryServerTest(unittest.TestCase):
         for headers, expected in cases:
             connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
             try:
-                connection.putrequest("POST", "/v1/telemetry")
+                connection.putrequest("POST", "/api/account-state")
                 connection.putheader("Content-Type", "application/json")
                 connection.putheader("Content-Length", "2")
                 for key, value in headers:
@@ -395,7 +395,7 @@ class TelemetryServerTest(unittest.TestCase):
 
     def test_accepts_authenticated_json_and_reports_health(self) -> None:
         request = urllib.request.Request(
-            f"{self.base_url}/v1/telemetry",
+            f"{self.base_url}/api/account-state",
             data=encoded(snapshot_message()),
             headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
             method="POST",
@@ -410,7 +410,7 @@ class TelemetryServerTest(unittest.TestCase):
             self.assertEqual(health["accepted"], 1)
             self.assertNotIn("latest", health)
         snapshot_request = urllib.request.Request(
-            f"{self.base_url}/v1/snapshot?source_id=demo-terminal-01",
+            f"{self.base_url}/api/accounts/snapshot?source_id=demo-terminal-01",
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with urllib.request.urlopen(snapshot_request, timeout=2) as response:
@@ -427,7 +427,7 @@ class TelemetryServerTest(unittest.TestCase):
             "?source_id=a&extra=b",
         ):
             request = urllib.request.Request(
-                f"{self.base_url}/v1/snapshot{query}",
+                f"{self.base_url}/api/accounts/snapshot{query}",
                 headers={"Authorization": f"Bearer {TOKEN}"},
             )
             with self.subTest(query=query), self.assertRaises(urllib.error.HTTPError) as caught:
@@ -441,7 +441,7 @@ class TelemetryServerTest(unittest.TestCase):
             message = snapshot_message(source_id=source_id)
             message["payload"]["account"]["balance"] = balance
             request = urllib.request.Request(
-                f"{self.base_url}/v1/telemetry",
+                f"{self.base_url}/api/account-state",
                 data=encoded(message),
                 headers={
                     "Authorization": f"Bearer {TOKEN}",
@@ -454,7 +454,7 @@ class TelemetryServerTest(unittest.TestCase):
 
         for source_id, balance in (("terminal-a", 1_000.0), ("terminal-b", 2_000.0)):
             request = urllib.request.Request(
-                f"{self.base_url}/v1/snapshot?source_id={source_id}",
+                f"{self.base_url}/api/accounts/snapshot?source_id={source_id}",
                 headers={"Authorization": f"Bearer {TOKEN}"},
             )
             with urllib.request.urlopen(request, timeout=2) as response:
@@ -465,7 +465,7 @@ class TelemetryServerTest(unittest.TestCase):
     def test_unknown_source_does_not_fall_back_to_another_terminal(self) -> None:
         message = snapshot_message(source_id="terminal-a")
         request = urllib.request.Request(
-            f"{self.base_url}/v1/telemetry",
+            f"{self.base_url}/api/account-state",
             data=encoded(message),
             headers={
                 "Authorization": f"Bearer {TOKEN}",
@@ -477,7 +477,7 @@ class TelemetryServerTest(unittest.TestCase):
             self.assertEqual(response.status, 202)
 
         unknown_request = urllib.request.Request(
-            f"{self.base_url}/v1/snapshot?source_id=terminal-b",
+            f"{self.base_url}/api/accounts/snapshot?source_id=terminal-b",
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -499,7 +499,7 @@ class TelemetryServerTest(unittest.TestCase):
 
     def test_rejects_missing_token_without_echoing_secret(self) -> None:
         request = urllib.request.Request(
-            f"{self.base_url}/v1/telemetry",
+            f"{self.base_url}/api/account-state",
             data=encoded(snapshot_message()),
             headers={"Content-Type": "application/json"},
             method="POST",

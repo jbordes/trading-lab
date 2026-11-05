@@ -115,6 +115,25 @@ class RelayQueue:
             self._db.close()
             raise
 
+    def validate_streams(self, streams: tuple[str, ...]) -> None:
+        """Fail closed on old contracts or pending sources absent from configuration."""
+        if not 1 <= len(streams) <= 16:
+            raise ValueError("Configure entre uno y dieciséis flujos")
+        with self._lock:
+            if self._db.execute(
+                "SELECT 1 FROM bindings WHERE stream NOT LIKE 'account-state:%' "
+                "AND stream NOT LIKE 'trading-events:%' LIMIT 1"
+            ).fetchone():
+                raise RelayStorageError(
+                    "La cola pertenece a contratos anteriores; requiere corte explícito"
+                )
+            placeholders = ",".join("?" for _ in streams)
+            if self._db.execute(
+                f"SELECT 1 FROM messages WHERE state != 'acked' AND stream NOT IN ({placeholders}) LIMIT 1",
+                streams,
+            ).fetchone():
+                raise RelayStorageError("La cola conserva mensajes de fuentes no configuradas")
+
     def bind(self, stream: str, identity: str) -> None:
         """Prevent reassigning old pending data to a different account or endpoint."""
         with self._lock, self._db:

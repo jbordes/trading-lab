@@ -183,7 +183,7 @@ def create_relay_server(
             if not self._allowed_host():
                 self._json(403, {"error": "host_not_allowed"})
                 return
-            if self.path not in {"/v1/telemetry", "/v2/telemetry"}:
+            if self.path not in {"/api/account-state", "/api/trading-events"}:
                 self._json(404, {"error": "not_found"})
                 return
             if (
@@ -209,10 +209,10 @@ def create_relay_server(
                 counters.reject("incomplete_body")
                 self._json(400, {"error": "incomplete_body"})
                 return
-            version = self.path.split("/")[1]
+            contract = self.path.rsplit("/", 1)[1]
             try:
                 new, gap, out_of_order = ingress.accept(
-                    version, body, self.headers["Authorization"], now=time.time()
+                    contract, body, self.headers["Authorization"], now=time.time()
                 )
             except V2AuthenticationError:
                 counters.reject("unauthorized")
@@ -236,7 +236,7 @@ def create_relay_server(
                 self._json(503, {"error": "storage_unavailable"})
                 return
             result = {"status": "accepted" if new else "duplicate", "sequence_gap": gap}
-            if version == "v2":
+            if contract == "trading-events":
                 result["out_of_order"] = out_of_order
             self._json(202 if new else 200, result)
 

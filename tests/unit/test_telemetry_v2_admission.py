@@ -11,10 +11,10 @@ from tradinglab.telemetry.admission_v2 import (
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
+    TradingEventsProducerDirectory,
     V2AuthenticationError,
     V2AuthorizationError,
     V2ConflictError,
-    V2ProducerDirectory,
     V2StaleSequenceError,
 )
 from tradinglab.telemetry.contract import TelemetryValidationError
@@ -58,8 +58,8 @@ def registration(
     )
 
 
-def directory() -> V2ProducerDirectory:
-    return V2ProducerDirectory(
+def directory() -> TradingEventsProducerDirectory:
+    return TradingEventsProducerDirectory(
         (registration(ProducerRole.LIVE), registration(ProducerRole.ACTIVITY))
     )
 
@@ -79,7 +79,9 @@ class ProducerDirectoryTest(unittest.TestCase):
 
     def test_authenticates_before_parsing_and_never_echoes_token(self) -> None:
         sample_credential = "synthetic-producer-token-safe-length"
-        target = V2ProducerDirectory((registration(ProducerRole.LIVE, token=sample_credential),))
+        target = TradingEventsProducerDirectory(
+            (registration(ProducerRole.LIVE, token=sample_credential),)
+        )
         for authorization in (
             "",
             "Basic value",
@@ -139,7 +141,7 @@ class ProducerDirectoryTest(unittest.TestCase):
         )
         for registrations in invalid:
             with self.subTest(registrations=len(registrations)), self.assertRaises(ValueError):
-                V2ProducerDirectory(registrations)
+                TradingEventsProducerDirectory(registrations)
 
     def test_registration_values_are_validated(self) -> None:
         for change in (

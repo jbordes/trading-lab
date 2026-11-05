@@ -1,4 +1,4 @@
-"""Opt-in SQLite creation and registration, isolated from the live receiver."""
+"""Durable account-state messages on the single central SQLite schema."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from tradinglab.telemetry.central_schema import validate_central_schema
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
@@ -21,54 +22,6 @@ from tradinglab.telemetry.contract import (
     TelemetryEnvelope,
     parse_envelope,
 )
-
-SCHEMA_VERSION = 1
-
-_SCHEMA = """
-BEGIN IMMEDIATE;
-CREATE TABLE accounts (
-    account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
-    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 128),
-    server TEXT NOT NULL CHECK(length(server) BETWEEN 1 AND 128),
-    currency TEXT NOT NULL CHECK(length(currency) BETWEEN 1 AND 16),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TABLE sources (
-    source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TRIGGER sources_no_reassignment
-BEFORE UPDATE OF account_id ON sources
-WHEN NEW.account_id != OLD.account_id
-BEGIN
-    SELECT RAISE(ABORT, 'source account is immutable');
-END;
-CREATE TABLE telemetry_messages (
-    message_id INTEGER PRIMARY KEY,
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 128),
-    sequence TEXT NOT NULL CHECK(
-        length(sequence) BETWEEN 1 AND 19
-        AND sequence NOT GLOB '*[^0-9]*'
-        AND substr(sequence, 1, 1) BETWEEN '1' AND '9'
-        AND (length(sequence) < 19 OR sequence <= '9223372036854775807')
-    ),
-    captured_at_utc TEXT NOT NULL CHECK(length(captured_at_utc) BETWEEN 20 AND 27),
-    received_at_utc TEXT NOT NULL CHECK(length(received_at_utc) BETWEEN 20 AND 27),
-    schema_version TEXT NOT NULL CHECK(length(schema_version) BETWEEN 1 AND 128),
-    collector_version TEXT NOT NULL CHECK(length(collector_version) BETWEEN 1 AND 128),
-    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
-    content_sha256 TEXT NOT NULL CHECK(
-        length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
-    ),
-    UNIQUE(source_id, session_id, sequence)
-) STRICT;
-CREATE INDEX telemetry_messages_source_capture
-ON telemetry_messages(source_id, captured_at_utc, message_id);
-PRAGMA user_version = 1;
-COMMIT;
-"""
 
 
 class TelemetryStorageError(RuntimeError):
@@ -226,12 +179,6 @@ def _capture_is_plausible(snapshot: RestoredSnapshot) -> bool:
     return captured_at <= snapshot.received_at + tolerance
 
 
-def _schema_objects(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    return connection.execute(
-        "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"
-    ).fetchall()
-
-
 class TelemetryRegistry:
     """Local registration and durable messages; no authentication or MT5 access.
 
@@ -244,24 +191,36 @@ class TelemetryRegistry:
         self._connection = connection
 
     def register_account(
-        self, account_id: str, label: str, server: str, currency: str, *, created_at: datetime
+        self,
+        account_id: str,
+        label: str,
+        server: str,
+        currency: str,
+        *,
+        login_masked: str,
+        created_at: datetime,
     ) -> bool:
         """Register an operator-verified account; a repeat keeps its original time."""
         _identifier(account_id)
         for value, limit in ((label, 128), (server, 128), (currency, 16)):
             _text(value, limit)
+        from tradinglab.telemetry.admission_v2 import ProducerIdentity
+
+        ProducerIdentity(login_masked, server, currency)
         stamp = _timestamp(created_at)
         with self._transaction() as connection:
             row = connection.execute(
-                "SELECT label, server, currency FROM accounts WHERE account_id = ?", (account_id,)
+                "SELECT label, server, currency, login_masked FROM accounts WHERE account_id = ?",
+                (account_id,),
             ).fetchone()
             if row is not None:
-                if row != (label, server, currency):
+                if row != (label, server, currency, login_masked):
                     raise RegistrationConflictError("La cuenta ya tiene otros metadatos")
                 return False
             connection.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
-                (account_id, label, server, currency, stamp),
+                "INSERT INTO accounts(account_id, label, server, currency, login_masked, created_at_utc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (account_id, label, server, currency, login_masked, stamp),
             )
             return True
 
@@ -279,14 +238,17 @@ class TelemetryRegistry:
             ):
                 raise ValueError("La cuenta debe registrarse antes que la fuente")
             row = connection.execute(
-                "SELECT account_id FROM sources WHERE source_id = ?", (source_id,)
+                "SELECT account_id, role FROM sources WHERE source_id = ?", (source_id,)
             ).fetchone()
             if row is not None:
-                if row[0] != account_id:
+                expected = (account_id, "snapshot")
+                if row != expected:
                     raise RegistrationConflictError("No se puede reasignar una fuente")
                 return False
             connection.execute(
-                "INSERT INTO sources VALUES (?, ?, ?)", (source_id, account_id, stamp)
+                "INSERT INTO sources(source_id, account_id, role, created_at_utc) "
+                "VALUES (?, ?, 'snapshot', ?)",
+                (source_id, account_id, stamp),
             )
             return True
 
@@ -306,6 +268,17 @@ class TelemetryRegistry:
         captured = _timestamp(datetime.fromisoformat(envelope.captured_at))
         identity = (envelope.source_id, envelope.session_id, str(envelope.sequence))
         with self._transaction() as connection:
+            source = connection.execute(
+                "SELECT s.role, a.login_masked FROM sources s "
+                "JOIN accounts a ON a.account_id = s.account_id WHERE s.source_id = ?",
+                (envelope.source_id,),
+            ).fetchone()
+            if source is None or source[0] != "snapshot":
+                raise MessageAdmissionError("Fuente no autorizada para estado de cuenta")
+            if envelope.kind == "account_snapshot" and (
+                envelope.payload["account"]["login_masked"] != source[1]
+            ):
+                raise MessageAdmissionError("Identidad incompatible con la cuenta registrada")
             account = connection.execute(
                 """SELECT a.server, a.currency FROM sources s
                 JOIN accounts a ON a.account_id = s.account_id WHERE s.source_id = ?""",
@@ -735,8 +708,10 @@ def read_account_history(
         connection.execute("PRAGMA query_only = ON")
         busy_timeout_ms = max(1, int(min(0.1, timeout_seconds) * 1000))
         connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-            raise TelemetryStorageError("Versión de esquema no admitida")
+        try:
+            validate_central_schema(connection)
+        except ValueError as exc:
+            raise TelemetryStorageError(str(exc)) from exc
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         return TelemetryRegistry(connection).account_history(
             source_id,
@@ -758,7 +733,7 @@ def read_account_history(
 
 @contextmanager
 def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[TelemetryRegistry]:
-    """Open an existing exact v1 schema, without creating or migrating a database.
+    """Open the exact central schema without creating or migrating it.
 
     The file and its parent must be under operator control. cross_thread is only
     for a caller that serializes *all* registry access with its own lock.
@@ -776,19 +751,10 @@ def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[Telemet
         )
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-            raise TelemetryStorageError("Versión de esquema no admitida; no se migró la base")
-        reference = sqlite3.connect(":memory:")
         try:
-            reference.executescript(_SCHEMA)
-            if _schema_objects(connection) != _schema_objects(reference):
-                raise TelemetryStorageError("El esquema no coincide con TradingLab v1")
-        finally:
-            reference.close()
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise TelemetryStorageError("Falló la comprobación de integridad SQLite")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise TelemetryStorageError("La base contiene relaciones inválidas")
+            validate_central_schema(connection)
+        except ValueError as exc:
+            raise TelemetryStorageError(str(exc)) from exc
     except sqlite3.Error as exc:
         if connection is not None:
             connection.close()
@@ -801,31 +767,3 @@ def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[Telemet
         yield TelemetryRegistry(connection)
     finally:
         connection.close()
-
-
-def create_database(path: Path) -> None:
-    """Create schema v1 at an explicit new .sqlite3 path without replacing files.
-
-    The parent directory must already exist. Callers must choose a private local
-    path under _storage for operations (tests use temporary directories). Failure
-    can leave a reserved file; it is never deleted or overwritten automatically.
-    This is a creation primitive, not an opener, migration or ingestion API.
-    """
-    if path.suffix != ".sqlite3":
-        raise ValueError("La base debe usar extensión .sqlite3")
-    # Exclusive creation rejects existing files, directories and symlinks.
-    with path.open("xb"):
-        pass
-    connection: sqlite3.Connection | None = None
-    try:
-        connection = sqlite3.connect(path, timeout=5.0)
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA synchronous = FULL")
-        connection.executescript(_SCHEMA)
-    except sqlite3.Error as exc:
-        raise TelemetryStorageError(
-            "No se pudo crear el esquema; revisar el archivo reservado antes de reintentar"
-        ) from exc
-    finally:
-        if connection is not None:
-            connection.close()

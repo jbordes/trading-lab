@@ -122,7 +122,7 @@ class NetworkLimitsTest(unittest.TestCase):
         requests = (
             b"GET /health HTTP/1.0\r\nX-Incomplete:",
             (
-                f"POST /v1/telemetry HTTP/1.0\r\nAuthorization: Bearer {TOKEN}\r\n"
+                f"POST /api/account-state HTTP/1.0\r\nAuthorization: Bearer {TOKEN}\r\n"
                 "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{"
             ).encode(),
         )

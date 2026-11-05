@@ -30,8 +30,22 @@ class V2AuthenticationError(V2AdmissionError):
     """The supplied credential does not identify a configured producer."""
 
 
+class AuthorizationRejection(StrEnum):
+    SOURCE = "source_mismatch"
+    ROLE = "role_mismatch"
+    IDENTITY = "identity_mismatch"
+    VERSION = "version_mismatch"
+    PRODUCER = "producer_not_allowed"
+
+
 class V2AuthorizationError(V2AdmissionError):
     """The authenticated producer cannot emit this message."""
+
+    def __init__(
+        self, message: str, *, reason: AuthorizationRejection = AuthorizationRejection.PRODUCER
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class V2ConflictError(V2AdmissionError):
@@ -161,12 +175,21 @@ class V2ProducerDirectory:
             ProducerRole.LIVE: "live_snapshot",
             ProducerRole.ACTIVITY: "activity_batch",
         }[producer.role]
-        if (
-            envelope.source_id != producer.source_id
-            or envelope.kind not in {allowed_kind, "heartbeat"}
-            or not producer.identity.matches(envelope.payload.get("identity"))
-        ):
-            raise V2AuthorizationError("El productor no está autorizado para el mensaje")
+        if envelope.source_id != producer.source_id:
+            raise V2AuthorizationError(
+                "El productor no está autorizado para el mensaje",
+                reason=AuthorizationRejection.SOURCE,
+            )
+        if envelope.kind not in {allowed_kind, "heartbeat"}:
+            raise V2AuthorizationError(
+                "El productor no está autorizado para el mensaje",
+                reason=AuthorizationRejection.ROLE,
+            )
+        if not producer.identity.matches(envelope.payload.get("identity")):
+            raise V2AuthorizationError(
+                "El productor no está autorizado para el mensaje",
+                reason=AuthorizationRejection.IDENTITY,
+            )
         return AuthorizedEnvelope(
             account_id=producer.account_id,
             role=producer.role,

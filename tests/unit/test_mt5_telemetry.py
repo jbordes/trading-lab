@@ -529,6 +529,18 @@ class TelemetryServerTest(unittest.TestCase):
 
 
 class Mql5CollectorSafetyTest(unittest.TestCase):
+    def test_live_snapshot_retains_periodic_capture_with_slower_history_sampling(self) -> None:
+        source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("HistoryIntervalSeconds = 60", source)
+        builder = source.split("string BuildSnapshot", 1)[1].split("string FinalizeSnapshot", 1)[0]
+        self.assertIn("BuildHistorySample()", builder)
+        cache = source.split("string BuildHistorySample()", 1)[1]
+        self.assertIn("trade_activity_pending", cache)
+        self.assertIn("HistoryIntervalSeconds", cache)
+        self.assertIn("GetTickCount64()", cache)
+
     def test_pilot_guards_cover_capture_and_delivery(self) -> None:
         source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
             encoding="utf-8"
@@ -541,11 +553,18 @@ class Mql5CollectorSafetyTest(unittest.TestCase):
         self.assertIn("!IsLoopbackIngestUrl(IngestUrl)", send)
         guard = source.split("bool CheckPilotSafety()", 1)[1].split("#endif", 1)[0]
         self.assertIn("GetLastError() == 0", guard)
-        self.assertIn("safety_stopped = true;", guard)
+        self.assertIn("capture_state = CAPTURE_STOPPED;", guard)
+        waiting = guard.split("if(observed == CAPTURE_WAIT_BROKER)", 1)[1].split(
+            "if(observed == CAPTURE_READY)", 1
+        )[0]
+        self.assertNotIn("EventKillTimer", waiting)
         self.assertIn("EventKillTimer();", guard)
         self.assertIn('DropHead("pilot_guard")', guard)
-        self.assertIn("mode == ACCOUNT_TRADE_MODE_DEMO", source)
-        self.assertIn("login == expected_login && server == expected_server", source)
+        common = (ROOT / "apps/mt5-telemetry-collector/TradingLabCollectorCommon.mqh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("mode == ACCOUNT_TRADE_MODE_DEMO", common)
+        self.assertIn("login == expected_login && server == expected_server", common)
 
     def test_numeric_validity_propagates_through_all_snapshot_sections(self) -> None:
         source = (ROOT / "apps/mt5-telemetry-collector/TradingLabTelemetry.mq5").read_text(
@@ -558,7 +577,10 @@ class Mql5CollectorSafetyTest(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(all(", valid)" in line for line in calls))
         self.assertIn("return FinalizeSnapshot(body, valid);", source)
-        numeric = source.split("string JsonNumber(", 1)[1].split("string UnsignedIdentifier", 1)[0]
+        common = (ROOT / "apps/mt5-telemetry-collector/TradingLabCollectorCommon.mqh").read_text(
+            encoding="utf-8"
+        )
+        numeric = common.split("string JsonNumber(", 1)[1].split("string UnsignedIdentifier", 1)[0]
         self.assertIn("valid = false;", numeric)
         self.assertNotIn('return "0";', numeric)
         enqueue = source.split("void EnqueueSnapshot(", 1)[1].split("bool TrySendQueued", 1)[0]

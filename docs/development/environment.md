@@ -1,8 +1,24 @@
 # Entorno de desarrollo de TradingLab 2.0
 
-**Versión:** 0.1
+**Versión del documento:** 0.1
 
-**Estado:** Implementado para la fase de fundación
+**Estado:** entorno del repositorio operativo; el número 0.1 identifica este
+documento y no el estado del producto. El Harness actual es 0.2 (2026).
+
+## Rama de integración temporal
+
+Durante el programa `remote-data-platform`, la base estable de trabajo es
+`feature/remote-data-platform`, según la excepción temporal descrita en el
+[`AGENTS.md`](../../AGENTS.md) y en
+[el programa de entrega](remote-data-platform-delivery.md). Las ramas cortas del
+programa parten de esa rama y vuelven a ella mediante PR y revisión humana. El
+programa regresará a `main` al cierre; no implica que cambios locales estén ya
+integrados, tengan CI verde o estén publicados.
+
+La bitácora canónica del programa se mantiene en esa rama, limitada a la entrada
+de hoy en `Europe/Madrid`. Las ramas cortas siguen sin incluir sesiones y las
+entradas de días anteriores son inmutables. Fuera de esta excepción temporal, la
+regla general del repositorio mantiene la bitácora diaria por el flujo de `main`.
 
 ## Objetivo
 
@@ -64,16 +80,22 @@ uv run python scripts/session.py today --activity "Actividad inicial"
 
 El nombre normal es `YYYY-MM-DD.md` y reúne todos los temas mediante bloques horarios o subtítulos. `--topic <tema>` solo se utiliza excepcionalmente cuando una jornada deba dividirse de forma deliberada; no representa una feature.
 
-Las entradas fechadas nunca se incluyen en una rama de cambio. Se publican directamente en `main` en un commit exclusivo, después de ejecutar `uv run python scripts/session.py guard-publish`. El guard solo admite archivos de `docs/sessions/` cuya fecha sea el día actual y rechaza cualquier otra ruta. Desde el día siguiente, esas entradas son inmutables; las correcciones se agregan a la bitácora corriente.
+Las entradas fechadas no se mezclan con ramas cortas. En el flujo normal, la
+entrada de hoy se publica en `main` en un commit exclusivo después de ejecutar
+`uv run python scripts/session.py guard-publish`; las entradas de días anteriores
+son inmutables. Durante el programa remoto se aplica la excepción de rama y
+bitácora descrita arriba y en `AGENTS.md`.
 
 Las decisiones durables o con alternativas relevantes se registran en `docs/adr/` usando su plantilla. La bitácora enlaza el ADR, pero no duplica todo su razonamiento.
 
 ## Flujo de Git
 
-1. Actualizar `main` sin sobrescribir trabajo local.
-2. Crear una rama corta `feature/*`, `fix/*`, `docs/*` o `chore/*`.
+1. Actualizar la base estable vigente sin sobrescribir trabajo local (`main` en
+   el flujo normal; `feature/remote-data-platform` durante su excepción aprobada).
+2. Crear una rama corta `feature/*`, `fix/*`, `docs/*` o `chore/*` desde esa base.
 3. Implementar y ejecutar `docs`, `fast` y tests dirigidos según el alcance.
-4. Actualizar los ADR que correspondan; la bitácora diaria se mantiene por el flujo separado de `main`.
+4. Actualizar los ADR que correspondan; la bitácora diaria usa el flujo y la rama
+   canónica vigentes descritos arriba.
 5. Revisar el diff final y confirmar las validaciones locales proporcionales. Ejecutar `full` local solo si el alcance o un diagnóstico concreto lo requiere.
 6. Publicar la rama y abrir un pull request.
 7. Esperar que CI ejecute la validación completa y pase en Windows, macOS y Linux.
@@ -83,7 +105,10 @@ El workflow de CI tiene permisos de solo lectura y no ejecuta auto-merge. La rul
 
 ## Evolución prevista
 
-- Agregar validación de schemas cuando se definan los contratos del piloto.
-- Agregar un modo de artefactos para hashes, manifests y lineage sin ejecutarlo al inicio de cada sesión.
-- Incorporar linters y tests por rutas cuando exista código de aplicación.
+- Continuar evolucionando las validaciones de schemas a medida que cambien los
+  contratos y sus consumidores.
+- Evaluar un modo de artefactos para hashes, manifests y lineage sin ejecutarlo al
+  inicio de cada sesión.
+- Ajustar linters y pruebas por ruta conforme crezcan los componentes y el costo
+  de validación.
 - Crear skills únicamente para procedimientos manuales ya estabilizados.

@@ -417,6 +417,72 @@ class HarnessChecksTest(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_local_feature_uses_configured_stable_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.run_git(root, "init", "-b", "main")
+            (root / "README.md").write_text("# Base\n", encoding="utf-8")
+            self.run_git(root, "add", "README.md")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            )
+            self.run_git(root, "checkout", "-b", "feature/remote-data-platform")
+            (root / "pyproject.toml").write_text(
+                '[tool.tradinglab.workflow]\nstable-branch = "feature/remote-data-platform"\n',
+                encoding="utf-8",
+            )
+            self.run_git(root, "add", "pyproject.toml")
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "integration base",
+            )
+            self.run_git(root, "checkout", "-b", "feature/program-step")
+            self.run_git(root, "checkout", "feature/remote-data-platform")
+            session_path = root / "docs" / "sessions" / "2026-10-30.md"
+            session_path.parent.mkdir(parents=True)
+            session_path.write_text("# Bitácora de integración\n", encoding="utf-8")
+            self.run_git(root, "add", session_path.relative_to(root).as_posix())
+            self.run_git(
+                root,
+                "-c",
+                "user.name=Harness Test",
+                "-c",
+                "user.email=harness@example.invalid",
+                "commit",
+                "-m",
+                "daily log",
+            )
+            self.run_git(
+                root,
+                "update-ref",
+                "refs/remotes/origin/feature/remote-data-platform",
+                "HEAD",
+            )
+            self.run_git(root, "checkout", "feature/program-step")
+            (root / "README.md").write_text("# Feature\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {"GITHUB_BASE_REF": "", "TRADINGLAB_BASE_SHA": ""},
+                clear=False,
+            ):
+                errors = CHECK.check_session_change_policy(root)
+
+            self.assertEqual(errors, [])
+
     def test_pull_request_ignores_daily_logs_added_only_to_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

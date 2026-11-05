@@ -3,10 +3,33 @@
 Estos EAs emiten observaciones desde un terminal MT5 hacia receptores locales.
 No abren, cierran ni modifican operaciones y no aceptan instrucciones remotas.
 
+La revisión de diseño, recuperación automática, límites y pruebas de las nuevas
+versiones se documenta en [robustez de collectors](../../docs/development/mt5-collector-resilience.md).
+Al compilar las versiones preparadas se deben incluir tres headers:
+`TradingLabCollectorCommon.mqh`, `TradingLabActivityState.mqh` y
+`TradingLabCollectorLog.mqh`. Telemetry `0.2.1` y Activity `activity-0.7.1`
+se instalaron bajo supervisión en Juampi el 2026-11-05, después de ejecutar los
+cuatro scripts nativos actualizados con cero fallos. Se preservaron con hashes
+verificados los binarios previos en `_storage/collector-releases/2026-11-05-before-logging`;
+el ZIP previo del socio permanece intacto. No se modificaron EAs de trading,
+inputs ni cursores. El fix de strings validado en Activity se conserva en la
+versión instalada; la evidencia y limitaciones están en
+[robustez de collectors](../../docs/development/mt5-collector-resilience.md).
+
+El logger escribe por terminal en `MQL5\Files\TradingLab\logs\` archivos
+`telemetry-<SourceId>-YYYYMMDD.jsonl` o `activity-<SourceId>-YYYYMMDD.jsonl`
+(en el nombre, `:` de SourceId se sustituye por `~`; fecha UTC). Emite `WARN`,
+`ERROR` y `RESOLVED` al cerrar una incidencia; no registra INFO ni eventos healthy
+de inicio/parada. Los Expertos solo registran errores críticos y un aviso si el
+sink falla o alcanza la cuota. Los registros son acotados y no incluyen tokens,
+headers, payloads ni credenciales. No se usa `FILE_COMMON` ni se ejecuta E/S de
+logging en `OnTradeTransaction`.
+
 - `TradingLabTelemetry.mq5`: snapshot v1 vigente de cuenta, posiciones, órdenes
   pendientes y una ventana reciente de deals.
 - `TradingLabActivity.mq5`: piloto v2 de actividad histórica con deals, órdenes
-  finalizadas y recuperación por tramos. Todavía no está instalado.
+  finalizadas y recuperación por tramos. La instalación de la versión con logging
+  fue manual y supervisada.
 
 ## Collector vigente v1
 
@@ -41,14 +64,15 @@ El collector v2 exige un inicio histórico explícito y usa tiempo de servidor M
 Consulta ventanas de hasta seis horas por defecto, filtra exactamente por
 milisegundos y envía como máximo 200 deals y 200 órdenes por lote. Si un rango
 supera ese límite, lo divide hasta `MinimumWindowSeconds`. Un mínimo todavía
-saturado se guarda como `truncated`, bloquea el avance y requiere revisión.
+saturado utiliza páginas estables; no se confirma el rango hasta completarlo.
 
 El cursor se conserva en las variables globales de la terminal, asociado a la
 fuente y la identidad demo. Solo avanza después de HTTP 200/202 y fuerza el
 guardado a disco. Un corte antes de confirmar vuelve a consultar con solapamiento;
-la composición del backend resuelve reobservaciones por ticket. Los rechazos 4xx
-detienen el EA y los fallos transitorios reintentan el mismo cuerpo con espera
-creciente.
+la composición del backend resuelve reobservaciones por ticket. Los fallos
+transitorios reintentan el mismo cuerpo con espera creciente. Desde
+`activity-0.7.0`, 401/403 conservan el lote y reintentan cada 60 segundos; otros
+rechazos no recuperables detienen el EA y requieren revisión.
 
 Desde `activity-0.2.0`, cuando una ventana contiene una salida o reversión, el
 collector selecciona además el historial completo de esa posición con

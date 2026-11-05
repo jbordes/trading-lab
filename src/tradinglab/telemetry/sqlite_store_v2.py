@@ -35,142 +35,17 @@ from tradinglab.telemetry.contract import (
 )
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
-
-DATABASE_SCHEMA_VERSION = 5
-
-_POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
-    message_id INTEGER PRIMARY KEY REFERENCES telemetry_v2_messages(message_id),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    position_id TEXT NOT NULL CHECK(
-        length(position_id) BETWEEN 1 AND 20 AND position_id NOT GLOB '*[^0-9]*'
-    ),
-    owner_magic TEXT,
-    started_at_msc INTEGER NOT NULL CHECK(started_at_msc >= 0),
-    last_event_at_msc INTEGER NOT NULL CHECK(last_event_at_msc >= started_at_msc),
-    lifecycle TEXT NOT NULL CHECK(lifecycle IN ('closed', 'open', 'incomplete', 'inconsistent')),
-    remaining_signed_volume TEXT NOT NULL,
-    observed_net_result TEXT NOT NULL,
-    eligible INTEGER NOT NULL CHECK(eligible IN (0, 1)),
-    observed_magics_json TEXT NOT NULL CHECK(json_valid(observed_magics_json)),
-    deal_tickets_json TEXT NOT NULL CHECK(json_valid(deal_tickets_json)),
-    exclusions_json TEXT NOT NULL CHECK(json_valid(exclusions_json)),
-    cycle_json TEXT NOT NULL CHECK(json_valid(cycle_json)),
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    captured_at_utc TEXT NOT NULL
-) STRICT;"""
-_POSITION_CYCLE_INDEX = """CREATE INDEX position_cycle_observations_query
-ON position_cycle_observations(account_id, last_event_at_msc, position_id);"""
-_POSITION_CYCLE_REVISION_INDEX = """CREATE INDEX position_cycle_observations_revision
-ON position_cycle_observations(
-    account_id, position_id, captured_at_utc DESC, message_id DESC
-);"""
-_POSITION_CYCLE_MAGIC_INDEX = """CREATE INDEX position_cycle_observations_magic_query
-ON position_cycle_observations(account_id, owner_magic, last_event_at_msc, position_id);"""
-_POSITION_CYCLE_EXTRA_INDEXES = _POSITION_CYCLE_REVISION_INDEX + "\n" + _POSITION_CYCLE_MAGIC_INDEX
-_POSITION_CYCLE_DDL_V4 = _POSITION_CYCLE_TABLE + "\n" + _POSITION_CYCLE_INDEX
-_POSITION_CYCLE_DDL = _POSITION_CYCLE_DDL_V4 + "\n" + _POSITION_CYCLE_EXTRA_INDEXES
-
-_SCHEMA = f"""
-BEGIN IMMEDIATE;
-CREATE TABLE accounts (
-    account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
-    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 128),
-    login_masked TEXT NOT NULL CHECK(
-        length(login_masked) BETWEEN 5 AND 12
-        AND login_masked GLOB '[*][*][*][*][0-9]*'
-        AND substr(login_masked, 5) NOT GLOB '*[^0-9]*'
-    ),
-    server TEXT NOT NULL CHECK(length(server) BETWEEN 1 AND 128),
-    currency TEXT NOT NULL CHECK(length(currency) BETWEEN 1 AND 16),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TABLE sources (
-    source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    role TEXT NOT NULL CHECK(role IN ('live', 'activity')),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27),
-    UNIQUE(account_id, role)
-) STRICT;
-CREATE TRIGGER sources_no_identity_change
-BEFORE UPDATE OF account_id, role ON sources
-WHEN NEW.account_id != OLD.account_id OR NEW.role != OLD.role
-BEGIN
-    SELECT RAISE(ABORT, 'source identity is immutable');
-END;
-CREATE TABLE telemetry_v2_messages (
-    message_id INTEGER PRIMARY KEY,
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 128),
-    sequence TEXT NOT NULL CHECK(
-        length(sequence) BETWEEN 1 AND 19
-        AND sequence NOT GLOB '*[^0-9]*'
-        AND substr(sequence, 1, 1) BETWEEN '1' AND '9'
-        AND (length(sequence) < 19 OR sequence <= '9223372036854775807')
-    ),
-    event_id TEXT NOT NULL CHECK(length(event_id) BETWEEN 1 AND 128),
-    kind TEXT NOT NULL CHECK(kind IN ('live_snapshot', 'activity_batch', 'heartbeat')),
-    captured_at_utc TEXT NOT NULL CHECK(length(captured_at_utc) BETWEEN 20 AND 27),
-    received_at_utc TEXT NOT NULL CHECK(length(received_at_utc) BETWEEN 20 AND 27),
-    schema_version TEXT NOT NULL CHECK(schema_version = 'mt5-telemetry-v2'),
-    collector_version TEXT NOT NULL CHECK(length(collector_version) BETWEEN 1 AND 128),
-    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
-    content_sha256 TEXT NOT NULL CHECK(
-        length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
-    ),
-    out_of_order INTEGER NOT NULL CHECK(out_of_order IN (0, 1)),
-    gap_count INTEGER NOT NULL CHECK(gap_count >= 0),
-    UNIQUE(source_id, session_id, sequence),
-    UNIQUE(source_id, event_id)
-) STRICT;
-CREATE INDEX telemetry_v2_messages_source_capture
-ON telemetry_v2_messages(source_id, captured_at_utc, message_id);
-CREATE TABLE activity_observations (
-    message_id INTEGER NOT NULL REFERENCES telemetry_v2_messages(message_id),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    entity_type TEXT NOT NULL CHECK(entity_type IN ('deal', 'order')),
-    ticket TEXT NOT NULL CHECK(
-        length(ticket) BETWEEN 1 AND 20 AND ticket NOT GLOB '*[^0-9]*'
-    ),
-    event_msc INTEGER NOT NULL CHECK(event_msc BETWEEN 0 AND 9223372036854775807),
-    magic_number TEXT NOT NULL CHECK(
-        length(magic_number) BETWEEN 1 AND 20
-    ),
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    session_id TEXT NOT NULL,
-    sequence TEXT NOT NULL,
-    captured_at_utc TEXT NOT NULL,
-    received_at_utc TEXT NOT NULL,
-    row_json TEXT NOT NULL CHECK(json_valid(row_json)),
-    PRIMARY KEY(message_id, entity_type, ticket)
-) STRICT;
-CREATE INDEX activity_observations_query
-ON activity_observations(account_id, entity_type, ticket, captured_at_utc);
-CREATE TABLE activity_coverage (
-    message_id INTEGER NOT NULL REFERENCES telemetry_v2_messages(message_id),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    entity_type TEXT NOT NULL CHECK(entity_type IN ('deal', 'order')),
-    from_server_msc INTEGER NOT NULL CHECK(from_server_msc >= 0),
-    to_server_msc INTEGER NOT NULL CHECK(to_server_msc >= from_server_msc),
-    status TEXT NOT NULL CHECK(status IN ('complete', 'truncated', 'error')),
-    reported_total INTEGER,
-    captured_at_utc TEXT NOT NULL,
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    session_id TEXT NOT NULL,
-    sequence TEXT NOT NULL,
-    collection_json TEXT NOT NULL CHECK(json_valid(collection_json)),
-    PRIMARY KEY(message_id, entity_type)
-) STRICT;
-CREATE INDEX activity_coverage_query
-ON activity_coverage(account_id, entity_type, from_server_msc, to_server_msc);
-{_POSITION_CYCLE_DDL}
-PRAGMA user_version = 5;
-COMMIT;
-"""
-_SCHEMA_V4 = _SCHEMA.replace("\n" + _POSITION_CYCLE_EXTRA_INDEXES, "").replace(
-    "PRAGMA user_version = 5", "PRAGMA user_version = 4"
+from tradinglab.telemetry.schema_v2 import (
+    DATABASE_SCHEMA_VERSION,
 )
-_SCHEMA_V3 = _SCHEMA_V4.replace(_POSITION_CYCLE_DDL_V4, "").replace(
-    "PRAGMA user_version = 4", "PRAGMA user_version = 3"
+from tradinglab.telemetry.schema_v2 import (
+    SCHEMA as _SCHEMA,
+)
+from tradinglab.telemetry.schema_v2 import (
+    expected_schema_objects as _expected_schema_objects,
+)
+from tradinglab.telemetry.schema_v2 import (
+    schema_objects as _schema_objects,
 )
 
 
@@ -352,21 +227,6 @@ def _restore_cycle(document: str) -> PositionCycle:
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise V2StorageError("Ciclo de posición guardado inválido") from exc
-
-
-def _schema_objects(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    return connection.execute(
-        "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"
-    ).fetchall()
-
-
-def _expected_schema_objects(schema: str) -> list[tuple[str, str, str]]:
-    reference = sqlite3.connect(":memory:")
-    try:
-        reference.executescript(schema)
-        return _schema_objects(reference)
-    finally:
-        reference.close()
 
 
 class V2TelemetryRegistry:
@@ -1390,143 +1250,14 @@ def create_v2_database(path: Path) -> None:
 
 
 def migrate_v2_database_v3_to_v4(path: Path, backup_path: Path) -> int:
-    """Back up and atomically add durable position-cycle observations.
+    """Compatibility entry point for the isolated schema-migration adapter."""
+    from tradinglab.telemetry.schema_migrations_v2 import migrate_v2_database_v3_to_v4 as migrate
 
-    Returns the number of existing ``position_reconcile`` messages projected
-    during the migration. The source must exist and the backup path must be new.
-    """
-
-    if path.suffix != ".sqlite3" or backup_path.suffix != ".sqlite3":
-        raise ValueError("La base y su copia deben usar extensión .sqlite3")
-    source = path.resolve(strict=True)
-    backup = backup_path.resolve(strict=False)
-    if source == backup:
-        raise ValueError("La copia debe usar otro archivo")
-    if backup.exists():
-        raise FileExistsError(f"La copia ya existe: {backup}")
-    backup.parent.resolve(strict=True)
-
-    connection = sqlite3.connect(source, timeout=5.0)
-    backup_connection: sqlite3.Connection | None = None
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 3:
-            raise V2StorageError("La migración exige una base v2 con esquema 3")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V3):
-            raise V2StorageError("El esquema 3 no coincide con TradingLab v2")
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise V2StorageError("Falló la comprobación previa de SQLite v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La base v2 contiene relaciones inválidas")
-
-        backup_connection = sqlite3.connect(backup, timeout=5.0)
-        connection.backup(backup_connection)
-        backup_connection.commit()
-        if backup_connection.execute("PRAGMA quick_check").fetchall() != [
-            ("ok",)
-        ] or _schema_objects(backup_connection) != _expected_schema_objects(_SCHEMA_V3):
-            raise V2StorageError("La copia previa a la migración no quedó verificada")
-        backup_connection.close()
-        backup_connection = None
-
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(_POSITION_CYCLE_TABLE)
-        connection.execute(_POSITION_CYCLE_INDEX)
-        projected = 0
-        rows = connection.execute(
-            """SELECT m.message_id, s.account_id, m.source_id,
-                      m.captured_at_utc, m.payload_json
-            FROM telemetry_v2_messages m
-            JOIN sources s ON s.source_id = m.source_id
-            WHERE m.kind = 'activity_batch'
-            ORDER BY m.message_id"""
-        ).fetchall()
-        for message_id, account_id, source_id, captured, canonical in rows:
-            envelope = parse_envelope_v2(canonical.encode("utf-8"))
-            if envelope.payload["reason"] != "position_reconcile":
-                continue
-            V2TelemetryRegistry._project_position_cycle(
-                connection,
-                int(message_id),
-                account_id,
-                source_id,
-                captured,
-                envelope.payload["deals"]["items"],
-            )
-            projected += 1
-        connection.execute("PRAGMA user_version = 4")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
-            raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La migración produjo relaciones inválidas")
-        connection.commit()
-        return projected
-    except sqlite3.Error as exc:
-        connection.rollback()
-        raise V2StorageError("No se pudo migrar la base v2") from exc
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        if backup_connection is not None:
-            backup_connection.close()
-        connection.close()
+    return migrate(path, backup_path, project_cycle=V2TelemetryRegistry._project_position_cycle)
 
 
 def migrate_v2_database_v4_to_v5(path: Path, backup_path: Path) -> None:
-    """Back up and atomically add the indexes used by multi-year cycle queries."""
+    """Compatibility entry point for the isolated schema-migration adapter."""
+    from tradinglab.telemetry.schema_migrations_v2 import migrate_v2_database_v4_to_v5 as migrate
 
-    if path.suffix != ".sqlite3" or backup_path.suffix != ".sqlite3":
-        raise ValueError("La base y su copia deben usar extensión .sqlite3")
-    source = path.resolve(strict=True)
-    backup = backup_path.resolve(strict=False)
-    if source == backup:
-        raise ValueError("La copia debe usar otro archivo")
-    if backup.exists():
-        raise FileExistsError(f"La copia ya existe: {backup}")
-    backup.parent.resolve(strict=True)
-
-    connection = sqlite3.connect(source, timeout=5.0)
-    backup_connection: sqlite3.Connection | None = None
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
-            raise V2StorageError("La migración exige una base v2 con esquema 4")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA_V4):
-            raise V2StorageError("El esquema 4 no coincide con TradingLab v2")
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise V2StorageError("Falló la comprobación previa de SQLite v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La base v2 contiene relaciones inválidas")
-
-        backup_connection = sqlite3.connect(backup, timeout=5.0)
-        connection.backup(backup_connection)
-        backup_connection.commit()
-        if backup_connection.execute("PRAGMA quick_check").fetchall() != [
-            ("ok",)
-        ] or _schema_objects(backup_connection) != _expected_schema_objects(_SCHEMA_V4):
-            raise V2StorageError("La copia previa a la migración no quedó verificada")
-        backup_connection.close()
-        backup_connection = None
-
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(_POSITION_CYCLE_REVISION_INDEX)
-        connection.execute(_POSITION_CYCLE_MAGIC_INDEX)
-        connection.execute("PRAGMA user_version = 5")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
-            raise V2StorageError("El esquema migrado no coincide con TradingLab v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La migración produjo relaciones inválidas")
-        connection.commit()
-    except sqlite3.Error as exc:
-        connection.rollback()
-        raise V2StorageError("No se pudo migrar la base v2") from exc
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        if backup_connection is not None:
-            backup_connection.close()
-        connection.close()
+    migrate(path, backup_path)

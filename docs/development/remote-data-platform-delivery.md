@@ -1,15 +1,42 @@
 # Construcción de la plataforma de datos remota
 
-**Estado:** programa aprobado; preparación de la rama de integración
+**Estado vigente al 2026-11-05:** piloto local operativo; traslado remoto pendiente
 
 **Rama estable temporal:** `feature/remote-data-platform`
 
 **Base inicial:** `origin/main` en `ff3b864`
 
+El piloto local ya ejecuta los collectors Telemetry `0.2.1` y Activity
+`activity-0.7.1`, una outbox durable con listeners `8776/8777`, FastAPI `8781`,
+SQLite v1 y v2/esquema 5 y el dashboard `8775` con sesión humana y lecturas por
+API. Los cuatro scripts nativos pasaron en Juampi y se validó un corte breve del
+relay con logging. La infraestructura de jobs está definida, pero no se afirma
+que esté activada.
+
+Esta evidencia local no equivale a merge ni a CI verde. El estado de PRs no se
+deduce aquí: requiere revisión humana y los checks correspondientes. No está
+desplegado en la Mac, no existe aún el piloto remoto con enlace privado y no se
+habilitan cuentas reales.
+
+Pendiente: gestión centralizada de credenciales y permisos; preparar Mac y
+conectividad privada; pruebas operativas restantes de 401/403, desconexión del
+broker y carga; comparación amplia de reportes/cuentas; backup y restauración
+para producción; revisión de fórmulas financieras existentes y definición de
+métricas de riesgo y ejecución con el socio. La
+retención de datos históricos conserva la política sin TTL; la retención de
+14 días corresponde solo a los logs locales de diagnóstico.
+
 ## Objetivo
 
-Separar progresivamente la persistencia y la API de la VPS que ejecuta MT5 sin
-arriesgar la captura ni desestabilizar `main`. El piloto alojará API, backend y
+El objetivo sigue siendo separar progresivamente la persistencia y la API de la
+VPS que ejecuta MT5, sin arriesgar la captura ni desestabilizar `main`. La
+robustez de los collectors y la integración local de
+[dashboard con FastAPI](central-api-dashboard.md) ya están implementadas y
+probadas en el piloto local; la instalación vigente se describe en
+[el manual operativo](mt5-collector-operations.md). La gestión de
+[credenciales y permisos](credential-management-plan.md) sigue pendiente.
+
+El piloto remoto alojará API, backend y
 SQLite v5 en una Mac conectada privadamente con la VPS. La base permanecerá en
 disco local junto al backend; nunca se abrirá SQLite mediante una carpeta de red.
 
@@ -57,27 +84,46 @@ ninguna feature. Durante este programa:
 - las entradas de días anteriores siguen siendo inmutables;
 - `main` no recibe bitácoras hasta la integración final del programa.
 
-El guard actual solo reconoce la excepción sobre `main`. Su adaptación segura a
-una base configurable será el primer cambio de harness del programa. Hasta que
-ese cambio sea integrado, no se publicarán nuevos commits directos de bitácora
-sin una comprobación manual equivalente y un diff limitado a la fecha actual.
+La rama estable se declara en `tool.tradinglab.workflow.stable-branch` dentro de
+`pyproject.toml`. El guard, el cálculo local del diff y el resumen de cambios usan
+esa misma fuente. GitHub continúa tomando la base real de cada pull request. Al
+cerrar el programa se elimina la configuración temporal y el valor vuelve a
+`main` por defecto.
 
-## Entregas previstas
+## Secuencia inicial y estado de entregas
 
-1. **Contrato central y seguridad.** Delimitar ingesta v1/v2, ACK durable,
+Esta secuencia conserva el plan inicial. Los estados indican implementación y
+validación local conocidas; no afirman merge o CI de una rama o PR.
+
+**Paso 1 implementado localmente:** [contrato central](../architecture/central-ingestion-api-contract.md),
+ingesta, lecturas y documentación OpenAPI. API central probada localmente.
+
+**Paso 2 implementado localmente:** [creación limpia SQLite v5](create-sqlite-v5.md),
+con vista previa, aplicación explícita y destino local fuera del checkout. No
+implica creación o traslado de una base operativa remota.
+
+**Paso 3 implementado y activado en el piloto local:** [relay y outbox durable](durable-telemetry-relay.md),
+integrados con los dos EAs y FastAPI. El traslado de API y SQLite a la Mac sigue
+pendiente; el relay permanecerá junto a MT5 en la VPS.
+
+FastAPI/OpenAPI se desarrolló dentro del programa y se integró al flujo local.
+La guía de [operación central](central-api-operation.md) describe el estado
+conocido; el despliegue remoto no se da por hecho.
+
+1. **Contrato central y seguridad — implementado localmente.** Delimitar ingesta v1/v2, ACK durable,
    autenticación por productor, límites y lecturas del dashboard. No exponer
    operaciones genéricas de baja o modificación a los collectors.
-2. **Creación limpia de SQLite v5.** Proveer un comando portable que cree una base
+2. **Creación limpia de SQLite v5 — implementado localmente.** Proveer un comando portable que cree una base
    nueva, registre cuenta y fuentes, y nunca sobrescriba un destino existente.
-3. **Relay y outbox durable.** Mantener los EAs en loopback y reenviar desde la VPS
+3. **Relay y outbox durable — implementado en el piloto local.** Mantener los EAs en loopback y reenviar desde la VPS
    con idempotencia, reintentos, backoff y confirmación central.
-4. **Servicio piloto en la Mac.** Ejecutar API y SQLite juntas, usar conectividad
+4. **Servicio piloto en la Mac — pendiente.** Ejecutar API y SQLite juntas, usar conectividad
    privada y evitar suspensión o exposición pública accidental.
-5. **Validación extremo a extremo.** Probar cortes, reinicios, ACK perdido,
+5. **Validación extremo a extremo — parcial.** Probar cortes, reinicios, ACK perdido,
    duplicados, recuperación, atraso y reconciliación de conteos.
-6. **Traslado verificable.** Separar migración de esquema de exportación/importación
+6. **Traslado verificable — pendiente.** Separar migración de esquema de exportación/importación
    entre hosts mediante snapshot consistente, manifest, hash e integridad.
-7. **Cierre del programa.** Revisar seguridad y robustez, retirar la excepción de
+7. **Cierre del programa — pendiente.** Revisar seguridad y robustez, retirar la excepción de
    ramas, actualizar documentación vigente y abrir el PR final hacia `main`.
 
 Para el primer piloto se prefiere una base v5 vacía porque los datos actuales son
@@ -97,6 +143,10 @@ que deba conservarse.
   humana y un camino de reversión.
 
 ## Pendientes preservados fuera del alcance inmediato
+
+- [revisión completa de diseño y buenas prácticas Python](python-design-review-plan.md)
+  en todo el proyecto (SOLID, DRY, YAGNI, encapsulamiento y patrones); no se limita
+  a la revisión parcial de API y relay;
 
 - activación definitiva y observación de los jobs automáticos en la VPS;
 - comparación amplia de la base y la API contra reportes MT5;

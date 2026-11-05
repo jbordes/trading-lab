@@ -1,7 +1,27 @@
 # Captura autónoma, historial completo y rendimiento
 
-Fecha: 2026-10-29. Estado: análisis y plan para revisión; implementación pendiente
-del OK humano. Base: `fix/pr48-robustness-findings`, commit `d90343e`.
+Fecha del plan original: 2026-10-29. Base documental: `fix/pr48-robustness-findings`,
+commit `d90343e`.
+
+## Estado vigente — 5 de noviembre de 2026
+
+Este documento conserva el plan fechado del 29 de octubre; no es el estado
+operativo actual ni requiere otro OK global para continuar el trabajo aprobado.
+Captura v1, actividad/ciclos v2, recuperación reanudable, consultas paginadas y
+métricas de memoria acotada están implementadas en el piloto local. El flujo
+Telemetry/Activity → relay durable → FastAPI → SQLite v1/v2 schema 5 → dashboard
+también está implementado y probado localmente. Los cambios locales todavía
+requieren revisión humana y CI; no se afirma su merge.
+
+El flujo no está desplegado en Mac ni conectado mediante enlace privado remoto.
+Siguen pendientes la gestión de credenciales, las pruebas de 401/403,
+desconexión del broker y carga, la validación amplia con reportes, los acuerdos
+de métricas de riesgo/ejecución y el backup/restauración para producción. Las
+definiciones de jobs están preparadas, pero no se afirma que estén activadas.
+Los históricos mantienen política sin TTL; la retención de 14 días es solo para
+los logs de diagnóstico de collectors. Para el seguimiento actual consulte
+[el programa remoto](remote-data-platform-delivery.md) y
+[el resumen del roadmap](live-risk-dashboard-roadmap.md).
 
 ## Objetivo y decisiones de planificación
 
@@ -59,7 +79,8 @@ al proceso que lo consulta; transmitir mensajes y respuestas de API por red.
 Si PostgreSQL vive separado del backend, preferir una red privada cercana para
 evitar multiplicar viajes de red por consulta.
 
-Dirección futura, todavía no implementada:
+Arquitectura remota: implementada en el piloto local; el traslado a Mac y la
+conectividad privada siguen pendientes:
 
 `MT5/collectors → receptor local y cola durable → API central → BDD → dashboard`
 
@@ -78,7 +99,11 @@ Fuentes técnicas: [usos de SQLite](https://www.sqlite.org/whentouse.html),
 [SQLite sobre red](https://www.sqlite.org/useovernet.html) y
 [arquitectura PostgreSQL](https://www.postgresql.org/docs/17/tutorial-arch.html).
 
-## Plan de implementación inmediato
+## Plan de implementación registrado el 29 de octubre (antecedente)
+
+Los estados de preparación que aparecen en los pasos siguientes son una captura
+del plan original. No sustituyen el estado vigente al inicio de este documento;
+no repetir el plan completo para actualizarlo.
 
 Avanzar por pasos verificables; agrupar PRs por capacidad funcional. Cada paso
 incluye documentación operativa y pruebas dirigidas. CI ejecuta la suite completa.
@@ -241,14 +266,15 @@ rotación de secretos, cuotas, cola durable local y observabilidad del retraso.
 No exponer los servidores loopback actuales directamente a Internet ni cambiar
 simplemente su dirección de escucha. El navegador accede al backend, nunca a la BDD.
 
-### Análisis posterior a los cinco pasos: API central de ingesta
+### Análisis original posterior a los cinco pasos: API central de ingesta
 
-Este análisis se activó como programa de implementación el 2026-10-30. Su alcance,
-secuencia de entregas y flujo Git temporal se mantienen en
+Este análisis se convirtió en programa de implementación el 2026-10-30. API y
+relay ya están implementados y probados localmente; el despliegue remoto sigue
+pendiente. El alcance restante y el flujo Git temporal se mantienen en
 [`remote-data-platform-delivery.md`](remote-data-platform-delivery.md).
 
-Una vez completados los cinco pasos de este plan, analizar la extracción del
-receptor y la base fuera de la VPS de MT5. Los collectors `Telemetry` y
+El texto siguiente conserva el análisis que originó la extracción del receptor
+y la base fuera de la VPS de MT5. Los collectors `Telemetry` y
 `TradingLabActivity` ya publican contratos HTTP y no escriben SQLite directamente;
 la evolución propuesta consiste en conservar esos contratos o versionarlos para
 una API central que valide y persista la información en la base elegida.
@@ -261,10 +287,11 @@ comparar dos alternativas: publicación remota directa con el outbox acotado del
 EA, y relay local con cola durable. La segunda es la referencia inicial porque
 permite seguir aceptando lotes durante cortes entre VPS y servidor central.
 
-El objetivo es poder trasladar API, base y dashboard sin reconfigurar la lógica
-de trading ni perder trazabilidad. La selección de SQLite junto al backend o
-PostgreSQL central, el despliegue y la migración quedan fuera de los cinco pasos
-actuales y requerirán análisis, ADR y aprobación humana propios.
+El objetivo original era trasladar API, base y dashboard sin reconfigurar la
+lógica de trading ni perder trazabilidad. El piloto local ya usa SQLite junto al
+backend; el traslado remoto, su migración y su operación todavía requieren el
+programa de entrega, revisión y aprobación correspondiente. PostgreSQL no forma
+parte del piloto actual y solo se reconsiderará si requisitos medidos lo justifican.
 
 Evaluar PostgreSQL si el diseño central exige escritores concurrentes, separación
 backend/BDD por red, múltiples instancias de backend o disponibilidad gestionada.
@@ -273,7 +300,7 @@ Si se adopta: nuevo ADR, mapeo de tipos/precisión/timestamps, importación veri
 reconciliación de conteos/importes/cobertura y plan de corte y reversión. No introducir
 ahora una abstracción genérica de múltiples motores ni escritura dual permanente.
 
-## Primer incremento a ejecutar tras aprobación
+## Primer incremento propuesto en el plan original (antecedente)
 
 Comenzar por el paso 1: separar arranque y parada de receptores y dashboard,
 resolviendo configuración y credenciales para reinicios independientes. Un PR por

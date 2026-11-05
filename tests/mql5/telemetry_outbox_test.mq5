@@ -35,8 +35,8 @@ void ResetQueue()
    while(outbox_count > 0)
       RemoveHead();
    dropped_samples = 0;
-   next_send_ms = 0;
-   retry_delay_seconds = 2;
+   transport.Reset();
+   capture_state = CAPTURE_READY;
    sends = 0;
    fake_status = -1;
 }
@@ -63,13 +63,14 @@ void OnStart()
    EnqueueSnapshot("first", 1);
    fake_status = 401;
    TrySendQueued(0);
-   Check(outbox_count == 0 && dropped_samples == 1, "permanent rejection discarded");
-   EnqueueSnapshot("second", 2);
-   TrySendQueued(1);
-   Check(sends == 1, "rejected endpoint retains backoff");
+   Check(outbox_count == 1 && dropped_samples == 0, "access rejection retains sample");
+   Check(transport.State() == DELIVERY_ACCESS_BLOCKED && transport.Due() == 60000,
+         "access rejection schedules a slow probe");
    fake_status = 200;
-   TrySendQueued(2000);
-   Check(outbox_count == 0, "duplicate acknowledgement advances queue");
+   TrySendQueued(59999);
+   Check(sends == 1, "no early access retry");
+   TrySendQueued(60000);
+   Check(outbox_count == 0 && last_body == "first", "access recovery keeps original payload");
 
    ResetQueue();
    EnqueueSnapshot("first", 1);
@@ -88,11 +89,11 @@ void OnStart()
       EnqueueSnapshot(IntegerToString(i), (ulong)i);
    Check(outbox_count == OUTBOX_CAPACITY && dropped_samples == 1,
          "overflow bounded and counted");
-   Check(outbox_sequence[outbox_head] == 2 && next_send_ms == 2000,
+   Check(outbox_sequence[outbox_head] == 2 && transport.Due() == 2000,
          "overflow keeps newest samples and endpoint backoff");
    fake_status = 503;
    TrySendQueued(2000);
-   Check(outbox_count == OUTBOX_CAPACITY && retry_delay_seconds == 8,
+   Check(outbox_count == OUTBOX_CAPACITY && transport.Delay() == 8,
          "server error retry preserves queue");
    fake_status = 202;
    for(int i = 0; i < OUTBOX_CAPACITY; i++)

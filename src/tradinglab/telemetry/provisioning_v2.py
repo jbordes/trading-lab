@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
 from tradinglab.telemetry.contract import IDENTIFIER
@@ -23,6 +25,7 @@ class V2ProvisionPlan:
     identity: ProducerIdentity
     live_source_id: str
     activity_source_id: str
+    storage_root: Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not DATABASE_NAME.fullmatch(self.filename):
@@ -48,6 +51,13 @@ class V2ProvisionPlan:
 
     @property
     def database(self) -> Path:
+        if self.storage_root is not None:
+            if not self.storage_root.is_absolute():
+                raise ValueError("storage_root debe ser una ruta absoluta")
+            storage = self.storage_root.resolve(strict=True)
+            if not storage.is_dir():
+                raise ValueError("storage_root debe ser un directorio existente")
+            return storage / self.filename
         root = self.root.resolve()
         storage = root / "_storage"
         if not storage.resolve().is_relative_to(root):
@@ -63,11 +73,12 @@ class V2ProvisionPlan:
         if database.exists() or database.is_symlink():
             raise FileExistsError("La base ya existe; no se reemplazó ni modificó")
         database.parent.mkdir(exist_ok=True)
-        created = False
-        try:
-            create_v2_database(database)
-            created = True
-            with open_v2_registry(database) as registry:
+        # Stage on the same filesystem. link() publishes without replacing an
+        # existing destination, unlike rename() on Unix or replace().
+        with TemporaryDirectory(prefix=".tradinglab-create-", dir=database.parent) as folder:
+            staged = Path(folder) / database.name
+            create_v2_database(staged)
+            with open_v2_registry(staged) as registry:
                 registry.register_account(
                     self.account_id,
                     self.label,
@@ -86,7 +97,7 @@ class V2ProvisionPlan:
                     ProducerRole.ACTIVITY,
                     created_at=stamp,
                 )
-            with open_v2_registry(database) as registry:
+            with open_v2_registry(staged, read_only=True) as registry:
                 evidence = registry.account_evidence(self.account_id)
                 expected = {
                     (self.live_source_id, ProducerRole.LIVE),
@@ -95,8 +106,5 @@ class V2ProvisionPlan:
                 actual = {(source.source_id, source.role) for source in evidence.sources}
                 if evidence.identity != self.identity or actual != expected:
                     raise RuntimeError("La base creada no coincide con el plan")
-        except BaseException:
-            if created and database.exists():
-                database.unlink()
-            raise
+            os.link(staged, database)
         return database

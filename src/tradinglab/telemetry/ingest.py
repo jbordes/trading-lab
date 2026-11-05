@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlsplit
 
+from tradinglab.telemetry.api_docs import serve_api_docs
 from tradinglab.telemetry.contract import (
     IDENTIFIER,
     MAX_BODY_BYTES,
@@ -216,6 +217,7 @@ def create_telemetry_server(
     *,
     token: str,
     port: int,
+    read_token: str | None = None,
     max_body_bytes: int = MAX_BODY_BYTES,
     max_connections: int = 8,
     request_timeout: float = 5.0,
@@ -244,6 +246,14 @@ def create_telemetry_server(
         raise ValueError("request_timeout debe ser 0.05..30 segundos")
 
     expected_authorization = f"Bearer {token}"
+    if read_token is not None and (
+        read_token == token
+        or not 24 <= len(read_token) <= 256
+        or not read_token.isascii()
+        or any(not 33 <= ord(c) <= 126 for c in read_token)
+    ):
+        raise ValueError("La credencial de lectura debe ser válida y distinta del productor")
+    expected_read_authorization = f"Bearer {read_token if read_token is not None else token}"
 
     class TelemetryHandler(BaseHTTPRequestHandler):
         server_version = "TradingLabTelemetrySpike/0.1"
@@ -262,6 +272,8 @@ def create_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
+            if serve_api_docs(self, self.path, "v1"):
+                return
             try:
                 request_target = urlsplit(self.path)
             except ValueError:
@@ -281,7 +293,7 @@ def create_telemetry_server(
                 self._send_json(HTTPStatus.OK, health)
                 return
             if path == "/v1/snapshot":
-                if not self._is_authorized():
+                if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 source_id = self._snapshot_source_id(request_target.query)
@@ -304,7 +316,7 @@ def create_telemetry_server(
                 self._send_json(HTTPStatus.OK, latest)
                 return
             if path == "/v1/account-history":
-                if not self._is_authorized():
+                if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 if not isinstance(buffer, AccountHistoryBackend):
@@ -340,7 +352,7 @@ def create_telemetry_server(
                 self._send_json(HTTPStatus.OK, result)
                 return
             if path == "/v1/deals":
-                if not self._is_authorized():
+                if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 if not isinstance(buffer, DealHistoryBackend):
@@ -460,6 +472,14 @@ def create_telemetry_server(
                 len(self.headers.get_all("Authorization", [])) == 1
                 and authorization.isascii()
                 and hmac.compare_digest(authorization, expected_authorization)
+            )
+
+        def _is_read_authorized(self) -> bool:
+            authorization = self.headers.get("Authorization", "")
+            return (
+                len(self.headers.get_all("Authorization", [])) == 1
+                and authorization.isascii()
+                and hmac.compare_digest(authorization, expected_read_authorization)
             )
 
         def _snapshot_source_id(self, query: str) -> str | None:

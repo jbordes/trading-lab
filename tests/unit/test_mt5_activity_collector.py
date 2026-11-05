@@ -8,17 +8,62 @@ SOURCE = ROOT / "apps/mt5-telemetry-collector/TradingLabActivity.mq5"
 
 
 class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
+    def test_all_collector_includes_remain_read_only(self) -> None:
+        for path in SOURCE.parent.glob("*.mqh"):
+            normalized = "".join(path.read_text(encoding="utf-8").casefold().split())
+            for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
+                self.assertNotIn(pattern, normalized, path.name)
+
+    def test_preparation_and_reconciliation_have_bounded_work(self) -> None:
+        self.assertIn("long candidate_position_ids[200]", self.source)
+        adder = self.source.split("void AddCandidatePosition", 1)[1].split(
+            "void ContinuePosition", 1
+        )[0]
+        self.assertNotIn("ArrayResize", adder)
+        scanner = self.source.split("string BuildPagedActivityPayload", 1)[1].split(
+            "string PagedCollectionJson", 1
+        )[0]
+        self.assertIn("processed >= MaxHistoryRowsPerCycle", scanner)
+        self.assertIn("CycleBudgetMs", scanner)
+        self.assertIn("page_scan.deal_index++", scanner)
+        self.assertIn("page_scan.order_index++", scanner)
+        self.assertNotIn("PersistValue", scanner)
+        recon = self.source.split("void ContinuePositionReconciliation", 1)[1].split(
+            "bool PersistValue", 1
+        )[0]
+        self.assertIn("processed++ < 2", recon)
+        self.assertIn("CycleBudgetMs", recon)
+
+    def test_partial_deep_pages_yield_to_recent_without_committing_range(self) -> None:
+        finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
+            "int BuildPosition", 1
+        )[0]
+        partial = finalizer.split("long next_cursor", 1)[0]
+        self.assertIn("saved_deep_page = pagination", partial)
+        self.assertIn("saved_recent_page = pagination", partial)
+        self.assertIn("prefer_recent = !pending.is_recent", partial)
+        self.assertNotIn("PersistValue", partial)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
-        cls.normalized = cls.source.casefold().replace(" ", "")
+        cls.common = (SOURCE.parent / "TradingLabCollectorCommon.mqh").read_text(encoding="utf-8")
+        cls.normalized = (
+            (
+                cls.source
+                + cls.common
+                + (SOURCE.parent / "TradingLabActivityState.mqh").read_text(encoding="utf-8")
+            )
+            .casefold()
+            .replace(" ", "")
+        )
 
     def test_source_is_read_only_loopback_v2(self) -> None:
         for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
             self.assertNotIn(pattern, self.normalized)
         self.assertIn('"http://127.0.0.1:8777/v2/telemetry"', self.source)
-        self.assertIn("ACCOUNT_TRADE_MODE_DEMO", self.source)
-        self.assertIn("login == expected_login && server == expected_server", self.source)
+        self.assertIn("ACCOUNT_TRADE_MODE_DEMO", self.common)
+        self.assertIn("login == expected_login && server == expected_server", self.common)
         self.assertIn("HistorySelect(", self.source)
         self.assertIn("HistoryOrderGetTicket(", self.source)
         self.assertIn("HistoryDealGetTicket(", self.source)
@@ -38,7 +83,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             finalizer.index("PersistValue(selected_cursor_key"),
             finalizer.index("confirmed_from_msc ="),
         )
-        self.assertIn("pending_body", sender)
+        self.assertIn("pending.body", sender)
 
     def test_closed_position_evidence_precedes_cursor_advance(self) -> None:
         self.assertIn("HistorySelectByPosition((ulong)position_id)", self.source)
@@ -59,33 +104,35 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
 
     def test_saturation_splits_then_pages_without_early_cursor_advance(self) -> None:
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("while(true)", timer)
+        self.assertNotIn("while(true)", timer)
+        self.assertIn("preparation.active = true", timer)
         self.assertIn("MinimumWindowSeconds", timer)
-        self.assertIn("pending_blocks_recovery = truncated", timer)
+        self.assertIn("pending.blocks_recovery = truncated", timer)
         self.assertIn("BuildPagedActivityPayload", timer)
-        self.assertIn("pagination_active", timer)
+        self.assertIn("pagination.active", timer)
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
-        blocked = sender.split("if(pending_blocks_recovery)", 1)[1].split("else", 1)[0]
-        self.assertIn("PersistValue(selected_blocked_key, pending_from_msc)", blocked)
+        blocked = sender.split("if(pending.blocks_recovery)", 1)[1].split("else", 1)[0]
+        self.assertIn("PersistValue(selected_blocked_key, pending.from_msc)", blocked)
         self.assertIn("recovery_blocked = true", blocked)
         self.assertNotIn("confirmed_from_msc =", blocked)
 
     def test_unconfirmed_transport_failures_keep_same_batch(self) -> None:
         sender = self.source.split("bool TrySendPending", 1)[1].split("bool PersistValue", 1)[0]
-        self.assertIn("retryable", sender)
-        self.assertNotIn('pending_body = ""', sender.split("bool retryable", 1)[1])
+        self.assertIn("DELIVERY_ACCESS_BLOCKED", sender)
+        self.assertIn("transport.Observe(status, now_ms)", sender)
+        self.assertNotIn('pending.body = ""', sender.split("CollectorDelivery delivery", 1)[1])
         self.assertIn("StopForSafety()", sender)
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.6.0"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.7.1"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
         self.assertIn("bool recent_due", timer)
         self.assertIn("bool deep_due", timer)
         self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
-        self.assertIn("pending_is_recent = recent_due", timer)
+        self.assertIn("pending.is_recent = recent_due", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "void ResetCandidatePositions", 1
         )[0]
@@ -130,8 +177,8 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             self.assertIn(field, heartbeat)
         self.assertNotIn("PersistValue", heartbeat)
         sender = self.source.split("bool TrySendPending", 1)[1].split("void ResetRetryState", 1)[0]
-        heartbeat_ack = sender.split("if(pending_is_heartbeat)", 1)[1].split(
-            "if(pending_is_position_reconcile)", 1
+        heartbeat_ack = sender.split("if(pending.is_heartbeat)", 1)[1].split(
+            "if(pending.is_position_reconcile)", 1
         )[0]
         self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
         self.assertNotIn("PersistValue", heartbeat_ack)
@@ -154,12 +201,12 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("remaining_count > key_count", pager)
         self.assertIn('page_status = has_more ? "partial" : "paged_complete"', pager)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("pending_page_snapshot_id != pagination_snapshot_id", timer)
-        self.assertIn("pagination_after.time_msc = 0", timer)
+        self.assertIn("pending.page_snapshot_id != pagination.snapshot_id", timer)
+        self.assertIn("pagination.after.time_msc = 0", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "int BuildPositionReconcilePayload", 1
         )[0]
-        partial = finalizer.split("if(pending_is_paged && pending_page_has_more)", 1)[1]
+        partial = finalizer.split("if(pending.is_paged && pending.page_has_more)", 1)[1]
         self.assertNotIn("PersistValue", partial.split("long next_cursor", 1)[0])
 
 

@@ -58,6 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     credential = os.environ.get(TOKEN_ENVIRONMENT_VARIABLE, "")
+    read_auth = os.environ.get("TRADINGLAB_V1_READ_TOKEN") or None
     if len(credential) < 24:
         print(
             f"Error: configure {TOKEN_ENVIRONMENT_VARIABLE} con al menos 24 caracteres.",
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         server = create_telemetry_server(
             buffer,
             token=credential,
+            read_token=read_auth,
             port=args.port,
             max_connections=args.max_connections,
             request_timeout=args.request_timeout,

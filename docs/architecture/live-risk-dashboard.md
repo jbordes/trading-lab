@@ -1,6 +1,8 @@
 # Dashboard local de riesgo — Arquitectura del piloto
 
-**Fecha:** 2026-10-14
+**Fecha inicial:** 2026-10-14
+
+**Estado operativo revisado:** 2026-11-05, piloto local validado; despliegue remoto pendiente.
 
 **Estado:** vigente para el piloto
 
@@ -14,7 +16,27 @@ Observar en `localhost`, con pocos segundos de demora, información de cuentas d
 
 El Excel deja de ser el producto prioritario. Podrá reaparecer como exportación derivada si existe una necesidad concreta.
 
-## Flujo inicial
+## Flujo vigente del piloto
+
+```text
+Telemetry v1 + Activity v2 -> relay local 8776/8777 -> FastAPI 8781 -> SQLite local
+                                                        ^
+                                                        |
+                                                 dashboard 8775
+```
+
+Ambos collectors son de solo lectura y tienen fuentes y credenciales locales
+distintas. El relay confirma aceptación en su outbox y reenvía hasta el ACK
+central. El dashboard consulta FastAPI con credenciales de lectura separadas;
+la sesión humana usa otro token. API, relay y dashboard están separados, aunque
+el piloto validado todavía corre localmente en la VPS. Mac, conectividad privada
+y producción siguen pendientes. Ver [arranque vigente](../development/central-api-dashboard.md)
+y [manual de collectors](../development/mt5-collector-operations.md).
+
+### Contexto histórico: primera integración directa
+
+El siguiente flujo describe el adaptador inicial, conservado para compatibilidad;
+no es el arranque habitual ni la topología central actual.
 
 ```text
 Terminal MT5 + collector MQL5
@@ -66,11 +88,13 @@ repetir todas las operaciones en cada punto.
 
 ## Actividad reciente y estado de captura
 
-En cada captura el collector relee una ventana completa de deals del servidor MT5;
-por defecto cubre una hora y como máximo 200 filas. Informa de forma explícita si
+Telemetry relee una ventana de deals del servidor MT5 cada 60 segundos por defecto
+y al invalidarse por actividad o arranque; los snapshots mantienen su propia
+cadencia de cinco segundos. La ventana cubre una hora y como máximo 200 filas por
+defecto. Informa de forma explícita si
 la ventana está completa, truncada o falló. El receptor v1 reemplaza la vista
 previa por la última ventana validada; el collector de actividad v2 conserva el
-historial durable de deals y órdenes que consume `Trading`.
+historial durable de deals y órdenes que consumen las vistas de performance.
 
 El servicio mide cada intento con un reloj monotónico y publica conteos de éxito
 y fallo, fallos consecutivos, duración de la última captura, máximo observado y
@@ -81,9 +105,9 @@ no son métricas de trading.
 
 ### MT5
 
-El [collector de telemetría](../development/mt5-telemetry-collector-spike.md) es la
-fuente MT5 operativa primaria. Se ejecuta dentro de cada terminal, no contiene
-funciones de trading y valida la cuenta y servidor aprobados antes de capturar o
+Los [collectors MQL5](../development/mt5-collector-operations.md) son la
+fuente MT5 operativa primaria. Se ejecutan dentro de la terminal aprobada, no contienen
+funciones de trading y validan la cuenta y servidor aprobados antes de capturar o
 enviar. Un `source_id` representa una sola identidad y el adaptador del dashboard
 rechaza cualquier fuente distinta de la esperada.
 
@@ -94,7 +118,7 @@ se implementará un supervisor Python multterminal mientras el collector cubra e
 flujo operativo. Para una barrera efectiva en cuentas reales se usará acceso de
 inversor cuando el broker lo admita.
 
-El collector incorpora una ventana móvil de ejecuciones (`deals`) para recuperar
+Telemetry incorpora una ventana móvil de ejecuciones (`deals`) para recuperar
 actividad entre muestras: una hora y hasta 200 filas por defecto, con estados
 explícitos completo/truncado/error. La vista recibida se reemplaza al reconciliar,
 no se acumulan solapamientos. Es memoria temporal, sin emparejar trades ni
@@ -103,7 +127,7 @@ referencia del servidor MT5. La conversión a hora local solo se realiza cuando 
 instante y la zona u offset del broker son explícitos; no se adivina una zona a
 partir del reloj de la VPS.
 
-La primera integración visible conserva receptor y dashboard como procesos
+Como referencia de compatibilidad, la primera integración conserva receptor y dashboard como procesos
 separados. El receptor expone la última muestra de una fuente mediante
 `GET /v1/snapshot?source_id=<id>`, autenticado y limitado a loopback. Cada consulta
 exige exactamente un identificador válido y los mensajes de otras fuentes no
@@ -132,22 +156,23 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 ## Estado y persistencia
 
-- V1 conserva un buffer limitado en memoria para el estado vivo y la curva
-  reciente; perderlo tras un reinicio no elimina actividad histórica durable.
+- V1 persiste observaciones de cuenta en SQLite. Los buffers de lectura son
+  acotados y descartables; no sustituyen ese historial persistido.
 - V2 persiste en SQLite mensajes, cobertura, deals, órdenes y ciclos de posición.
   SQLite es la fuente de verdad local del historial piloto.
 - El diagnóstico MT5 puede seguir generando evidencia inmutable bajo `_storage/`.
-- Las tablas derivadas adicionales y una caché solo se incorporarán ante consultas
-  medidas; no se mantendrá una proyección histórica ilimitada en memoria.
+- Las proyecciones de ciclos y los índices de consulta ya existen en SQLite v2.
+  Una caché futura será acotada; no habrá una proyección histórica ilimitada en RAM.
 - PostgreSQL y TimescaleDB no forman parte del piloto; requieren evidencia de
   concurrencia, volumen o centralización.
 
 ## Presentación
 
-La aplicación usa HTML, CSS, JavaScript y SVG servidos por la biblioteca estándar
-de Python. No descarga scripts de terceros ni necesita Node. `/` presenta el
+La aplicación usa HTML, CSS, JavaScript, SVG y ECharts servido como asset local
+desde Python, sin requerir Node ni CDN de gráficos en el navegador. `/` presenta el
 proyecto y ofrece una entrada al panel; `/dashboard` es el espacio de trabajo
-de la cuenta, con Resumen, Trading y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
+de la cuenta, con Resumen, Trading, Performance financiera, Performance de ejecución
+y Actividad. Ambas páginas comparten un tema claro y otro oscuro con tokens
 `light-dark()`; la elección manual se persiste en `localStorage` y sin elección se
 sigue la preferencia del sistema, sin flash al recargar. La portada permanece
 pública; el panel y su API exigen una sesión local obtenida con un token humano
@@ -162,11 +187,11 @@ instalable ni crea destinos para funciones aún no implementadas. El acceso
 continúa restringido a loopback. Esta sesión no sustituye TLS ni una identidad
 multiusuario y no habilita publicar el dashboard en la LAN o Internet.
 
-El panel de la cuenta tiene tres vistas. Resumen muestra el equity como cifra
-principal neutral, el resultado abierto con semántica de signo y color, balance y
-margen libre secundarios, una curva reciente de balance/equity y una franja de
-origen. La curva respeta los tiempos observados y deja huecos cuando se interrumpe
-la captura. Trading agrupa `En curso`, `Operaciones cerradas` y `Registro MT5`. En curso lista
+El panel separa las cinco vistas descritas en la navegación vigente más abajo.
+Resumen prioriza Equity; Balance y PnL flotante son secundarios y el margen libre
+está bajo «En esta cuenta». La curva de balance/equity respeta los tiempos
+observados y no rellena huecos de captura. `Trading` contiene únicamente actividad
+en curso: lista
 posiciones abiertas y órdenes pendientes, muestra
 el Magic Number sin abrir el detalle y filtra por Magic y tipo desde una barra
 encima de los resultados. El selector enumera los Magic disponibles, conserva
@@ -181,8 +206,10 @@ snapshot en curso para diagnóstico, sin alimentar métricas. Actividad antepone
 conclusión comprensible y mantiene en un diagnóstico desplegable la salud global
 del receptor, la actualización de la vista y sus contadores técnicos.
 
-Toda fecha operativa mostrará de forma compacta ambas referencias: `Broker` y
-`Local`. Cada una incluye fecha y hora porque una conversión puede cambiar el día.
+Las fechas operativas permiten consultar ambas referencias: `Broker` y `Local`.
+En las filas compactas de operaciones cerradas, Open/Close muestran el broker y
+el detalle incluye la fecha y hora local. Cada referencia incluye el día porque
+la conversión puede cruzar medianoche.
 En escritorio pueden compartir una celda y en móvil se apilan dentro del mismo
 bloque, sin tarjetas ni columnas adicionales. El formato base será, por ejemplo,
 `Broker 27/10 23:45` y `Local 28/10 00:45`; el detalle podrá informar zona u
@@ -208,7 +235,7 @@ Operaciones muestra la cantidad recibida sobre el total y advierte que los
 filtros solo abarcan esas filas. Una lista parcial nunca se presenta como si fuera
 el estado completo de la cuenta.
 
-El modo simulado se identifica en las tres vistas. La carga inicial, ausencia de
+El modo simulado se identifica en la interfaz. La carga inicial, ausencia de
 operaciones, filtros sin resultados y desconexión son estados distintos. La edad
 de la muestra afecta al indicador de conexión y al resumen de salud; el reloj
 visual no genera anuncios continuos para lectores de pantalla. Las métricas de
@@ -232,7 +259,7 @@ minutos en una línea. TP/SL ocupa una columna compacta y conserva su procedenci
 como ayuda contextual. La fila despliega u oculta el detalle con clic, toque, Enter o
 Espacio, sin columna ni botón adicional y con foco visible para teclado.
 El detalle evita repetir la fila y muestra únicamente deals, ganancia bruta,
-swap, comisión, pips y duración en una grilla de baja altura. Se presenta como
+swap, comisión, fee, pips y duración en una grilla de baja altura. Se presenta como
 una extensión plana de fondo neutro, con divisores finos y una transición breve;
 no compite visualmente con el resultado de la fila. Entradas y salidas parciales usan
 precios medios ponderados por volumen. Las reversiones ambiguas no se etiquetan

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or create an isolated SQLite database for telemetry v2 pilot sources."""
+"""Preview or create a fresh SQLite database for telemetry v2 sources."""
 
 from __future__ import annotations
 
@@ -18,10 +18,15 @@ if hasattr(sys.stderr, "reconfigure"):
 def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.admission_v2 import ProducerIdentity
     from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
-    from tradinglab.telemetry.sqlite_store_v2 import V2StorageError
+    from tradinglab.telemetry.sqlite_store_v2 import DATABASE_SCHEMA_VERSION, V2StorageError
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--filename", required=True, help="Archivo nuevo bajo _storage/.")
+    parser.add_argument(
+        "--storage-root",
+        type=Path,
+        help="Directorio local absoluto existente; por defecto _storage/ del checkout.",
+    )
     parser.add_argument("--account-id", required=True, help="Identidad interna sin login real.")
     parser.add_argument("--label", required=True, help="Alias descriptivo no sensible.")
     parser.add_argument("--login-masked", required=True, help="Login en formato ****1234.")
@@ -40,7 +45,12 @@ def main(argv: list[str] | None = None) -> int:
             ProducerIdentity(args.login_masked, args.server, args.currency),
             args.live_source_id,
             args.activity_source_id,
+            storage_root=args.storage_root,
         )
+        database = plan.database
+        if database.exists() or database.is_symlink():
+            raise FileExistsError("La base ya existe; no se reemplazó ni modificó")
+        print(f"Contrato de mensajes: v2; esquema SQLite: {DATABASE_SCHEMA_VERSION}")
         if not args.apply:
             print("Vista previa: no se creará ningún archivo.")
             print(f"Base: {plan.database}")
@@ -49,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Servidor: {plan.identity.server}; moneda: {plan.identity.currency}")
             return 0
         database = plan.apply()
-        print(f"Base v2 creada y verificada: {database}")
+        print(f"Base v2 (esquema {DATABASE_SCHEMA_VERSION}) creada y verificada: {database}")
         print(f"Fuentes: live={plan.live_source_id}; activity={plan.activity_source_id}")
     except (ValueError, FileExistsError, RuntimeError, V2StorageError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

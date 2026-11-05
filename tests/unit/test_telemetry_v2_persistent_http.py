@@ -35,6 +35,20 @@ def fixture(name: str) -> dict[str, object]:
 
 
 class V2PersistentHttpTest(unittest.TestCase):
+    def test_developer_docs_are_static_and_do_not_grant_data_access(self) -> None:
+        with urllib.request.urlopen(self.base + "/docs", timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
+            page = response.read().decode("utf-8")
+            self.assertIn("/v2/telemetry", page)
+            self.assertIn("curl", page)
+            self.assertNotIn(read_authorization(), page)
+        status, catalog = self.request("/docs.json")
+        self.assertEqual(status, 200)
+        self.assertTrue(any(row["path"] == "/v2/activity" for row in catalog["routes"]))
+        self.assertEqual(self.request("/v2/activity-progress")[0], 401)
+        self.assertEqual(self.request("/docs?token=example")[0], 404)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

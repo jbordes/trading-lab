@@ -8,7 +8,7 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -540,22 +540,30 @@ class V2TelemetryRegistry:
         deal_total: int,
         order_total: int,
     ) -> bool:
+        # Coverage needs page links, not the potentially large deal/order arrays.
         rows = connection.execute(
-            """SELECT m.payload_json
+            """SELECT json_extract(m.payload_json, '$.payload.pagination')
                FROM telemetry_v2_messages m
                JOIN sources s ON s.source_id = m.source_id
                WHERE s.account_id = ? AND m.source_id = ? AND m.kind = 'activity_batch'
                  AND json_extract(m.payload_json, '$.payload.window.from_server_msc') = ?
                  AND json_extract(m.payload_json, '$.payload.window.to_server_msc') = ?
-                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?""",
-            (account_id, source_id, str(from_msc), str(to_msc), snapshot_id),
-        ).fetchall()
+                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?
+                 AND json_extract(m.payload_json, '$.payload.deals.total') = ?
+                 AND json_extract(m.payload_json, '$.payload.orders.total') = ?""",
+            (
+                account_id,
+                source_id,
+                str(from_msc),
+                str(to_msc),
+                snapshot_id,
+                deal_total,
+                order_total,
+            ),
+        )
         edges: dict[tuple[int, int, int], list[tuple[tuple[int, int, int], bool]]] = {}
         for (encoded,) in rows:
-            payload = json.loads(encoded)["payload"]
-            if payload["deals"]["total"] != deal_total or payload["orders"]["total"] != order_total:
-                continue
-            pagination = payload["pagination"]
+            pagination = json.loads(encoded)
             after = V2TelemetryRegistry._stored_page_key(pagination["after"])
             through = V2TelemetryRegistry._stored_page_key(pagination["through"])
             edges.setdefault(after, []).append((through, pagination["has_more"]))
@@ -856,7 +864,7 @@ class V2TelemetryRegistry:
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
-        """Return the latest unambiguous durable observation of each position cycle."""
+        """Keep last unambiguous evidence, excluding it while a newer conflict exists."""
 
         account = _identifier(account_id, "account_id")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
@@ -893,16 +901,16 @@ class V2TelemetryRegistry:
             cursor_position == "0" or str(int(cursor_position)) != cursor_position
         ):
             raise ValueError("Cursor de ciclos inválido")
-        filters = ["account_id = ?"]
         parameters: list[object] = [account]
+        # Resolve revisions across all owners before applying the user's EA filter.
+        result_filter = "capture_rank = 1"
         if owner_magic is not None:
-            filters.append("owner_magic = ?")
+            result_filter += " AND owner_magic = ?"
             parameters.append(owner_magic)
         elif owner_magics:
             placeholders = ",".join("?" for _ in owner_magics)
-            filters.append(f"owner_magic IN ({placeholders})")
+            result_filter += f" AND owner_magic IN ({placeholders})"
             parameters.extend(owner_magics)
-        result_filter = "capture_rank = 1"
         if from_msc is not None and to_msc is not None:
             result_filter += " AND last_event_at_msc >= ? AND last_event_at_msc < ?"
             parameters.extend((from_msc, to_msc))
@@ -927,7 +935,7 @@ class V2TelemetryRegistry:
         rows = self._connection.execute(
             f"""WITH filtered AS (
                 SELECT * FROM position_cycle_observations
-                WHERE {" AND ".join(filters)}
+                WHERE account_id = ?
             ), capture_summary AS (
                 SELECT account_id, position_id, captured_at_utc,
                        COUNT(DISTINCT cycle_json) AS variants
@@ -946,8 +954,11 @@ class V2TelemetryRegistry:
             SELECT message_id, cycle_json, source_id, captured_at_utc,
                    position_id, owner_magic, started_at_msc, last_event_at_msc,
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
-                   observed_magics_json, deal_tickets_json, exclusions_json
-            FROM eligible WHERE {result_filter}
+                   observed_magics_json, deal_tickets_json, exclusions_json,
+                   (SELECT MAX(c.captured_at_utc) FROM capture_summary c
+                    WHERE c.position_id = e.position_id AND c.variants > 1
+                      AND c.captured_at_utc > e.captured_at_utc) AS conflict_at
+            FROM eligible e WHERE {result_filter}
             ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
                      position_id {direction}
             LIMIT ?""",
@@ -1016,6 +1027,14 @@ class V2TelemetryRegistry:
                     raise V2StorageError("Detalle de operación inválido") from exc
             elif include_details and len(items) < limit:
                 raise V2StorageError("Falta la evidencia del ciclo")
+            if row[15] is not None:
+                # This is a read-time qualification, never a rewrite of the ledger.
+                cycle = replace(
+                    cycle,
+                    exclusions=tuple(
+                        dict.fromkeys((*cycle.exclusions, CycleExclusion.CONFLICTING_EVIDENCE))
+                    ),
+                )
             items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3], details))
         page_items = tuple(items[:limit])
         next_cursor = None

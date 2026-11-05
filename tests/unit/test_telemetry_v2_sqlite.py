@@ -10,8 +10,16 @@ from contextlib import closing
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from tradinglab.dashboard.telemetry_v2 import (
+    LoopbackV2HistoryClient,
+    TelemetryCyclePerformance,
+    TelemetryPositionCycle,
+    TelemetryPositionCyclePage,
+    V2HistoryProvider,
+)
+from tradinglab.metrics.position_cycles import CycleExclusion
 from tradinglab.telemetry.admission_v2 import (
     AdmissionDisposition,
     AuthorizedEnvelope,
@@ -25,6 +33,7 @@ from tradinglab.telemetry.admission_v2 import (
 )
 from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.composition_v2 import compose_account
+from tradinglab.telemetry.http_contracts_v2 import position_cycle_item
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
 from tradinglab.telemetry.sqlite_store_v2 import (
     V2RegistrationConflictError,
@@ -94,6 +103,22 @@ def authorized(name: str, sequence: int | None = None) -> AuthorizedEnvelope:
     return directory().authorize(body(name, sequence), f"Bearer {credential}")
 
 
+def authorized_cycle_observation(
+    session: str,
+    captured_at: str,
+    *,
+    profit: float = 10,
+    magic: str = "11122",
+) -> AuthorizedEnvelope:
+    value = fixture("activity-position-reconcile")
+    value.update(session_id=session, sequence=1, event_id=f"{session}:1", captured_at=captured_at)
+    value["payload"]["deals"]["items"][-1]["profit"] = profit
+    for collection in ("deals", "orders"):
+        for item in value["payload"][collection]["items"]:
+            item["magic_number"] = magic
+    return directory().authorize(json.dumps(value).encode(), f"Bearer {ACTIVITY_CREDENTIAL}")
+
+
 def authorized_page(
     sequence: int,
     *,
@@ -102,6 +127,9 @@ def authorized_page(
     after_time: str,
     after_ticket: str,
     has_more: bool,
+    deal_total: int = 2,
+    order_total: int = 0,
+    snapshot_id: str = "p:1792656000000:1792656060000:2:0",
 ) -> AuthorizedEnvelope:
     value = fixture("activity-truncated")
     value["sequence"] = sequence
@@ -110,10 +138,10 @@ def authorized_page(
     deal["ticket"] = ticket
     deal["time_msc"] = time_msc
     status = "partial" if has_more else "paged_complete"
-    value["payload"]["deals"] = {"status": status, "total": 2, "items": [deal]}
-    value["payload"]["orders"] = {"status": status, "total": 0, "items": []}
+    value["payload"]["deals"] = {"status": status, "total": deal_total, "items": [deal]}
+    value["payload"]["orders"] = {"status": status, "total": order_total, "items": []}
     value["payload"]["pagination"] = {
-        "snapshot_id": "p:1792656000000:1792656060000:2:0",
+        "snapshot_id": snapshot_id,
         "after": {
             "time_msc": after_time,
             "entity_type": "deal",
@@ -155,6 +183,130 @@ def authorized_order_observation(
 
 
 class V2SqliteTest(unittest.TestCase):
+    def test_newer_cycle_conflict_excludes_old_result_until_resolved(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session, captured, profit in (
+                ("old", "2026-10-22T08:02:00Z", 10),
+                ("conflict-a", "2026-10-22T08:03:00Z", 20),
+                ("conflict-b", "2026-10-22T08:03:00Z", 30),
+            ):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, captured, profit=profit),
+                    received_at=self.now,
+                )
+        # The qualification survives reopening and applies to lightweight metric reads too.
+        with open_v2_registry(self.path) as registry:
+            for include_details in (True, False):
+                page = registry.position_cycles("account-demo", include_details=include_details)
+                item = page.items[0]
+                self.assertEqual(item.cycle.observed_net_result, Decimal("9.8"))
+                self.assertEqual(item.cycle.exclusions, (CycleExclusion.CONFLICTING_EVIDENCE,))
+                self.assertFalse(item.cycle.eligible_for_autonomous_metrics)
+                self.assertIsNone(item.cycle.definitive_net_result)
+                metrics = TelemetryCyclePerformance(
+                    "account-demo",
+                    "synthetic-activity",
+                    0,
+                    2**62,
+                    None,
+                    (TelemetryPositionCycle(item.message_id, item.captured_at, item.cycle),),
+                    {},
+                ).as_dict()
+                self.assertEqual(metrics["trade_count"], 0)
+                self.assertEqual(metrics["net_profit"], 0)
+                client = LoopbackV2HistoryClient(
+                    read_authorization="synthetic-read-credential-safe-length",
+                    activity_source_id="synthetic-activity",
+                )
+                parsed = client._position_cycle(
+                    json.loads(json.dumps(position_cycle_item(item))), "account-demo"
+                )
+                self.assertEqual(parsed.cycle.exclusions, item.cycle.exclusions)
+                transport = Mock(spec=LoopbackV2HistoryClient)
+                transport.deal_history.return_value.coverage = {"status": "complete"}
+                transport.position_cycles.return_value = TelemetryPositionCyclePage(
+                    "account-demo", "synthetic-activity", None, (parsed,), None
+                )
+                streamed = (
+                    V2HistoryProvider(transport)
+                    .cycle_performance_metrics(from_msc=0, to_msc=2**62)
+                    .as_dict()
+                )
+                self.assertEqual(streamed["trade_count"], 0)
+                self.assertEqual(streamed["net_profit"], 0)
+                self.assertEqual(streamed["by_ea"], [])
+            registry.store_authorized(
+                authorized_cycle_observation("resolved", "2026-10-22T08:04:00Z", profit=40),
+                received_at=self.now,
+            )
+            cycle = registry.position_cycles("account-demo").items[0].cycle
+            self.assertTrue(cycle.eligible_for_autonomous_metrics)
+            self.assertEqual(cycle.exclusions, ())
+            self.assertEqual(cycle.definitive_net_result, Decimal("39.8"))
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT eligible, exclusions_json FROM position_cycle_observations"
+                ).fetchall(),
+                [(1, "[]")] * 4,
+            )
+
+    def test_cycle_without_unambiguous_capture_waits_for_consistent_evidence(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session, profit in (("variant-a", 20), ("variant-b", 30)):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, "2026-10-22T08:03:00Z", profit=profit),
+                    received_at=self.now,
+                )
+            self.assertEqual(registry.position_cycles("account-demo").items, ())
+            registry.store_authorized(
+                authorized_cycle_observation("resolved", "2026-10-22T08:04:00Z"),
+                received_at=self.now,
+            )
+            self.assertTrue(
+                registry.position_cycles("account-demo")
+                .items[0]
+                .cycle.eligible_for_autonomous_metrics
+            )
+
+    def test_identical_cycle_captures_are_not_a_conflict(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            for session in ("copy-a", "copy-b"):
+                registry.store_authorized(
+                    authorized_cycle_observation(session, "2026-10-22T08:03:00Z"),
+                    received_at=self.now,
+                )
+            page = registry.position_cycles("account-demo")
+            self.assertEqual(len(page.items), 1)
+            self.assertTrue(page.items[0].cycle.eligible_for_autonomous_metrics)
+
+    def test_magic_filter_cannot_resurrect_old_revision_or_hide_other_owner_conflict(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_cycle_observation("old", "2026-10-22T08:02:00Z"),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                authorized_cycle_observation("new-owner", "2026-10-22T08:03:00Z", magic="22222"),
+                received_at=self.now,
+            )
+            for filters in ({"owner_magic": "11122"}, {"owner_magics": ("11122",)}):
+                self.assertEqual(registry.position_cycles("account-demo", **filters).items, ())
+            self.assertEqual(
+                registry.position_cycles("account-demo", owner_magic="22222")
+                .items[0]
+                .cycle.owner_magic,
+                "22222",
+            )
+            registry.store_authorized(
+                authorized_cycle_observation("conflicting-owner", "2026-10-22T08:03:00Z"),
+                received_at=self.now,
+            )
+            for filters in ({"owner_magic": "11122"}, {"owner_magics": ("11122", "22222")}):
+                page = registry.position_cycles("account-demo", **filters)
+                self.assertEqual(len(page.items), 1)
+                self.assertIn(CycleExclusion.CONFLICTING_EVIDENCE, page.items[0].cycle.exclusions)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -777,6 +929,152 @@ class V2SqliteTest(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0],
                 0,
             )
+
+    def _store_two_page_chain(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_page(
+                    10,
+                    ticket="18446744073709551614",
+                    time_msc="1792656030000",
+                    after_time="0",
+                    after_ticket="0",
+                    has_more=True,
+                ),
+                received_at=self.now,
+            )
+            registry.store_authorized(
+                authorized_page(
+                    11,
+                    ticket="18446744073709551615",
+                    time_msc="1792656030000",
+                    after_time="1792656030000",
+                    after_ticket="18446744073709551614",
+                    has_more=False,
+                ),
+                received_at=self.now,
+            )
+
+    def test_chain_query_decodes_only_page_links_and_preserves_uint64_tickets(self) -> None:
+        self._store_two_page_chain()
+        original_loads = json.loads
+
+        def compact_page(encoded: str) -> dict[str, object]:
+            page = original_loads(encoded)
+            self.assertEqual(set(page), {"snapshot_id", "after", "through", "has_more"})
+            return page
+
+        with (
+            closing(sqlite3.connect(self.path)) as connection,
+            patch(
+                "tradinglab.telemetry.sqlite_store_v2.json.loads", side_effect=compact_page
+            ) as decode,
+        ):
+            self.assertTrue(
+                V2TelemetryRegistry._has_complete_pagination_chain(
+                    connection,
+                    "account-demo",
+                    "synthetic-activity",
+                    1792656000000,
+                    1792656060000,
+                    "p:1792656000000:1792656060000:2:0",
+                    2,
+                    0,
+                )
+            )
+            self.assertEqual(decode.call_count, 2)
+
+    def test_chain_query_scopes_identity_window_snapshot_and_totals(self) -> None:
+        self._store_two_page_chain()
+        selection = {
+            "account_id": "account-demo",
+            "source_id": "synthetic-activity",
+            "from_msc": 1792656000000,
+            "to_msc": 1792656060000,
+            "snapshot_id": "p:1792656000000:1792656060000:2:0",
+            "deal_total": 2,
+            "order_total": 0,
+        }
+        with closing(sqlite3.connect(self.path)) as connection:
+            for changes in (
+                {"account_id": "other-account"},
+                {"source_id": "synthetic-live"},
+                {"from_msc": 1792656000001},
+                {"to_msc": 1792656060001},
+                {"snapshot_id": "other-snapshot"},
+                {"deal_total": 3},
+                {"order_total": 1},
+            ):
+                with self.subTest(changes=changes):
+                    self.assertFalse(
+                        V2TelemetryRegistry._has_complete_pagination_chain(
+                            connection, **(selection | changes)
+                        )
+                    )
+
+    def test_final_page_with_incompatible_prefix_totals_rolls_back(self) -> None:
+        for index, totals in enumerate(({"deal_total": 3}, {"order_total": 1})):
+            with self.subTest(totals=totals), open_v2_registry(self.path) as registry:
+                snapshot = f"incompatible-{index}"
+                registry.store_authorized(
+                    authorized_page(
+                        20 + index * 2,
+                        ticket="1",
+                        time_msc="1792656030000",
+                        after_time="0",
+                        after_ticket="0",
+                        has_more=True,
+                        snapshot_id=snapshot,
+                        **totals,
+                    ),
+                    received_at=self.now,
+                )
+                with self.assertRaises(V2StorageError):
+                    registry.store_authorized(
+                        authorized_page(
+                            21 + index * 2,
+                            ticket="2",
+                            time_msc="1792656030000",
+                            after_time="1792656030000",
+                            after_ticket="1",
+                            has_more=False,
+                            snapshot_id=snapshot,
+                        ),
+                        received_at=self.now,
+                    )
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM telemetry_v2_messages").fetchone()[0], 2
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM activity_coverage").fetchone()[0], 0
+            )
+
+    def test_final_page_cannot_bridge_a_gap_in_durable_chain(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.store_authorized(
+                authorized_page(
+                    10,
+                    ticket="1",
+                    time_msc="1792656030000",
+                    after_time="0",
+                    after_ticket="0",
+                    has_more=True,
+                ),
+                received_at=self.now,
+            )
+            with self.assertRaises(V2StorageError):
+                registry.store_authorized(
+                    authorized_page(
+                        11,
+                        ticket="3",
+                        time_msc="1792656030000",
+                        after_time="1792656030000",
+                        after_ticket="2",
+                        has_more=False,
+                    ),
+                    received_at=self.now,
+                )
 
     def test_more_than_twelve_months_survives_restart_without_retention_cutoff(self) -> None:
         old_at = datetime(2025, 8, 1, 12, tzinfo=UTC)

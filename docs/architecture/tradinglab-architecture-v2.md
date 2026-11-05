@@ -12,6 +12,9 @@ OpenAPI y `/docs` en el puerto 8781, según [ADR-0018](../adr/0018-fastapi-centr
 Los catálogos `/docs.json` de los receptores independientes se conservan para
 compatibilidad, no describen los listeners actuales del relay.
 El despliegue en la Mac y la conectividad privada siguen pendientes.
+La preparación se documenta en el [manual del host remoto](../development/remote-host-setup.md)
+y el [ADR-0019](../adr/0019-private-remote-host-bootstrap.md): API en loopback,
+SQLite local y HTTPS privado con permiso de conexión VPS → host, no a la inversa.
 
 **Estado:** Propuesta para validación de socios
 

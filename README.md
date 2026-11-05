@@ -20,6 +20,7 @@ de desarrollo sigue el Harness 0.2.
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
 - [Referencia unificada de APIs](docs/development/api-reference.md)
 - [Manual de instalación y operación de los collectors MT5](docs/development/mt5-collector-operations.md)
+- [Preparación de un host remoto para la API central](docs/development/remote-host-setup.md)
 - [Arranque conjunto de API, relay y dashboard](docs/development/central-api-dashboard.md)
 - [Operación de la API central](docs/development/central-api-operation.md)
 - [Relay con outbox durable](docs/development/durable-telemetry-relay.md)

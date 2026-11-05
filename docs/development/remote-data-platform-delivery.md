@@ -119,6 +119,10 @@ conocido; el despliegue remoto no se da por hecho.
    con idempotencia, reintentos, backoff y confirmación central.
 4. **Servicio piloto en la Mac — pendiente.** Ejecutar API y SQLite juntas, usar conectividad
    privada y evitar suspensión o exposición pública accidental.
+   La [preparación portable del host](remote-host-setup.md) y el
+   [ADR-0019](../adr/0019-private-remote-host-bootstrap.md) agregan bootstrap para
+   Mac/Linux/Windows, bases nuevas y el procedimiento Tailscale VPS → API.
+   No equivalen a instalación nativa ni enlace remoto ya validados.
 5. **Validación extremo a extremo — parcial.** Probar cortes, reinicios, ACK perdido,
    duplicados, recuperación, atraso y reconciliación de conteos.
 6. **Traslado verificable — pendiente.** Separar migración de esquema de exportación/importación

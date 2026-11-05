@@ -34,6 +34,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--account-id", required=True, help="Cuenta v2 ya provisionada")
     parser.add_argument("--secrets-file", type=Path, help="Archivo local .env.central ignorado")
     parser.add_argument("--port", type=int, default=8781)
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="Nombre DNS Tailscale exacto adicional; no cambia el bind loopback",
+    )
     args = parser.parse_args(argv)
     try:
         if not 1 <= args.port <= 65535:
@@ -42,6 +48,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Configure bases existentes con rutas absolutas")
         if args.v1_db.resolve() == args.v2_db.resolve():
             raise ValueError("Las bases v1 y v2 deben ser distintas")
+        from tradinglab.telemetry.remote_host import tailscale_hostname
+
+        allowed_hosts = (
+            "127.0.0.1",
+            "localhost",
+            *(tailscale_hostname(x) for x in args.allowed_host),
+        )
         environment = dict(os.environ)
         if args.secrets_file is not None:
             environment = load_local_secrets(
@@ -53,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             args.source_id,
             args.account_id,
             *(environment.get(name, "") for name in KEY_NAMES),
+            allowed_hosts=allowed_hosts,
         )
         with exclusive_job_lock(args.v2_db.with_suffix(".central.lock")):
             app = create_central_app(settings)

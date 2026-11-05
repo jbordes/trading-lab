@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hmac
-from contextlib import ExitStack, asynccontextmanager
+import sqlite3
+from contextlib import ExitStack, asynccontextmanager, closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
@@ -26,6 +27,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import validate_central_schema
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryValidationError, parse_envelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 from tradinglab.telemetry.http_contracts_v2 import (
@@ -52,8 +54,7 @@ _V2_READER = HTTPBearer(auto_error=False, scheme_name="V2Read")
 
 @dataclass(frozen=True)
 class CentralSettings:
-    v1_database: Path
-    v2_database: Path
+    database: Path
     source_id: str
     account_id: str
     v1_ingest: str = field(repr=False)
@@ -96,11 +97,20 @@ def _single_query(request: Request, allowed: set[str]) -> None:
 def create_central_app(settings: CentralSettings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        database = settings.database.resolve(strict=True)
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as registry:
+            validate_central_schema(registry)
+            source = registry.execute(
+                "SELECT account_id, role FROM sources WHERE source_id = ?",
+                (settings.source_id,),
+            ).fetchone()
+            if source != (settings.account_id, "telemetry-v1"):
+                raise ValueError("La fuente de telemetría no corresponde a la cuenta central")
         with ExitStack() as stack:
-            v1 = PersistentTelemetryReceiver(settings.v1_database, source_id=settings.source_id)
+            v1 = PersistentTelemetryReceiver(settings.database, source_id=settings.source_id)
             stack.callback(v1.close)
             v2 = PersistentV2TelemetryReceiver(
-                settings.v2_database,
+                settings.database,
                 account_id=settings.account_id,
                 live_authorization=settings.v2_live,
                 activity_authorization=settings.v2_activity,

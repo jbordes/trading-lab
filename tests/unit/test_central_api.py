@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -18,20 +22,79 @@ from tradinglab.dashboard.telemetry import LoopbackTelemetryClient
 from tradinglab.dashboard.telemetry_v2 import LoopbackV2HistoryClient, V2HistoryProvider
 from tradinglab.telemetry import api_models as models
 from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
+from tradinglab.telemetry.backup import BackupPlan
 from tradinglab.telemetry.central_api import CentralSettings, create_central_app
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, parse_envelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
 from tradinglab.telemetry.relay_delivery import validate_central_ack
 from tradinglab.telemetry.relay_queue import RelayQueue, create_relay_database
-from tradinglab.telemetry.sqlite_store import create_database, open_registry
-from tradinglab.telemetry.sqlite_store_v2 import V2StorageError
+from tradinglab.telemetry.sqlite_store import MessageAdmissionError, open_registry
+from tradinglab.telemetry.sqlite_store_v2 import V2StorageError, open_v2_registry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
 
 
 class CentralApiTest(unittest.TestCase):
+    def test_startup_rejects_cross_account_or_wrong_role_sources(self) -> None:
+        for settings in (
+            replace(self.settings, account_id="another-account"),
+            replace(self.settings, source_id="synthetic-activity"),
+        ):
+            with self.subTest(settings=settings.source_id), self.assertRaises(ValueError):
+                with TestClient(create_central_app(settings)):
+                    self.fail("No debe iniciar con identidad de cuenta o rol incorrectos")
+
+    def test_v1_rejects_wrong_masked_account_and_activity_source(self) -> None:
+        message = snapshot_message()
+        message["payload"]["account"]["login_masked"] = "****9999"
+        response = self.client.post(
+            "/v1/telemetry",
+            json=message,
+            headers={"Authorization": f"Bearer {self.settings.v1_ingest}"},
+        )
+        self.assertEqual(response.status_code, 403, response.text)
+        message = snapshot_message()
+        message["source_id"] = "synthetic-activity"
+        with (
+            open_registry(self.settings.database) as registry,
+            self.assertRaises(MessageAdmissionError),
+        ):
+            registry.store_message(json.dumps(message).encode(), received_at=datetime.now(UTC))
+
+    def test_concurrent_contracts_commit_to_one_file_and_deduplicate(self) -> None:
+        messages = (
+            ("/v1/telemetry", self.settings.v1_ingest, snapshot_message()),
+            (
+                "/v2/telemetry",
+                self.settings.v2_activity,
+                json.loads((FIXTURES / "activity-canceled-order.json").read_text()),
+            ),
+        )
+
+        def send(item):
+            route, token, payload = item
+            return self.client.post(
+                route, json=payload, headers={"Authorization": f"Bearer {token}"}
+            )
+
+        for expected in (202, 200):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                for response in pool.map(send, messages):
+                    self.assertEqual(response.status_code, expected, response.text)
+        with closing(sqlite3.connect(self.settings.database)) as database:
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 1)
+            for table in ("telemetry_messages", "telemetry_v2_messages"):
+                self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
+
+        copied = BackupPlan(
+            self.root, self.settings.database.name, self.root, (CENTRAL_SCHEMA_VERSION,)
+        ).apply()
+        with closing(sqlite3.connect(copied.directory / "data.sqlite3")) as database:
+            for table in ("telemetry_messages", "telemetry_v2_messages"):
+                self.assertEqual(database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1)
+
     def test_v1_health_requires_read_permission_and_exposes_no_payload(self) -> None:
         for key in (self.settings.v1_ingest, self.settings.v2_read):
             response = self.client.get("/v1/health", headers={"Authorization": f"Bearer {key}"})
@@ -151,25 +214,24 @@ class CentralApiTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        v1 = self.root / "v1.sqlite3"
-        create_database(v1)
-        with open_registry(v1) as registry:
+        database = self.root / "central.sqlite3"
+        create_central_database(database)
+        stamp = datetime.now(UTC)
+        with open_v2_registry(database) as registry:
             registry.register_account(
-                "demo", "Demo", "DEMO-SERVER", "USD", created_at=datetime.now(UTC)
+                "demo",
+                "Demo",
+                ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
+                created_at=stamp,
             )
-            registry.register_source("demo-terminal-01", "demo", created_at=datetime.now(UTC))
-        v2 = V2ProvisionPlan(
-            self.root,
-            "v2.sqlite3",
-            "demo",
-            "Demo",
-            ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-            "synthetic-live",
-            "synthetic-activity",
-        ).apply()
+            registry.register_source("synthetic-live", "demo", ProducerRole.LIVE, created_at=stamp)
+            registry.register_source(
+                "synthetic-activity", "demo", ProducerRole.ACTIVITY, created_at=stamp
+            )
+        with open_registry(database) as registry:
+            registry.register_source("demo-terminal-01", "demo", created_at=stamp)
         self.settings = CentralSettings(
-            v1,
-            v2,
+            database,
             "demo-terminal-01",
             "demo",
             *(f"synthetic-central-api-key-number-{i}" for i in range(5)),

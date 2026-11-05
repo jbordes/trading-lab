@@ -1,4 +1,4 @@
-"""Opt-in SQLite creation and registration, isolated from the live receiver."""
+"""Durable v1 messages on central SQLite or the original isolated pilot schema."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
@@ -21,54 +22,8 @@ from tradinglab.telemetry.contract import (
     TelemetryEnvelope,
     parse_envelope,
 )
-
-SCHEMA_VERSION = 1
-
-_SCHEMA = """
-BEGIN IMMEDIATE;
-CREATE TABLE accounts (
-    account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
-    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 128),
-    server TEXT NOT NULL CHECK(length(server) BETWEEN 1 AND 128),
-    currency TEXT NOT NULL CHECK(length(currency) BETWEEN 1 AND 16),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TABLE sources (
-    source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TRIGGER sources_no_reassignment
-BEFORE UPDATE OF account_id ON sources
-WHEN NEW.account_id != OLD.account_id
-BEGIN
-    SELECT RAISE(ABORT, 'source account is immutable');
-END;
-CREATE TABLE telemetry_messages (
-    message_id INTEGER PRIMARY KEY,
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 128),
-    sequence TEXT NOT NULL CHECK(
-        length(sequence) BETWEEN 1 AND 19
-        AND sequence NOT GLOB '*[^0-9]*'
-        AND substr(sequence, 1, 1) BETWEEN '1' AND '9'
-        AND (length(sequence) < 19 OR sequence <= '9223372036854775807')
-    ),
-    captured_at_utc TEXT NOT NULL CHECK(length(captured_at_utc) BETWEEN 20 AND 27),
-    received_at_utc TEXT NOT NULL CHECK(length(received_at_utc) BETWEEN 20 AND 27),
-    schema_version TEXT NOT NULL CHECK(length(schema_version) BETWEEN 1 AND 128),
-    collector_version TEXT NOT NULL CHECK(length(collector_version) BETWEEN 1 AND 128),
-    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
-    content_sha256 TEXT NOT NULL CHECK(
-        length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
-    ),
-    UNIQUE(source_id, session_id, sequence)
-) STRICT;
-CREATE INDEX telemetry_messages_source_capture
-ON telemetry_messages(source_id, captured_at_utc, message_id);
-PRAGMA user_version = 1;
-COMMIT;
-"""
+from tradinglab.telemetry.schema_v1 import SCHEMA as _SCHEMA
+from tradinglab.telemetry.schema_v1 import SCHEMA_VERSION
 
 
 class TelemetryStorageError(RuntimeError):
@@ -259,8 +214,13 @@ class TelemetryRegistry:
                 if row != (label, server, currency):
                     raise RegistrationConflictError("La cuenta ya tiene otros metadatos")
                 return False
+            if connection.execute("PRAGMA user_version").fetchone()[0] == CENTRAL_SCHEMA_VERSION:
+                raise RegistrationConflictError(
+                    "La cuenta central requiere primero su identidad MT5 completa"
+                )
             connection.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO accounts(account_id, label, server, currency, created_at_utc) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (account_id, label, server, currency, stamp),
             )
             return True
@@ -278,16 +238,29 @@ class TelemetryRegistry:
                 is None
             ):
                 raise ValueError("La cuenta debe registrarse antes que la fuente")
+            central_schema = (
+                connection.execute("PRAGMA user_version").fetchone()[0] == CENTRAL_SCHEMA_VERSION
+            )
+            columns = "account_id, role" if central_schema else "account_id"
             row = connection.execute(
-                "SELECT account_id FROM sources WHERE source_id = ?", (source_id,)
+                f"SELECT {columns} FROM sources WHERE source_id = ?", (source_id,)
             ).fetchone()
             if row is not None:
-                if row[0] != account_id:
+                expected = (account_id, "telemetry-v1") if central_schema else (account_id,)
+                if row != expected:
                     raise RegistrationConflictError("No se puede reasignar una fuente")
                 return False
-            connection.execute(
-                "INSERT INTO sources VALUES (?, ?, ?)", (source_id, account_id, stamp)
-            )
+            if central_schema:
+                connection.execute(
+                    "INSERT INTO sources(source_id, account_id, role, created_at_utc) "
+                    "VALUES (?, ?, 'telemetry-v1', ?)",
+                    (source_id, account_id, stamp),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO sources(source_id, account_id, created_at_utc) VALUES (?, ?, ?)",
+                    (source_id, account_id, stamp),
+                )
             return True
 
     def store_message(self, body: bytes, *, received_at: datetime) -> StoredMessage:
@@ -306,6 +279,21 @@ class TelemetryRegistry:
         captured = _timestamp(datetime.fromisoformat(envelope.captured_at))
         identity = (envelope.source_id, envelope.session_id, str(envelope.sequence))
         with self._transaction() as connection:
+            central = (
+                connection.execute("PRAGMA user_version").fetchone()[0] == CENTRAL_SCHEMA_VERSION
+            )
+            if central:
+                source = connection.execute(
+                    "SELECT s.role, a.login_masked FROM sources s "
+                    "JOIN accounts a ON a.account_id = s.account_id WHERE s.source_id = ?",
+                    (envelope.source_id,),
+                ).fetchone()
+                if source is None or source[0] != "telemetry-v1":
+                    raise MessageAdmissionError("Fuente no autorizada para telemetría v1")
+                if envelope.kind == "account_snapshot" and (
+                    envelope.payload["account"]["login_masked"] != source[1]
+                ):
+                    raise MessageAdmissionError("Identidad incompatible con la cuenta registrada")
             account = connection.execute(
                 """SELECT a.server, a.currency FROM sources s
                 JOIN accounts a ON a.account_id = s.account_id WHERE s.source_id = ?""",
@@ -735,8 +723,16 @@ def read_account_history(
         connection.execute("PRAGMA query_only = ON")
         busy_timeout_ms = max(1, int(min(0.1, timeout_seconds) * 1000))
         connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (SCHEMA_VERSION, CENTRAL_SCHEMA_VERSION):
             raise TelemetryStorageError("Versión de esquema no admitida")
+        if version == CENTRAL_SCHEMA_VERSION:
+            from tradinglab.telemetry.central_schema import validate_central_schema
+
+            try:
+                validate_central_schema(connection)
+            except ValueError as exc:
+                raise TelemetryStorageError(str(exc)) from exc
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         return TelemetryRegistry(connection).account_history(
             source_id,
@@ -758,7 +754,7 @@ def read_account_history(
 
 @contextmanager
 def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[TelemetryRegistry]:
-    """Open an existing exact v1 schema, without creating or migrating a database.
+    """Open an exact central or isolated v1 schema without creating or migrating it.
 
     The file and its parent must be under operator control. cross_thread is only
     for a caller that serializes *all* registry access with its own lock.
@@ -776,19 +772,28 @@ def open_registry(path: Path, *, cross_thread: bool = False) -> Iterator[Telemet
         )
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == SCHEMA_VERSION:
+            reference = sqlite3.connect(":memory:")
+            try:
+                reference.executescript(_SCHEMA)
+                if _schema_objects(connection) != _schema_objects(reference):
+                    raise TelemetryStorageError("El esquema no coincide con TradingLab v1")
+            finally:
+                reference.close()
+            if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise TelemetryStorageError("Falló la comprobación de integridad SQLite")
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise TelemetryStorageError("La base contiene relaciones inválidas")
+        elif version == CENTRAL_SCHEMA_VERSION:
+            from tradinglab.telemetry.central_schema import validate_central_schema
+
+            try:
+                validate_central_schema(connection)
+            except ValueError as exc:
+                raise TelemetryStorageError(str(exc)) from exc
+        else:
             raise TelemetryStorageError("Versión de esquema no admitida; no se migró la base")
-        reference = sqlite3.connect(":memory:")
-        try:
-            reference.executescript(_SCHEMA)
-            if _schema_objects(connection) != _schema_objects(reference):
-                raise TelemetryStorageError("El esquema no coincide con TradingLab v1")
-        finally:
-            reference.close()
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise TelemetryStorageError("Falló la comprobación de integridad SQLite")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise TelemetryStorageError("La base contiene relaciones inválidas")
     except sqlite3.Error as exc:
         if connection is not None:
             connection.close()

@@ -1,4 +1,4 @@
-"""Isolated durable admission for the proposed telemetry v2 contract."""
+"""Durable v2 admission and projections on central or isolated pilot SQLite."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
@@ -265,7 +266,8 @@ class V2TelemetryRegistry:
                     raise V2RegistrationConflictError("La cuenta v2 ya tiene otra identidad")
                 return False
             connection.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO accounts(account_id, label, login_masked, server, currency, created_at_utc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (account, *expected, stamp),
             )
             return True
@@ -300,7 +302,8 @@ class V2TelemetryRegistry:
                 return False
             try:
                 connection.execute(
-                    "INSERT INTO sources VALUES (?, ?, ?, ?)",
+                    "INSERT INTO sources(source_id, account_id, role, created_at_utc) "
+                    "VALUES (?, ?, ?, ?)",
                     (source, account, role.value, stamp),
                 )
             except sqlite3.IntegrityError as exc:
@@ -1053,6 +1056,7 @@ class V2TelemetryRegistry:
                     raise V2AuthorizationError("Cuenta v2 no registrada")
                 source_rows = connection.execute(
                     """SELECT source_id, role FROM sources WHERE account_id = ?
+                    AND role IN ('live', 'activity')
                     ORDER BY role, source_id""",
                     (account,),
                 ).fetchall()
@@ -1189,7 +1193,7 @@ def open_v2_registry(
     cross_thread: bool = False,
     read_only: bool = False,
 ) -> Iterator[V2TelemetryRegistry]:
-    """Open an existing exact v2 schema without creating or migrating it."""
+    """Open an exact central or isolated v2 schema without creating or migrating it."""
 
     if path.suffix != ".sqlite3":
         raise ValueError("La base debe usar extensión .sqlite3")
@@ -1205,14 +1209,23 @@ def open_v2_registry(
         connection.execute("PRAGMA foreign_keys = ON")
         if not read_only:
             connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != DATABASE_SCHEMA_VERSION:
-            raise V2StorageError("Versión de esquema v2 no admitida")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
-            raise V2StorageError("El esquema no coincide con TradingLab v2")
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise V2StorageError("Falló la comprobación de integridad SQLite v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La base v2 contiene relaciones inválidas")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == DATABASE_SCHEMA_VERSION:
+            if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
+                raise V2StorageError("El esquema no coincide con TradingLab v2")
+            if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise V2StorageError("Falló la comprobación de integridad SQLite v2")
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise V2StorageError("La base v2 contiene relaciones inválidas")
+        elif version == CENTRAL_SCHEMA_VERSION:
+            from tradinglab.telemetry.central_schema import validate_central_schema
+
+            try:
+                validate_central_schema(connection)
+            except ValueError as exc:
+                raise V2StorageError(str(exc)) from exc
+        else:
+            raise V2StorageError("Versión de esquema central/v2 no admitida")
     except sqlite3.Error as exc:
         if connection is not None:
             connection.close()

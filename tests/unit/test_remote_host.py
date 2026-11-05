@@ -17,6 +17,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from tradinglab.telemetry.central_api import CentralSettings, create_central_app
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION
 from tradinglab.telemetry.remote_host import (
     CENTRAL_KEYS,
     RemoteHostConfig,
@@ -24,8 +25,8 @@ from tradinglab.telemetry.remote_host import (
     read_host_config,
     tailscale_hostname,
 )
-from tradinglab.telemetry.sqlite_store import open_registry
-from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
+from tradinglab.telemetry.sqlite_store import TelemetryStorageError, open_registry
+from tradinglab.telemetry.sqlite_store_v2 import V2StorageError, open_v2_registry
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,12 +64,28 @@ class RemoteHostTests(unittest.TestCase):
 
     def test_creation_identity_schema_permissions_and_no_overwrite(self) -> None:
         self.prepare()
-        for filename, version in (("central-v1.sqlite3", 1), ("central-v2.sqlite3", 5)):
-            with closing(sqlite3.connect(self.directory / filename)) as db:
-                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], version)
-                self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-                self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
-        with open_registry(self.directory / "central-v1.sqlite3") as registry:
+        database = self.directory / "central.sqlite3"
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(
+                db.execute("PRAGMA user_version").fetchone()[0], CENTRAL_SCHEMA_VERSION
+            )
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            self.assertIn("telemetry_messages", tables)
+            self.assertIn("telemetry_v2_messages", tables)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 1)
+            self.assertEqual(
+                db.execute(
+                    "SELECT role FROM sources WHERE source_id = ?",
+                    (self.config.v1_source_id,),
+                ).fetchone()[0],
+                "telemetry-v1",
+            )
+        with open_registry(database) as registry:
             self.assertFalse(
                 registry.register_source(
                     self.config.v1_source_id,
@@ -76,7 +93,7 @@ class RemoteHostTests(unittest.TestCase):
                     created_at=datetime.now(UTC),
                 )
             )
-        with open_v2_registry(self.directory / "central-v2.sqlite3", read_only=True) as registry:
+        with open_v2_registry(database, read_only=True) as registry:
             self.assertEqual(len(registry.account_evidence(self.config.account_id).sources), 2)
         self.assertEqual(read_host_config(self.directory / "host.json"), self.config)
         synthetic_keys = (self.directory / ".env.central").read_text().splitlines()
@@ -101,6 +118,43 @@ class RemoteHostTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 prepare_host(ROOT, path, self.config, apply=True)
 
+    def test_missing_central_guard_is_rejected_by_both_storage_adapters(self) -> None:
+        self.prepare()
+        database = self.directory / "central.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("DROP TRIGGER sources_no_identity_change")
+        for opener, error in (
+            (open_registry, TelemetryStorageError),
+            (open_v2_registry, V2StorageError),
+        ):
+            with self.subTest(adapter=opener.__name__), self.assertRaises(error):
+                with opener(database):
+                    self.fail("No debe abrir una base central con guardas faltantes")
+
+    def test_maintenance_cli_backs_up_the_prepared_single_database(self) -> None:
+        self.prepare()
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/run_telemetry_maintenance.py"),
+                "--storage-root",
+                str(self.directory),
+                "--database",
+                "central.sqlite3",
+                "--apply",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        copies = list((self.directory / "backups").glob("*/data.sqlite3"))
+        self.assertEqual(len(copies), 1)
+        with closing(sqlite3.connect(copies[0])) as database:
+            self.assertEqual(
+                database.execute("PRAGMA user_version").fetchone()[0], CENTRAL_SCHEMA_VERSION
+            )
+
     def test_config_rejects_unknown_duplicate_and_invalid_fields(self) -> None:
         path = self.directory.parent / "input.json"
         for content in (
@@ -121,7 +175,7 @@ class RemoteHostTests(unittest.TestCase):
                 replace(self.config, **changes)
 
     def test_failed_setup_has_no_completion_marker_and_no_automatic_cleanup(self) -> None:
-        with patch("tradinglab.telemetry.remote_host.create_database", side_effect=OSError):
+        with patch("tradinglab.telemetry.remote_host.create_central_database", side_effect=OSError):
             with self.assertRaises(OSError):
                 prepare_host(ROOT, self.directory, self.config, apply=True)
         self.assertTrue(self.directory.is_dir())
@@ -145,8 +199,7 @@ class RemoteHostTests(unittest.TestCase):
     def test_central_api_accepts_exact_proxy_host_and_preserves_origin_guard(self) -> None:
         self.prepare()
         settings = CentralSettings(
-            self.directory / "central-v1.sqlite3",
-            self.directory / "central-v2.sqlite3",
+            self.directory / "central.sqlite3",
             self.config.v1_source_id,
             self.config.account_id,
             *(f"synthetic-central-credential-{i}" for i in range(5)),
@@ -202,6 +255,10 @@ class RemoteHostTests(unittest.TestCase):
             )
 
     def _launch_check(self, args: list[str]) -> int:
+        self.assertIn("--db", args)
+        self.assertEqual(args[args.index("--db") + 1], str(self.directory / "central.sqlite3"))
+        self.assertNotIn("--v1-db", args)
+        self.assertNotIn("--v2-db", args)
         self.assertIn("--allowed-host", args)
         self.assertIn("mac.example.ts.net", args)
         self.assertNotIn("0.0.0.0", args)

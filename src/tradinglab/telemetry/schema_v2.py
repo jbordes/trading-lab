@@ -38,7 +38,10 @@ POSITION_CYCLE_EXTRA_INDEXES = POSITION_CYCLE_REVISION_INDEX + "\n" + POSITION_C
 POSITION_CYCLE_DDL_V4 = POSITION_CYCLE_TABLE + "\n" + POSITION_CYCLE_INDEX
 POSITION_CYCLE_DDL = POSITION_CYCLE_DDL_V4 + "\n" + POSITION_CYCLE_EXTRA_INDEXES
 
-SCHEMA = f"""
+
+def build_schema(*, version: int, source_roles_sql: str, extra_tables: str = "") -> str:
+    """Compose schema from internal SQL constants; never accept request/config fragments."""
+    return f"""
 BEGIN IMMEDIATE;
 CREATE TABLE accounts (
     account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
@@ -55,7 +58,7 @@ CREATE TABLE accounts (
 CREATE TABLE sources (
     source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
     account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    role TEXT NOT NULL CHECK(role IN ('live', 'activity')),
+    role TEXT NOT NULL CHECK(role IN ({source_roles_sql})),
     created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27),
     UNIQUE(account_id, role)
 ) STRICT;
@@ -131,9 +134,13 @@ CREATE TABLE activity_coverage (
 CREATE INDEX activity_coverage_query
 ON activity_coverage(account_id, entity_type, from_server_msc, to_server_msc);
 {POSITION_CYCLE_DDL}
-PRAGMA user_version = 5;
+{extra_tables}
+PRAGMA user_version = {version};
 COMMIT;
 """
+
+
+SCHEMA = build_schema(version=5, source_roles_sql="'live', 'activity'")
 SCHEMA_V4 = SCHEMA.replace("\n" + POSITION_CYCLE_EXTRA_INDEXES, "").replace(
     "PRAGMA user_version = 5", "PRAGMA user_version = 4"
 )

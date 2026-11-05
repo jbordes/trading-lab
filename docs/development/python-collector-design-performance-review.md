@@ -32,17 +32,24 @@ instalaciones, tests nativos ni benchmarks.
 
 ## Hallazgos Python
 
-### PY01 — El inicio reconstruye evidencia histórica completa
+### PY01 — El inicio reconstruía evidencia histórica completa
 
 - **Prioridad:** alta. **Ubicación:** `persistent_receiver_v2.py:44`,
   `sqlite_store_v2.py:1035`.
-- La evidencia de cuenta/fuentes se deriva leyendo todos los mensajes,
-  recuperando y verificando tuplas. Cargar payloads es proporcional al historial
-  y ocurre al iniciar. Efecto estructural confirmado; latencia no medida.
-- **Propuesta:** resolver identidad/fuentes desde metadatos consultables y
-  conservar auditoría íntegra en recorrido separado streaming o paginado.
-- **Aceptación:** con muchos mensajes el constructor no lee payloads históricos;
-  identidad y autorización no cambian.
+- **Estado:** corrección del arranque implementada; CI y merge humano pendientes.
+- **Hallazgo de base:** la evidencia de cuenta/fuentes se reconstruía leyendo
+  mensajes históricos, con trabajo y memoria proporcionales al historial. La
+  ubicación describe el diseño previo; latencia no medida.
+- **Cambio:** `account_registration` ahora lee `accounts` y `sources` en una
+  transacción mediante DTO inmutable, sin recorrer historial. La consulta
+  explícita `account_evidence` sigue verificando hashes y materializando la
+  historia; streaming/paginación de esa auditoría queda como propuesta futura,
+  no implementada. Esto no afirma que el arranque deje de leer el snapshot actual.
+- **Evidencia dirigida:** 51 casos correctos en
+  `test_telemetry_v2_sqlite`, `test_central_api` y
+  `test_telemetry_v2_persistent_http`: arranque con lecturas de mensajes
+  prohibidas por SQLite, con 0 y 128 registros; cuenta/fuentes y autorización
+  preservadas, y hash corrupto aún rechazado por auditoría. `fast` correcto.
 
 ### PY02 — Lecturas de actividad comparten lock con el ingreso
 
@@ -167,7 +174,8 @@ configuración/secretos, backup, jobs, bootstrap, CLI y harness/tests.
 
 Orden propuesto, no aprobación de implementación:
 
-1. PY01, PY02 y PY06 con tests dirigidos y contrato explícito de deduplicación.
+1. PY01 queda guardado; priorizar PY02 y PY06 con tests dirigidos y contrato
+   explícito de deduplicación.
 2. MQ01 y MQ02 antes de instalar en cuenta con historial denso.
 3. PY03, PY04 y PY07.
 4. Evaluar PY05 con conectividad remota y mediciones.

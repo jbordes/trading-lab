@@ -15,6 +15,13 @@ El comando `scripts/central_api.py` sirve ingesta y lecturas descriptivas en un
 único puerto. El contrato nuevo usa `central.sqlite3`, esquema global 7 y no
 crea ni migra la base durante el arranque.
 
+Al iniciar, la API valida esquema, identidad y fuentes sin reconstruir el
+historial completo de actividad. Esto no equivale a una auditoría completa de
+payloads: la comprobación explícita `account_evidence` conserva la verificación
+de hashes y sus validaciones, y puede leer la evidencia histórica. El snapshot
+actual sí puede leerse en el arranque. No cambian el esquema 7 ni la regla de no
+migrar automáticamente.
+
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
 - `http://127.0.0.1:8781/redoc`: referencia alternativa.

@@ -10,6 +10,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from tradinglab.telemetry.admission_v2 import (
     AdmissionDisposition,
@@ -24,6 +25,7 @@ from tradinglab.telemetry.admission_v2 import (
 )
 from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.composition_v2 import compose_account
+from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
 from tradinglab.telemetry.sqlite_store_v2 import (
     V2RegistrationConflictError,
     V2StorageError,
@@ -172,6 +174,123 @@ class V2SqliteTest(unittest.TestCase):
                 "account-demo",
                 ProducerRole.ACTIVITY,
                 created_at=self.now,
+            )
+
+    def test_account_registration_is_scoped_and_does_not_read_messages(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            other_identity = ProducerIdentity("****9999", "OTHER-SERVER", "EUR")
+            registry.register_account("other-account", "Other", other_identity, created_at=self.now)
+            registry.register_source(
+                "other-live", "other-account", ProducerRole.LIVE, created_at=self.now
+            )
+            registry.store_authorized(authorized("live-empty"), received_at=self.now)
+        with closing(sqlite3.connect(self.path)) as connection:
+            denied_reads: list[str] = []
+
+            def metadata_only(action: int, table: str, *_: object) -> int:
+                if action == sqlite3.SQLITE_READ and table in {
+                    "telemetry_v2_messages",
+                    "telemetry_messages",
+                }:
+                    denied_reads.append(table)
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(metadata_only)
+            registry = V2TelemetryRegistry(connection)
+            registration = registry.account_registration("account-demo")
+            self.assertEqual(registration.account_id, "account-demo")
+            self.assertEqual(registration.label, "Demo")
+            self.assertEqual(registration.identity, IDENTITY)
+            self.assertEqual(
+                [(source.source_id, source.role) for source in registration.sources],
+                [
+                    ("synthetic-activity", ProducerRole.ACTIVITY),
+                    ("synthetic-live", ProducerRole.LIVE),
+                ],
+            )
+            self.assertEqual(
+                registry.account_registration("other-account").identity, other_identity
+            )
+            self.assertEqual(denied_reads, [])
+
+    def test_account_registration_rejects_missing_or_invalid_account(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            with self.assertRaises(V2AuthorizationError):
+                registry.account_registration("unknown-account")
+            with self.assertRaises(ValueError):
+                registry.account_registration("../invalid-account")
+            self.assertEqual(registry.account_registration("account-demo").identity, IDENTITY)
+
+    def test_receiver_startup_does_not_read_empty_or_populated_message_tables(self) -> None:
+        connect = sqlite3.connect
+        denied_reads: list[str] = []
+
+        def metadata_only(action: int, table: str, *_: object) -> int:
+            if action == sqlite3.SQLITE_READ and table in {
+                "telemetry_v2_messages",
+                "telemetry_messages",
+            }:
+                denied_reads.append(table)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        def connect_without_history(*args: object, **kwargs: object) -> sqlite3.Connection:
+            connection = connect(*args, **kwargs)
+            # Schema validation builds an empty reference schema in memory;
+            # forbid historical reads only on the actual database under test.
+            if args[0] != ":memory:":
+                connection.set_authorizer(metadata_only)
+            return connection
+
+        for count in (0, 128):
+            if count:
+                with open_v2_registry(self.path) as registry:
+                    for sequence in range(1, count + 1):
+                        message = directory().authorize(
+                            body("live-empty", sequence), f"Bearer {LIVE_CREDENTIAL}"
+                        )
+                        registry.store_authorized(message, received_at=self.now)
+            with (
+                self.subTest(messages=count),
+                patch(
+                    "tradinglab.telemetry.sqlite_store_v2.sqlite3.connect",
+                    side_effect=connect_without_history,
+                ),
+            ):
+                receiver = PersistentV2TelemetryReceiver(
+                    self.path,
+                    account_id="account-demo",
+                    live_authorization=LIVE_CREDENTIAL,
+                    activity_authorization=ACTIVITY_CREDENTIAL,
+                )
+                try:
+                    self.assertEqual(receiver.state()["status"], "ready")
+                finally:
+                    receiver.close()
+        self.assertEqual(denied_reads, [])
+
+    def test_receiver_startup_rejects_missing_roles_even_with_other_account_sources(self) -> None:
+        with open_v2_registry(self.path) as registry:
+            registry.register_account(
+                "incomplete-account", "Incomplete", IDENTITY, created_at=self.now
+            )
+            registry.register_source(
+                "incomplete-live", "incomplete-account", ProducerRole.LIVE, created_at=self.now
+            )
+        with self.assertRaises(ValueError):
+            PersistentV2TelemetryReceiver(
+                self.path,
+                account_id="incomplete-account",
+                live_authorization=LIVE_CREDENTIAL,
+                activity_authorization=ACTIVITY_CREDENTIAL,
+            )
+        with self.assertRaises(V2AuthorizationError):
+            PersistentV2TelemetryReceiver(
+                self.path,
+                account_id="unknown-account",
+                live_authorization=LIVE_CREDENTIAL,
+                activity_authorization=ACTIVITY_CREDENTIAL,
             )
 
     def rows(self) -> list[tuple[object, ...]]:
@@ -488,6 +607,7 @@ class V2SqliteTest(unittest.TestCase):
             connection.commit()
 
         with open_v2_registry(self.path) as registry:
+            self.assertEqual(registry.account_registration("account-demo").identity, IDENTITY)
             with self.assertRaises(V2StorageError):
                 registry.account_messages("account-demo")
 

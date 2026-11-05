@@ -72,6 +72,14 @@ class RegisteredV2Source:
 
 
 @dataclass(frozen=True, slots=True)
+class V2AccountRegistration:
+    account_id: str
+    label: str
+    identity: ProducerIdentity
+    sources: tuple[RegisteredV2Source, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class V2AccountEvidence:
     account_id: str
     label: str
@@ -1032,25 +1040,50 @@ class V2TelemetryRegistry:
 
         return self.account_evidence(account_id).messages
 
+    def account_registration(self, account_id: str) -> V2AccountRegistration:
+        """Read provisioned identity and sources without loading historical messages."""
+
+        account = _identifier(account_id, "account_id")
+        try:
+            with self._read_transaction() as connection:
+                return self._account_registration(connection, account)
+        except V2AuthorizationError, V2StorageError:
+            raise
+        except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
+            raise V2StorageError("No se pudo leer el registro de cuenta") from exc
+
+    @staticmethod
+    def _account_registration(
+        connection: sqlite3.Connection, account_id: str
+    ) -> V2AccountRegistration:
+        metadata = connection.execute(
+            """SELECT label, login_masked, server, currency FROM accounts
+            WHERE account_id = ?""",
+            (account_id,),
+        ).fetchone()
+        if metadata is None:
+            raise V2AuthorizationError("Cuenta v2 no registrada")
+        source_rows = connection.execute(
+            """SELECT source_id, role FROM sources WHERE account_id = ?
+            AND role IN ('live', 'activity') ORDER BY role, source_id""",
+            (account_id,),
+        ).fetchall()
+        return V2AccountRegistration(
+            account_id=account_id,
+            label=metadata[0],
+            identity=ProducerIdentity(*metadata[1:]),
+            sources=tuple(
+                RegisteredV2Source(source_id, ProducerRole(role)) for source_id, role in source_rows
+            ),
+        )
+
     def account_evidence(self, account_id: str) -> V2AccountEvidence:
         """Read registered sources and verified messages in one transaction."""
 
         account = _identifier(account_id, "account_id")
         try:
             with self._read_transaction() as connection:
-                metadata = connection.execute(
-                    """SELECT label, login_masked, server, currency FROM accounts
-                    WHERE account_id = ?""",
-                    (account,),
-                ).fetchone()
-                if metadata is None:
-                    raise V2AuthorizationError("Cuenta v2 no registrada")
-                source_rows = connection.execute(
-                    """SELECT source_id, role FROM sources WHERE account_id = ?
-                    AND role IN ('live', 'activity')
-                    ORDER BY role, source_id""",
-                    (account,),
-                ).fetchall()
+                registration = self._account_registration(connection, account)
                 rows = connection.execute(
                     """SELECT m.message_id, m.source_id, s.role, m.session_id,
                               m.sequence, m.event_id, m.kind, m.captured_at_utc,
@@ -1062,15 +1095,18 @@ class V2TelemetryRegistry:
                     WHERE s.account_id = ? ORDER BY m.message_id""",
                     (account,),
                 ).fetchall()
-                messages = tuple(self._restore_message(row, account, metadata[1:]) for row in rows)
+                identity = registration.identity
+                messages = tuple(
+                    self._restore_message(
+                        row, account, (identity.login_masked, identity.server, identity.currency)
+                    )
+                    for row in rows
+                )
                 return V2AccountEvidence(
                     account_id=account,
-                    label=metadata[0],
-                    identity=ProducerIdentity(*metadata[1:]),
-                    sources=tuple(
-                        RegisteredV2Source(source_id, ProducerRole(role))
-                        for source_id, role in source_rows
-                    ),
+                    label=registration.label,
+                    identity=identity,
+                    sources=registration.sources,
                     messages=messages,
                 )
         except V2AuthorizationError, V2StorageError:

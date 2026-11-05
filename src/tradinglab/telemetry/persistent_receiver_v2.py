@@ -41,8 +41,8 @@ class PersistentV2TelemetryReceiver:
         self._context = open_v2_registry(database, cross_thread=True)
         self._registry = self._context.__enter__()
         try:
-            evidence = self._registry.account_evidence(account_id)
-            sources = {source.role: source.source_id for source in evidence.sources}
+            registration = self._registry.account_registration(account_id)
+            sources = {source.role: source.source_id for source in registration.sources}
             if set(sources) != {ProducerRole.LIVE, ProducerRole.ACTIVITY}:
                 raise ValueError("La cuenta v2 requiere fuentes live y activity provisionadas")
             self._directory = TradingEventsProducerDirectory(
@@ -51,14 +51,14 @@ class PersistentV2TelemetryReceiver:
                         account_id,
                         sources[ProducerRole.LIVE],
                         ProducerRole.LIVE,
-                        evidence.identity,
+                        registration.identity,
                         live_authorization,
                     ),
                     ProducerRegistration(
                         account_id,
                         sources[ProducerRole.ACTIVITY],
                         ProducerRole.ACTIVITY,
-                        evidence.identity,
+                        registration.identity,
                         activity_authorization,
                     ),
                 )

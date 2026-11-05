@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 KEY_NAMES = (
-    "CENTRAL_V1_INGEST",
-    "CENTRAL_V1_READ",
-    "CENTRAL_V2_LIVE",
-    "CENTRAL_V2_ACTIVITY",
-    "CENTRAL_V2_READ",
+    "CENTRAL_SNAPSHOT_INGEST",
+    "CENTRAL_ACCOUNT_READ",
+    "CENTRAL_LIVE_INGEST",
+    "CENTRAL_ACTIVITY_INGEST",
+    "CENTRAL_TRADING_READ",
 )
 
 
@@ -28,9 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.operational_job import exclusive_job_lock
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", required=True, type=Path, help="SQLite central schema 6")
-    parser.add_argument("--source-id", required=True, help="Fuente v1 ya provisionada")
-    parser.add_argument("--account-id", required=True, help="Cuenta v2 ya provisionada")
+    parser.add_argument("--db", required=True, type=Path, help="SQLite central schema 7")
+    parser.add_argument("--source-id", required=True, help="Fuente de estado ya provisionada")
+    parser.add_argument("--account-id", required=True, help="Cuenta ya provisionada")
     parser.add_argument("--secrets-file", type=Path, help="Archivo local .env.central ignorado")
     parser.add_argument("--port", type=int, default=8781)
     parser.add_argument(

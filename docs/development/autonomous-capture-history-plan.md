@@ -9,13 +9,14 @@ Este documento conserva el plan fechado del 29 de octubre; no es el estado
 operativo actual ni requiere otro OK global para continuar el trabajo aprobado.
 Captura v1, actividad/ciclos v2, recuperación reanudable, consultas paginadas y
 métricas de memoria acotada están implementadas en el piloto local. El flujo
-Telemetry/Activity → relay durable → FastAPI → central.sqlite3 schema 6 → dashboard
-también está implementado y probado localmente. Los cambios locales todavía
-requieren revisión humana y CI; no se afirma su merge.
+Telemetry/Activity → relay durable → FastAPI → almacenamiento central
+corresponde al piloto local con el contrato anterior. El contrato descriptivo y
+esquema 7 están en la rama actual y aún requieren integración; no se afirma
+su merge ni cutover.
 
 El flujo no está desplegado en Mac ni conectado mediante enlace privado remoto.
-Siguen pendientes la gestión de credenciales, las pruebas de 401/403,
-desconexión del broker y carga, la validación amplia con reportes, los acuerdos
+Siguen pendientes la gestión de credenciales, la prueba de desconexión del
+broker, la validación amplia con reportes, los acuerdos
 de métricas de riesgo/ejecución y el backup/restauración para producción. Las
 definiciones de jobs están preparadas, pero no se afirma que estén activadas.
 Los históricos mantienen política sin TTL; la retención de 14 días es solo para
@@ -46,9 +47,10 @@ destructiva o despliegue requerirán sus ADR antes de activarse.
 
 ## Estado de partida y límites
 
-El piloto utiliza receptores v1 y v2 bajo un supervisor común. V1 aporta el estado
-vivo; v2 conserva actividad y ciclos. La API central persiste ambos flujos en un
-único archivo SQLite/esquema 6; los receptores independientes documentados en la
+El piloto anterior utiliza receptores con contratos v1 y v2 bajo un supervisor
+común. El contrato descriptivo aprobado cambia a estado de cuenta y eventos de
+trading sobre un único archivo SQLite/esquema 7; la creación nueva no migra las
+bases existentes de esquema 6. Los receptores independientes documentados en la
 guía anterior son herramientas del piloto aislado. El supervisor administra sus
 procesos Python, no la terminal MT5.
 El collector de actividad ya dispone de ventanas, solapamiento, cursor y

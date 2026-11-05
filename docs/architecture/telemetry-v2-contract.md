@@ -1,4 +1,7 @@
-# Contrato de telemetría v2 — propuesta
+# Contrato de telemetría v2 — propuesta histórica
+
+> El wire descriptivo actual usa `mt5-trading-events-v1`; consulte la
+> [guía de cutover](../development/descriptive-api-cutover.md).
 
 Estado: especificación revisable del ADR-0011, con validador y admisión aislados en
 `src/tradinglab/telemetry/contract_v2.py` y

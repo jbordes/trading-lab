@@ -2,23 +2,26 @@
 
 ## Resumen vigente — 5 de noviembre de 2026
 
-El piloto local demo ya tiene captura separada para estado vivo (v1) y actividad
-histórica/ciclos (v2), persistencia SQLite central esquema 6, recuperación histórica reanudable,
-consultas paginadas y métricas con memoria acotada. FastAPI, relay durable y
+El piloto local demo ya tiene captura separada para estado de cuenta y eventos
+de trading, recuperación histórica reanudable, consultas paginadas y métricas
+con memoria acotada. El contrato descriptivo y la persistencia central esquema 7
+están en preparación en la rama actual, pendiente de integración. FastAPI, relay durable y
 logging de collectors están integrados y validados localmente, incluido un corte
 breve del relay. Los cambios locales aún requieren revisión y CI; este resumen no
 afirma estados de merge.
 
 Los jobs tienen definiciones preparadas, pero no se declara que estén activados.
-La Mac, el enlace privado remoto y la operación de producción siguen pendientes.
+El importador verificado, el cutover y la preparación Mac/Tailscale siguen
+pendientes; no hay despliegue en producción.
 La retención de datos históricos no tiene TTL; los 14 días se aplican a los logs
 locales de diagnóstico. Las fórmulas financieras existentes evolucionan con el
 socio; las métricas de riesgo y ejecución todavía requieren definición.
 
-Pendientes actuales: gestión de credenciales y conectividad privada para preparar
-el piloto en Mac; pruebas restantes de 401/403, desconexión del broker y carga;
-validación amplia contra reportes/cuentas; modelo de riesgo y métricas de
-ejecución; backup y restauración para producción.
+Pendientes actuales: importador verificado de datos anteriores y cutover
+supervisado; gestión de credenciales y conectividad privada para Mac/Tailscale;
+prueba de desconexión del broker; pruebas nuevas de la feature; validación amplia
+contra reportes/cuentas; modelo de riesgo y métricas
+de ejecución; backup y restauración para producción.
 
 Las secciones fechadas siguientes preservan el plan y los antecedentes de cada
 etapa; sus estados no sustituyen este resumen vigente.
@@ -175,8 +178,9 @@ caída y la recuperación automática al reanudar el receptor.
 
 Implementado:
 
-1. El dashboard exige elegir `--demo` o `--telemetry`; eliminó el descubrimiento
-   automático de MT5 y telemetría requiere un `source_id` explícito.
+1. El dashboard exige elegir `--demo` o `--central-api-port` con
+   `--snapshot-source` y `--activity-source`; ya no admite los modos retirados
+   `--telemetry`/`--history-v2` ni descubre MT5 automáticamente.
 2. Python permanece únicamente en la herramienta diagnóstica. La captura exige
    por entorno ruta de terminal, carpeta de datos, cuenta y servidor esperados,
    los verifica antes de leer operaciones y trabaja con una terminal por proceso.

@@ -61,7 +61,7 @@ class TelemetryV2ContractTest(unittest.TestCase):
 
     def test_v1_still_accepts_original_shape_and_v2_rejects_it(self) -> None:
         value = fixture("live-empty")
-        value["schema_version"] = "mt5-telemetry-v1"
+        value["schema_version"] = "mt5-account-state-v1"
         value["kind"] = "account_snapshot"
         value["payload"]["account"].update(value["payload"].pop("identity"))
         self.assertEqual(parse_envelope(encoded(value)).kind, "account_snapshot")

@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         "--db",
         str(directory / "central.sqlite3"),
         "--source-id",
-        config.v1_source_id,
+        config.snapshot_source_id,
         "--account-id",
         config.account_id,
         "--secrets-file",

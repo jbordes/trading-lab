@@ -1,6 +1,7 @@
 # Construcción de la plataforma de datos remota
 
-**Estado vigente al 2026-11-05:** piloto local operativo; traslado remoto pendiente
+**Estado vigente al 2026-11-05:** piloto local operativo; contrato descriptivo y
+esquema central 7 en rama actual pendiente de integración; traslado remoto pendiente
 
 **Rama estable temporal:** `feature/remote-data-platform`
 
@@ -8,23 +9,24 @@
 
 El piloto local ya ejecuta los collectors Telemetry `0.2.1` y Activity
 `activity-0.7.1`, una outbox durable con listeners `8776/8777`, FastAPI `8781`,
-el dashboard `8775` y el modelo previo de dos archivos SQLite. El PR #64 prepara
-el cambio a una sola `central.sqlite3`/esquema 6 para el host remoto; aún requiere
-CI, revisión humana y prueba supervisada antes de reemplazar el modelo local.
-Los cuatro scripts nativos pasaron en Juampi y se validó un corte breve del
-relay con logging. La infraestructura de jobs está definida, pero no se afirma
-que esté activada.
+el dashboard `8775` y el modelo previo de dos archivos SQLite. La rama nueva
+prepara el contrato descriptivo y una sola `central.sqlite3`/esquema 7; requiere
+integración revisada y corte supervisado antes de reemplazar el modelo local.
+La rama retira las CLIs, receptores y SQL aislados, y limita el producto central
+a esquema 7. Pasaron 289 pruebas afectadas y el check `fast`; las pruebas nuevas
+de esta feature siguen en curso. No se afirma una ejecución nueva de scripts
+nativos ni activación de jobs.
 
 Esta evidencia local no equivale a merge ni a CI verde. El estado de PRs no se
 deduce aquí: requiere revisión humana y los checks correspondientes. No está
 desplegado en la Mac, no existe aún el piloto remoto con enlace privado y no se
 habilitan cuentas reales.
 
-Pendiente: gestión centralizada de credenciales y permisos; preparar Mac y
-conectividad privada; pruebas operativas restantes de 401/403, desconexión del
-broker y carga; comparación amplia de reportes/cuentas; backup y restauración
-para producción; revisión de fórmulas financieras existentes y definición de
-métricas de riesgo y ejecución con el socio. La
+Pendiente: importador verificado para datos anteriores y cutover coordinado;
+gestión centralizada de credenciales y permisos; preparar Mac/Tailscale;
+prueba operativa de desconexión del broker; comparación amplia de
+reportes/cuentas; backup y restauración para producción; revisión de fórmulas
+financieras existentes y definición de métricas de riesgo y ejecución con el socio. La
 retención de datos históricos conserva la política sin TTL; la retención de
 14 días corresponde solo a los logs locales de diagnóstico.
 
@@ -39,7 +41,7 @@ probadas en el piloto local; la instalación vigente se describe en
 [credenciales y permisos](credential-management-plan.md) sigue pendiente.
 
 El piloto remoto alojará API, backend y
-SQLite central/esquema 6 en una Mac conectada privadamente con la VPS. La base permanecerá en
+SQLite central/esquema 7 en una Mac conectada privadamente con la VPS. La base permanecerá en
 disco local junto al backend; nunca se abrirá SQLite mediante una carpeta de red.
 
 La implementación conservará receptores locales en la VPS y añadirá transporte
@@ -100,7 +102,7 @@ validación local conocidas; no afirman merge o CI de una rama o PR.
 **Paso 1 implementado localmente:** [contrato central](../architecture/central-ingestion-api-contract.md),
 ingesta, lecturas y documentación OpenAPI. API central probada localmente.
 
-**Paso 2 implementado localmente:** bootstrap de la [base central SQLite esquema 6](central-sqlite.md)
+**Paso 2 implementado localmente:** bootstrap de la [base central SQLite esquema 7](central-sqlite.md)
 con vista previa, aplicación explícita y destino local fuera del checkout,
 documentado en [preparación del host remoto](remote-host-setup.md). No implica
 creación o traslado de una base operativa remota.
@@ -116,7 +118,7 @@ conocido; el despliegue remoto no se da por hecho.
 1. **Contrato central y seguridad — implementado localmente.** Delimitar ingesta v1/v2, ACK durable,
    autenticación por productor, límites y lecturas del dashboard. No exponer
    operaciones genéricas de baja o modificación a los collectors.
-2. **Creación limpia de la base central SQLite esquema 6 — implementado localmente.**
+2. **Creación limpia de la base central SQLite esquema 7 — implementado localmente.**
    El bootstrap portable crea una base nueva, registra cuenta y fuentes, y no
    sobrescribe un destino existente. Ver [SQLite central](central-sqlite.md) y
    [preparación del host](remote-host-setup.md).
@@ -136,7 +138,7 @@ conocido; el despliegue remoto no se da por hecho.
 7. **Cierre del programa — pendiente.** Revisar seguridad y robustez, retirar la excepción de
    ramas, actualizar documentación vigente y abrir el PR final hacia `main`.
 
-Para el primer piloto remoto se prefiere una base central esquema 6 vacía porque
+Para el primer piloto remoto se prefiere una base central esquema 7 vacía porque
 los datos actuales son de prueba. Antes de conectar una base con datos que deban
 preservarse se requiere un traslado verificable y planificado; no se asume que el
 bootstrap migre datos ni reconcilie cursores.

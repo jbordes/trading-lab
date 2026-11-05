@@ -11,9 +11,12 @@ reenvía a FastAPI y SQLite. El setup del host remoto prepara una API central en
 loopback y una base nueva. No demuestra todavía un piloto extremo a extremo por
 Tailscale ni una migración de datos operativos.
 
-La estructura unificada y el esquema global 6 se describen en la guía de
+La estructura unificada y el esquema global 7 se describen en la guía de
 [SQLite de la API central](central-sqlite.md) y siguen el
-[ADR-0020](../adr/0020-single-central-sqlite-database.md), que reemplaza la
+[ADR-0020](../adr/0020-single-central-sqlite-database.md) y su corrección
+[ADR-0021](../adr/0021-descriptive-central-api-contract.md). El contrato
+descriptivo está en la rama actual, pendiente de integración; el cutover está pendiente y se detalla
+en la [guía correspondiente](descriptive-api-cutover.md). ADR-0020 reemplaza la
 decisión inicial de dos archivos del ADR-0019.
 
 No se han confirmado instalaciones reales de este procedimiento en Mac o Linux.
@@ -46,16 +49,33 @@ vista previa y no modifica archivos; con `--apply` crea la base y credenciales
 locales. La vista previa del wrapper de instalación no valida todo el JSON: la
 validación completa ocurre en el núcleo cuando se aplica.
 
+Para crear manualmente solo la base central en un destino absoluto nuevo, use
+`scripts/create_central_db.py`; sin `--apply` muestra la vista previa y no
+escribe. Ejemplo:
+
+```text
+uv run python scripts/create_central_db.py --config RUTA\host.json --database RUTA\central.sqlite3
+uv run python scripts/create_central_db.py --config RUTA\host.json --database RUTA\central.sqlite3 --apply
+```
+
+La aplicación y el bootstrap llaman al mismo primitivo
+`create_registered_database`. Esta CLI crea esquema 7 y sus identidades, pero
+no genera secretos, no migra ni elimina bases anteriores y no cambia cursores.
+
 El resultado previsto es:
 
-- `central.sqlite3`, esquema central global, SQLite `user_version=6`, con ambos
+- `central.sqlite3`, esquema central global, SQLite `user_version=7`, con ambos
   flujos de captura y una sola identidad compartida de cuenta/fuentes;
 - `.env.central`, con cinco credenciales de API generadas;
 - `.env.dashboard`, con un token humano generado;
 - `host.json`, metadatos públicos escritos al final como señal de finalización.
 
-Los endpoints `/v1/telemetry` y `/v2/telemetry` conservan sus contratos actuales;
-el número 6 solo identifica el esquema completo del archivo SQLite. El creador
+Los nuevos endpoints descriptivos son `/api/account-state` y
+`/api/trading-events`, con contratos `mt5-account-state-v1` y
+`mt5-trading-events-v1`. El JSON de relay usa la clave `contract` con valores
+`account-state` con `role: snapshot` o `trading-events` con `role: live` o
+`role: activity`. Combinaciones incompatibles se rechazan. El esquema 7 del
+archivo no corresponde a la versión de esos contratos. El creador
 comprueba integridad y foreign keys. En POSIX crea el directorio con
 permisos `700` y los archivos privados con `600`. En Windows limita la ACL al SID
 del usuario actual y `SYSTEM`. No instala MT5 ni configura el relay, dashboard,
@@ -108,8 +128,8 @@ el relay. La cuenta y las fuentes deben coincidir con la configuración actual
 del relay. El instalador registra en la base nueva los IDs que indique: no
 descubre ni verifica automáticamente la configuración real de su relay.
 
-`v2_live_source_id` es una fuente distinta, reservada para un productor v2 live;
-no la confunda con la fuente v1 ni reutilice `v2_activity_source_id`. No cambie
+Use las claves `snapshot_source_id`, `live_source_id` y `activity_source_id`;
+son roles separados dentro de la cuenta compartida. No cambie
 la identidad de una fuente ya vinculada a la outbox del relay. El host JSON no
 contiene tokens.
 
@@ -244,6 +264,20 @@ ACL creada limita acceso al SID del usuario actual y `SYSTEM`.
 Si `uv` no está en PATH, para los comandos posteriores use
 `& "$env:USERPROFILE\.local\bin\uv.exe"` en lugar de `uv`.
 
+Para programar las tareas Windows centrales, use primero la vista previa y
+aplique únicamente tras revisar el destino:
+
+```powershell
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01"
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --apply
+```
+
+El modo predeterminado no instala tareas. La aplicación crea `TradingLab Central
+API` y la tarea de mantenimiento de `central.sqlite3`; el ejecutor de la API es
+`scripts/run_central_api_job.py --data-dir <HOSTDIR>`. No instale ni modifique
+tareas existentes automáticamente. Las tareas antiguas de receptores deben
+revisarse y deshabilitarse manualmente durante el cutover aprobado.
+
 ## 7. Manejo de credenciales
 
 El bootstrap genera cinco tokens para API y un token humano. No los imprime como
@@ -252,8 +286,8 @@ logs, chat o Git. No use `Get-Content`, `cat`, redirecciones a consola ni captur
 para inspeccionar `.env.central` o `.env.dashboard`.
 
 Para integrar el relay existente, transfiera por un canal manual revisado solo
-`CENTRAL_V1_INGEST` y `CENTRAL_V2_ACTIVITY` a las variables correspondientes
-`RELAY_LIVE_CENTRAL_TOKEN` y `RELAY_ACTIVITY_CENTRAL_TOKEN` de su entorno privado.
+`CENTRAL_SNAPSHOT_INGEST`, `CENTRAL_LIVE_INGEST` y `CENTRAL_ACTIVITY_INGEST` a
+las variables centrales correspondientes de su entorno privado.
 Estos nombres son ejemplos: use los nombres `central_token_env` de su topología
 real, que pueden ser distintos. Los valores nunca van dentro del JSON público.
 No sustituya los tokens locales que ya usan los EAs; esos secretos permanecen en

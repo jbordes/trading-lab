@@ -2,7 +2,10 @@
 
 > Este procedimiento crea una base v2 independiente para el piloto anterior.
 > No la utilice para el host remoto ni para la FastAPI central, que usan un solo
-> archivo `central.sqlite3` con esquema global 6. Consulte
+> archivo `central.sqlite3` con esquema global 6. Este procedimiento es histórico;
+> sus comandos de creación, provisión y migración se retiraron y no deben ejecutarse.
+> consulte el [bootstrap remoto vigente](remote-host-setup.md) para esquema 7 y
+> la [guía de cutover](descriptive-api-cutover.md). Consulte
 > [el manual del host remoto](remote-host-setup.md).
 
 El comando portable `scripts/create_telemetry_v2_db.py` crea una base nueva con
@@ -51,7 +54,8 @@ Se crean las tablas e índices actuales sin pasar por migraciones de esquemas vi
 
 No se arranca ningún servicio. El receptor se configura después para usar esta
 ruta, la cuenta y las fuentes. El comando anterior
-`provision_telemetry_v2_db.py` sigue disponible con los mismos argumentos.
+La alternativa `provision_telemetry_v2_db.py` pertenecía a este flujo histórico
+y también fue retirada; no es una CLI disponible.
 
 ## Creación, migración y traslado
 

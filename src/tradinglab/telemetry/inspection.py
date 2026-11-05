@@ -7,12 +7,15 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from tradinglab.telemetry.central_schema import (
+    CENTRAL_SCHEMA_VERSION,
+    DATABASE_NAME,
+    validate_central_schema,
+)
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     parse_envelope,
 )
-from tradinglab.telemetry.provisioning import DATABASE_NAME
-from tradinglab.telemetry.sqlite_store import SCHEMA_VERSION
 
 
 class TelemetryInspectionError(RuntimeError):
@@ -68,8 +71,9 @@ class InspectionPlan:
                 connection.execute("PRAGMA query_only = ON")
                 connection.execute("BEGIN")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version != SCHEMA_VERSION:
+                if version != CENTRAL_SCHEMA_VERSION:
                     raise TelemetryInspectionError("Versión SQLite de TradingLab no admitida")
+                validate_central_schema(connection)
                 if verify:
                     if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                         raise TelemetryInspectionError("La base no pasó la comprobación SQLite")

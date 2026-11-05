@@ -22,11 +22,11 @@ from tradinglab.telemetry.sqlite_store import open_registry
 from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
 
 CENTRAL_KEYS = (
-    "CENTRAL_V1_INGEST",
-    "CENTRAL_V1_READ",
-    "CENTRAL_V2_LIVE",
-    "CENTRAL_V2_ACTIVITY",
-    "CENTRAL_V2_READ",
+    "CENTRAL_SNAPSHOT_INGEST",
+    "CENTRAL_ACCOUNT_READ",
+    "CENTRAL_LIVE_INGEST",
+    "CENTRAL_ACTIVITY_INGEST",
+    "CENTRAL_TRADING_READ",
 )
 
 
@@ -50,18 +50,18 @@ class RemoteHostConfig:
     login_masked: str
     server: str
     currency: str
-    v1_source_id: str
-    v2_live_source_id: str
-    v2_activity_source_id: str
+    snapshot_source_id: str
+    live_source_id: str
+    activity_source_id: str
     port: int = 8781
 
     def __post_init__(self) -> None:
         _ = self.identity  # Validate the complete MT5 identity before any IO.
         for value in (
             self.account_id,
-            self.v1_source_id,
-            self.v2_live_source_id,
-            self.v2_activity_source_id,
+            self.snapshot_source_id,
+            self.live_source_id,
+            self.activity_source_id,
         ):
             if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
                 raise ValueError("Identificador de cuenta o fuente inválido")
@@ -72,7 +72,7 @@ class RemoteHostConfig:
             or not self.label.isprintable()
         ):
             raise ValueError("Etiqueta de cuenta inválida")
-        if len({self.v1_source_id, self.v2_live_source_id, self.v2_activity_source_id}) != 3:
+        if len({self.snapshot_source_id, self.live_source_id, self.activity_source_id}) != 3:
             raise ValueError("Configure tres fuentes distintas")
         if type(self.port) is not int or not 1024 <= self.port <= 65535:
             raise ValueError("Puerto de API inválido (1024..65535)")
@@ -166,8 +166,27 @@ def prepare_host(
         return result
     _private_directory(directory)
     # Failure preserves partial files for inspection; no destructive rollback.
+    create_registered_database(database, config)
+    _write_new(
+        directory / ".env.central",
+        "".join(f"{key}={secrets.token_urlsafe(32)}\n" for key in CENTRAL_KEYS),
+    )
+    _write_new(
+        directory / ".env.dashboard", f"TRADINGLAB_DASHBOARD_TOKEN={secrets.token_urlsafe(32)}\n"
+    )
+    # Written last: launch refuses incomplete preparation. No secrets in this JSON.
+    _write_new(directory / "host.json", json.dumps(asdict(config), indent=2) + "\n")
+    return result
+
+
+def create_registered_database(
+    database: Path, config: RemoteHostConfig, *, clock: datetime | None = None
+) -> None:
+    """Create only the registered database, without secrets, services or migration."""
+    stamp = clock or datetime.now(UTC)
+    if stamp.tzinfo is None or stamp.utcoffset() is None:
+        raise ValueError("La hora del alta debe incluir zona horaria")
     create_central_database(database)
-    stamp = datetime.now(UTC)
     with open_v2_registry(database) as registry:
         registry.register_account(
             config.account_id,
@@ -176,19 +195,19 @@ def prepare_host(
             created_at=stamp,
         )
         registry.register_source(
-            config.v2_live_source_id,
+            config.live_source_id,
             config.account_id,
             ProducerRole.LIVE,
             created_at=stamp,
         )
         registry.register_source(
-            config.v2_activity_source_id,
+            config.activity_source_id,
             config.account_id,
             ProducerRole.ACTIVITY,
             created_at=stamp,
         )
     with open_registry(database) as registry:
-        registry.register_source(config.v1_source_id, config.account_id, created_at=stamp)
+        registry.register_source(config.snapshot_source_id, config.account_id, created_at=stamp)
     with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
         if (
             db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
@@ -201,17 +220,7 @@ def prepare_host(
         if evidence.identity != config.identity or {
             (source.source_id, source.role) for source in evidence.sources
         } != {
-            (config.v2_live_source_id, ProducerRole.LIVE),
-            (config.v2_activity_source_id, ProducerRole.ACTIVITY),
+            (config.live_source_id, ProducerRole.LIVE),
+            (config.activity_source_id, ProducerRole.ACTIVITY),
         }:
             raise RuntimeError("La identidad creada no coincide")
-    _write_new(
-        directory / ".env.central",
-        "".join(f"{key}={secrets.token_urlsafe(32)}\n" for key in CENTRAL_KEYS),
-    )
-    _write_new(
-        directory / ".env.dashboard", f"TRADINGLAB_DASHBOARD_TOKEN={secrets.token_urlsafe(32)}\n"
-    )
-    # Written last: launch refuses incomplete preparation. No secrets in this JSON.
-    _write_new(directory / "host.json", json.dumps(asdict(config), indent=2) + "\n")
-    return result

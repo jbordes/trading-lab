@@ -11,8 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tradinglab.telemetry.provisioning import DATABASE_NAME
-from tradinglab.telemetry.sqlite_store import SCHEMA_VERSION
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, DATABASE_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +26,7 @@ class BackupPlan:
     root: Path
     filename: str
     storage_root: Path | None = None
-    expected_schema_versions: tuple[int, ...] = (SCHEMA_VERSION,)
+    expected_schema_versions: tuple[int, ...] = (CENTRAL_SCHEMA_VERSION,)
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not DATABASE_NAME.fullmatch(self.filename):

@@ -1,5 +1,11 @@
 # Arranque y recuperación de la telemetría MT5
 
+> **Guía histórica del piloto anterior.** Sus rutas receptoras y comandos no
+> describen el contrato descriptivo central en preparación. Para el cambio
+> coordinado, consulte [la guía de cutover](descriptive-api-cutover.md) y el
+> [manual vigente de collectors](mt5-collector-operations.md).
+> Los comandos de supervisor y provisión de este archivo fueron retirados.
+
 El EA `TradingLabTelemetry` captura datos. El **receptor** es el proceso Python
 que acepta esos datos y confirma cada entrega. El **dashboard** consulta al
 receptor y muestra la última muestra. Tener MT5 abierto no arranca los otros dos.

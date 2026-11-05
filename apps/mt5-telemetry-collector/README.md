@@ -1,5 +1,15 @@
 # Collectors de telemetría MT5
 
+## Contrato nuevo en preparación
+
+Esta rama prepara Telemetry `0.3.0` y Activity `activity-0.8.0` para las rutas
+`/api/account-state` y `/api/trading-events`. Requieren el relay y API descriptivos
+y la SQLite central de esquema 7. No son intercambiables con los binarios
+instalados. La guía vigente es el [manual de collectors](../../docs/development/mt5-collector-operations.md)
+y el [corte coordinado](../../docs/development/descriptive-api-cutover.md).
+Los apartados siguientes conservan el contexto del piloto anterior; sus recetas
+de receptores independientes están retiradas y no deben ejecutarse con esta rama.
+
 Estos EAs emiten observaciones desde un terminal MT5 hacia receptores locales.
 No abren, cierran ni modifican operaciones y no aceptan instrucciones remotas.
 

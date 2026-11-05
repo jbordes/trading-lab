@@ -55,21 +55,18 @@ class WindowsTask:
 def task_plan(
     root: Path,
     storage: Path,
-    secrets_file: Path,
     *,
     start_date: date,
 ) -> tuple[WindowsTask, WindowsTask]:
     python = root / ".venv" / "Scripts" / "python.exe"
     receivers = WindowsTask(
-        name="TradingLab Telemetry Receivers",
-        description="Receptores locales read-only de TradingLab; no inicia ni modifica MT5.",
+        name="TradingLab Central API",
+        description="API central de TradingLab sobre una SQLite; no inicia ni modifica MT5.",
         command=python,
         arguments=(
-            str(root / "scripts" / "run_telemetry_receivers_job.py"),
-            "--storage-root",
+            str(root / "scripts" / "run_central_api_job.py"),
+            "--data-dir",
             str(storage),
-            "--secrets-file",
-            str(secrets_file),
         ),
         working_directory=root,
         trigger_xml="<LogonTrigger><Enabled>true</Enabled></LogonTrigger>",

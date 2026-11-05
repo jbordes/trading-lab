@@ -1,9 +1,14 @@
 # Probar dashboard, API central y relay juntos
 
-Estado: la topología local anterior fue verificada. La preparación del host
-remoto usa una sola base SQLite central/esquema 6; ese cambio está en revisión y
-aún no se desplegó en la VPS o Mac. El dashboard se ha observado durante el
-piloto; no se afirma una batería exhaustiva de pruebas UI ni se sustituyen EAs.
+Estado: esta receta describe el contrato HTTP anterior y queda como referencia
+histórica del piloto local. El contrato descriptivo nuevo y esquema 7 están en
+la rama actual, pendientes de integración; consulte [la guía de cutover](descriptive-api-cutover.md).
+No use los comandos de rutas antiguas para configurar el contrato nuevo. Mac no
+está probado ni se afirma una batería exhaustiva de pruebas UI.
+Los argumentos de dashboard basados en `--telemetry`, `--history-v2` y sus
+variantes fueron retirados; las tareas Windows anteriores requieren revisión y
+deshabilitación manual durante un cutover aprobado. No instale ni modifique
+tareas existentes de forma automática.
 
 ```text
 EAs -> relay 8776/8777 -> FastAPI 8781 -> central.sqlite3/esquema 6
@@ -15,8 +20,8 @@ EAs -> relay 8776/8777 -> FastAPI 8781 -> central.sqlite3/esquema 6
 El dashboard solo presenta `CENTRAL_V1_READ` y `CENTRAL_V2_READ` a la API.
 El token humano `TRADINGLAB_DASHBOARD_TOKEN` es distinto de ambos. El diagnóstico
 de captura usa `/v1/health`, autenticado con lectura v1 y sin payloads; `/health`
-continúa público y mínimo. Los receptores legacy siguen en el repo solo para
-compatibilidad y, si se inician, requieren puertos separados.
+continúa público y mínimo. Los antiguos receptores independientes y sus CLIs se
+retiraron; no los inicie mediante estas instrucciones históricas.
 
 ## Preparación
 

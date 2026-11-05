@@ -7,6 +7,12 @@
 **Alcance:** terminales MT5 demo locales previamente aprobadas. Esta guía no
 autoriza cuentas reales ni amplía la guarda de seguridad de los EAs.
 
+> El piloto instalado usa la configuración anterior. El contrato descriptivo
+> y esquema 7 están en la rama actual, pendientes de integración y corte; no aplique los nuevos
+> targets hasta seguir la [guía de cutover](descriptive-api-cutover.md). Los EAs
+> del breaking change son Telemetry `0.3.0` y Activity `activity-0.8.0`, ambos
+> con `#property 1.100`; todavía no son los instalados.
+
 ## 1. Qué hacen los collectors
 
 Los dos Expert Advisors (EAs) leen datos del terminal MT5 y los envían al relay
@@ -29,7 +35,7 @@ la cuenta; duplicar collectors puede producir duplicados y conflictos de fuente.
 
 ```text
 Telemetry v1 ─┐
-              ├─> Relay local :8776/:8777 ─> FastAPI :8781 ─> central.sqlite3 (schema 6)
+              ├─> Relay local :8776/:8777 ─> FastAPI :8781 ─> central.sqlite3 (schema 7)
 Activity v2 ──┘                                       └─> Dashboard :8775 ─> navegador
 ```
 
@@ -37,7 +43,7 @@ El relay mantiene una única cola local para sus dos listeners y reenvía al API
 FastAPI recibe y sirve las lecturas; el dashboard consulta la API. El dashboard
 no lee SQLite por red. La cola del relay tampoco es la base histórica. El piloto
 local anterior usaba archivos v1/v2 independientes; el bootstrap remoto crea el
-archivo unificado central/esquema 6. Cada componente debe usar los recursos
+archivo unificado central/esquema 7 para el contrato nuevo. Cada componente debe usar los recursos
 provisionados para su topología; no se debe crear una cola o base nueva al arrancar.
 
 Los puertos de loopback de este flujo son:
@@ -53,10 +59,11 @@ Los EAs apuntan al relay. El destino central del relay apunta a FastAPI. No
 configure el relay para reenviar a sus propios puertos `8776` o `8777`: eso
 crearía un bucle. Si se parte de
 [`telemetry-relay.example.json`](telemetry-relay.example.json)
-o de otra topología anterior, revise ambos `target` y adáptelos a
-`http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`, respectivamente. No edite el ejemplo
-compartido para configurar el piloto; use la topología local provisionada.
+o de otra topología anterior, tenga en cuenta que los targets del contrato
+nuevo son `http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. No los cambie en una outbox activa
+sin corte aprobado. En la topología JSON nueva `contract` sustituye `version`;
+los valores son `account-state` y `trading-events`.
 
 ## 3. Antes de empezar
 
@@ -80,7 +87,7 @@ Si falta cualquiera de estos elementos, deténgase y siga las guías de preparac
 - [Arranque conjunto de dashboard y API central](central-api-dashboard.md)
 - [Operación local de la API central](central-api-operation.md)
 - [Relay con outbox durable](durable-telemetry-relay.md)
-- [Creación de la base SQLite v5](create-sqlite-v5.md)
+- [Base SQLite central](central-sqlite.md)
 
 La creación de bases, la migración, la actualización de targets de una outbox y
 la instalación en terminales son operaciones distintas. No reutilice una cola o
@@ -106,9 +113,10 @@ los productores son:
 | --- | --- |
 | Token local de Telemetry EA al relay | `RELAY_LIVE_LOCAL_TOKEN` |
 | Token local de Activity EA al relay | `RELAY_ACTIVITY_LOCAL_TOKEN` |
-| Token central del relay para ingesta v1 | `RELAY_LIVE_CENTRAL_TOKEN`, alineado con `CENTRAL_V1_INGEST` |
-| Token central del relay para ingesta v2 Activity | `RELAY_ACTIVITY_CENTRAL_TOKEN`, alineado con `CENTRAL_V2_ACTIVITY` |
-| Token de lectura del dashboard/API | `CENTRAL_V1_READ` y `CENTRAL_V2_READ` |
+| Token central para ingesta snapshot | `CENTRAL_SNAPSHOT_INGEST` |
+| Token central para ingesta live | `CENTRAL_LIVE_INGEST` |
+| Token central para ingesta Activity | `CENTRAL_ACTIVITY_INGEST` |
+| Tokens centrales de lectura | `CENTRAL_ACCOUNT_READ` y `CENTRAL_TRADING_READ` |
 | Token humano de login al dashboard | `TRADINGLAB_DASHBOARD_TOKEN` |
 
 Los tokens locales de Telemetry y Activity son distintos. Los tokens centrales,
@@ -140,7 +148,7 @@ registra automáticamente. Un `SourceId` identifica la fuente; no concede permis
 Arranque los servicios en este orden, usando el checkout y archivos locales que
 ya se usan para el piloto:
 
-1. **FastAPI**, con `central.sqlite3` en esquema global 6, identidades
+1. **FastAPI**, con `central.sqlite3` en esquema global 7, identidades
    provisionadas, credenciales centrales y puerto `8781`.
 2. **Relay**, con la misma outbox y topología provisionadas, sus secretos locales
    y centrales, y ambos listeners `8776` y `8777`. Su topología debe apuntar a
@@ -267,7 +275,7 @@ reducen la captura: se observa la cuenta MT5 completa.
 | `ExpectedDemoLogin` | Login de la demo aprobada | Obligatorio y exacto; no es contraseña. |
 | `ExpectedDemoServer` | Servidor de la demo aprobada | Obligatorio y exacto. |
 
-El input URL de ejemplo puede mostrar `8766`, pero el piloto utiliza `8776`.
+El input URL local de ejemplo puede mostrar `8766`, pero el piloto utiliza `8776`.
 Verifique siempre que la URL termine en `/v1/telemetry` y coincida con la fuente
 provisionada del relay.
 
@@ -433,8 +441,10 @@ los intentos y descartar una muestra (`snapshot_dropped`). Por tanto, la prueba
 no garantiza recuperar todos los snapshots intermedios. En la validación
 supervisada de Juampi ambos flujos volvieron a recibir ACK central y la cola,
 pendientes, rechazos y errores terminaron en cero; Activity no quedó bloqueado.
-No extrapole ese resultado a 401/403, desconexión del broker, carga ni a todas las
-muestras de Telemetry.
+La prueba 401/403 separada está documentada en
+[resiliencia del collector](mt5-collector-resilience.md). El corte no valida la
+desconexión del broker ni garantiza recuperar todos los snapshots intermedios;
+la prueba nativa densa sigue pendiente.
 
 ## 12. Diagnóstico
 
@@ -490,7 +500,7 @@ una compilación revisada.
 - [ ] Relay→API confirmó datos y el dashboard mostró las fuentes previstas.
 - [ ] El corte breve se ejecutó solo si estaba aprobado y se revisaron WARN/RESOLVED.
 - [ ] No se compartieron secretos, presets sensibles, payloads ni cuentas reales.
-- [ ] Se mantienen pendientes las pruebas separadas de 401/403, broker y carga.
+- [ ] Se mantiene pendiente la prueba de desconexión del broker y la prueba nativa densa.
 
 ## Referencias operativas
 

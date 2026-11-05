@@ -24,7 +24,7 @@ def relay_rows(path: Path) -> list[dict[str, str]]:
     if not isinstance(config, list) or not 1 <= len(config) <= 16:
         raise ValueError("Configure una lista de 1..16 productores")
     fields = {
-        "version",
+        "contract",
         "source_id",
         "account_id",
         "role",
@@ -61,7 +61,7 @@ def load_relay_producers(path: Path, environment: Mapping[str, str]) -> tuple[Re
         central_key = environment.get(row["central_token_env"], "")
         producers.append(
             RelayProducer(
-                version=row["version"],
+                contract=row["contract"],
                 source_id=row["source_id"],
                 account_id=row["account_id"],
                 role=ProducerRole(row["role"]),

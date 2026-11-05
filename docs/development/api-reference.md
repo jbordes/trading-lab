@@ -7,36 +7,38 @@ amplían el formato de telemetría y los procedimientos de arranque.
 El piloto local validado usa los collectors MT5 Telemetry `0.2.1` y Activity
 `0.7.1`, que envían únicamente al relay en `127.0.0.1:8776/8777`. Ambos
 listeners comparten proceso, outbox SQLite y worker. El relay reenvía a FastAPI
-en `:8781`; el dashboard local en `:8775` lee la API central. El despliegue
-actual conserva dos archivos SQLite; el cambio a `central.sqlite3`/esquema global
-6 está implementado en la rama de preparación, pero aún requiere revisión,
-merge y despliegue. No está instalado en Mac ni producción y no sustituye EAs de trading.
+en `:8781`; el dashboard local en `:8775` lee la API central. El cambio al
+contrato descriptivo y esquema global 7 está en la rama actual, pendiente
+de revisión y merge. No está instalado en Mac ni producción y no sustituye EAs
+de trading.
 
 La referencia OpenAPI vigente se sirve desde FastAPI: Swagger UI en
 `http://127.0.0.1:8781/docs`, JSON en `/openapi.json` y ReDoc en `/redoc`.
 El [contrato central](../architecture/central-ingestion-api-contract.md) y esta
-página explican uso y topología. Los receptores legacy mantienen `/docs` y
-`/docs.json` (catálogo, no OpenAPI) solo para compatibilidad si un operador los
-inicia por separado; no forman parte de la topología actual ni pueden usar
-puertos ocupados por el relay.
+página explican uso y topología. Los runtimes y CLIs de receptores antiguos se
+retiraron. Algunos catálogos internos `/docs.json` siguen como apoyo de pruebas,
+no representan aliases ni servicios desplegables; las secciones históricas no
+describen endpoints ejecutables actuales.
 
 ## Mapa rápido
 
 La [API central FastAPI](central-api-operation.md) opera localmente en `8781`.
 El relay recibe collectors en `8776/8777` y entrega a esta API; no ofrece
-lecturas. Los receptores legacy solo se usan por separado en modo compatibilidad.
+lecturas. Los endpoints `/api/account-state` y `/api/trading-events` reemplazan
+las rutas de ingesta históricas.
 
 | Servicio | Puerto habitual | Interfaz | Consumidor | Autenticación |
 | --- | ---: | --- | --- | --- |
 | Dashboard | `8775` en el piloto v2 | `/api/*` | navegador autenticado | cookie de sesión |
-| Relay (dos listeners) | `8776`, `8777` | `POST /v1/telemetry`, `POST /v2/telemetry`, `GET /health` | collectors v1/v2 | Bearer local por productor |
-| API central FastAPI | `8781` | ingesta y lecturas v1/v2; OpenAPI | relay y dashboard | Bearer central por productor; READ separadas |
-| Receptores legacy, solo compatibilidad | puertos libres aparte | rutas v1/v2, `/docs`, `/docs.json` | operador/manual | según modo legacy |
+| Relay (dos listeners) | `8776`, `8777` | `POST /v1/telemetry`, `POST /v2/telemetry`, `GET /health` | collectors | Bearer local por productor |
+| API central FastAPI | `8781` | `/api/account-state`, `/api/trading-events`, `/api/accounts/*`, `/api/trading/*` | relay y dashboard | Bearer central por productor; lectura separada |
+| Receptores legacy, retirados | — | rutas históricas; no ejecutar | — | — |
 
-`/health` de FastAPI es público y mínimo; `/v1/health` requiere
-`CENTRAL_V1_READ`. La ingesta central v1 usa `CENTRAL_V1_INGEST`; su lectura,
-`CENTRAL_V1_READ`. Para v2, Activity usa `CENTRAL_V2_ACTIVITY` y las lecturas
-`CENTRAL_V2_READ` (v2 live, si se habilita, usa `CENTRAL_V2_LIVE`). Los tokens
+`/health` de FastAPI es público y mínimo; `/api/accounts/health` requiere
+`CENTRAL_ACCOUNT_READ`. La ingesta de snapshot usa `CENTRAL_SNAPSHOT_INGEST`;
+la ingesta live y Activity usa `CENTRAL_LIVE_INGEST` y
+`CENTRAL_ACTIVITY_INGEST`; las lecturas de trading usan `CENTRAL_TRADING_READ`.
+Los tokens
 locales de EA solo autentican EA→relay y difieren de los centrales relay→API.
 
 Los puertos son configurables. Todas las fechas `*_msc` son enteros en
@@ -198,18 +200,18 @@ Descubre hasta 100 Magic Numbers con ciclos persistidos mediante una consulta
 separada y acotada. No recibe parámetros y evita cargar ciclos completos para
 armar el selector. Requiere sesión del dashboard.
 
-## Ingesta y lecturas v2 de FastAPI
+## Ingesta y lecturas de trading de FastAPI
 
 FastAPI publica estos endpoints centrales en `8781`. El relay del piloto acepta
 el POST local de los collectors en `8776/8777` y reenvía a esta API; el relay no
-expone las lecturas descritas aquí. `CENTRAL_V2_ACTIVITY` es la credencial
-central de ingesta Activity y `CENTRAL_V2_READ` la de lectura.
+expone las lecturas descritas aquí. Las credenciales centrales son
+`CENTRAL_ACTIVITY_INGEST`, `CENTRAL_LIVE_INGEST` y `CENTRAL_TRADING_READ`.
 
-### `POST /v2/telemetry`
+### `POST /api/trading-events`
 
-La API central recibe mensajes `mt5-telemetry-v2` reenviados por el relay.
-Requiere `CENTRAL_V2_ACTIVITY` para Activity (`CENTRAL_V2_LIVE` si se habilita
-el productor live), además de:
+La API central recibe mensajes `mt5-trading-events-v1` reenviados por el relay.
+Requiere `CENTRAL_ACTIVITY_INGEST` para Activity o `CENTRAL_LIVE_INGEST` para
+eventos live, además de:
 
 - `Content-Type: application/json`;
 - `Authorization: Bearer <credencial del productor>`;
@@ -223,13 +225,15 @@ Errores relevantes: `400 invalid_message`, `401 unauthorized`, `403
 source_not_allowed`, `409 idempotency_conflict`, `409 stale_sequence`, `413
 too_large`, `415 content_type`, `503 storage_unavailable`.
 
-El cuerpo completo se define en el
-[contrato de telemetría v2](../architecture/telemetry-v2-contract.md).
+El cuerpo completo del contrato anterior está documentado en el
+[contrato histórico v2](../architecture/telemetry-v2-contract.md). El wire
+actual descriptivo es `mt5-trading-events-v1`; consulte
+[la guía de cutover](descriptive-api-cutover.md).
 
-### `GET /v2/activity`
+### `GET /api/trading/activity`
 
 Consulta el historial durable de actividad. Requiere
-`Authorization: Bearer <CENTRAL_V2_READ>`.
+`Authorization: Bearer <CENTRAL_TRADING_READ>`.
 
 Parámetros:
 
@@ -244,7 +248,7 @@ rangos, Magic Number y cursores se aplica en la capa de persistencia.
 Respuestas principales: `200`, `400 invalid_activity_query`, `401 unauthorized`,
 `503 storage_unavailable`.
 
-### `GET /v2/activity-progress`
+### `GET /api/trading/activity-progress`
 
 Devuelve el último heartbeat durable del productor `activity` que incluya progreso
 de recuperación. No admite parámetros y requiere la credencial de lectura v2.
@@ -260,7 +264,7 @@ Es diagnóstico operativo: no demuestra cobertura completa ni modifica cursores.
 Respuestas principales: `200`, `400 invalid_query`, `401 unauthorized`, `503
 storage_unavailable`.
 
-### `GET /v2/position-cycles`
+### `GET /api/trading/position-cycles`
 
 Consulta ciclos de posición cerrados y reconciliados. Un ciclo agrupa los deals
 de una posición por cuenta y `position_id`, desde su apertura hasta el cierre
@@ -308,7 +312,7 @@ conservarse para auditoría y quedar excluido de las métricas autónomas.
 Respuestas principales: `200`, `400 invalid_position_cycles_query`, `401
 unauthorized`, `503 storage_unavailable`.
 
-### `GET /v2/position-cycle-magics`
+### `GET /api/trading/position-cycle-magics`
 
 Devuelve `{"magics": [...]}` con hasta 100 Magic Numbers distintos existentes
 en la proyección durable. No admite parámetros y requiere la credencial de
@@ -319,33 +323,32 @@ lectura v2.
 Ruta del receptor legacy solamente; no es la ruta de FastAPI, cuyo health
 público mínimo está en `/health` raíz.
 
-## Ingesta y lecturas v1 de FastAPI
+## Ingesta y lecturas de cuenta de FastAPI
 
 FastAPI publica estos endpoints centrales en `8781`. La ingesta usa
-`CENTRAL_V1_INGEST` y las lecturas `CENTRAL_V1_READ`; el token local del EA solo
-se utiliza en la frontera EA→relay. Los receptores legacy se conservan para
-compatibilidad si se inician por separado en puertos libres; sus catálogos
-`/docs` y `/docs.json` no son la fuente vigente de esquemas.
+`CENTRAL_SNAPSHOT_INGEST` y las lecturas `CENTRAL_ACCOUNT_READ`; el token local del EA solo
+se utiliza en la frontera EA→relay. Las rutas y receptores antiguos se retiraron;
+no los inicie por separado ni use sus catálogos históricos como esquema vigente.
 
-### `POST /v1/telemetry`
+### `POST /api/account-state`
 
-La API central recibe mensajes `mt5-telemetry-v1` reenviados por el relay con
-`Authorization: Bearer <CENTRAL_V1_INGEST>` y `Content-Type: application/json`.
+La API central recibe mensajes `mt5-account-state-v1` reenviados por el relay con
+`Authorization: Bearer <CENTRAL_SNAPSHOT_INGEST>` y `Content-Type: application/json`.
 Es idempotente por fuente, sesión, secuencia y evento. Responde `202` al aceptar
 y `200` ante una repetición idéntica.
 
-### `GET /v1/snapshot`
+### `GET /api/accounts/snapshot`
 
 Requiere Bearer y un único `source_id`. Devuelve la última muestra de cuenta de
 esa fuente. Puede responder `404 snapshot_unavailable`.
 
-### `GET /v1/deals`
+### `GET /api/accounts/deals`
 
 Requiere Bearer. Parámetros: `source_id`, `from_msc` y `to_msc` obligatorios;
 `magic_number`, `limit` y `cursor` opcionales. Devuelve `deals` y
 `next_cursor`. Solo está disponible cuando el receptor usa persistencia.
 
-### `GET /v1/account-history`
+### `GET /api/accounts/history`
 
 Requiere Bearer. Parámetros obligatorios: `source_id`, `from_msc` y `to_msc`.
 Lee capturas SQLite existentes de la fuente indicada. El rango máximo es de 366
@@ -353,9 +356,9 @@ días; devuelve hasta 480 puntos con la última observación disponible en bucke
 de al menos un minuto. No preserva extremos ni rellena huecos, y no modifica la
 retención existente.
 
-### `GET /v1/health`
+### `GET /api/accounts/health`
 
-Requiere `CENTRAL_V1_READ`. Publica contadores y salud acotada sin incluir el
+Requiere `CENTRAL_ACCOUNT_READ`. Publica contadores y salud acotada sin incluir el
 último payload. Es la lectura autenticada usada por el dashboard; el `/health`
 raíz de FastAPI es público y mínimo.
 
@@ -367,8 +370,9 @@ en el [spike de telemetría MT5](mt5-telemetry-collector-spike.md).
 El [relay](durable-telemetry-relay.md) recibe ambas rutas POST en los listeners
 locales del piloto (`8776/8777`; la CLI conserva `8780` como puerto genérico
 predeterminado) y expone `GET /health`. Su ACK confirma admisión local en la
-outbox; no equivale al ACK central ni ofrece lecturas. En FastAPI, v1 separa
-`CENTRAL_V1_READ` de `CENTRAL_V1_INGEST`. `TRADINGLAB_V1_READ_TOKEN` es solo
+outbox; no equivale al ACK central ni ofrece lecturas. En FastAPI, las
+credenciales de cuenta/trading separan ingesta de lectura según la
+[guía de cutover](descriptive-api-cutover.md). `TRADINGLAB_V1_READ_TOKEN` es solo
 compatibilidad del receptor legacy, no de la API central.
 
 - JSON usa UTF-8 y las respuestas envían `Cache-Control: no-store`, salvo assets

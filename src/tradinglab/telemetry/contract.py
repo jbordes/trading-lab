@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-SCHEMA_VERSION = "mt5-telemetry-v1"
+SCHEMA_VERSION = "mt5-account-state-v1"
 MAX_BODY_BYTES = 256 * 1024
 MAX_STRING_LENGTH = 512
 MAX_COLLECTION_ITEMS = 1_000

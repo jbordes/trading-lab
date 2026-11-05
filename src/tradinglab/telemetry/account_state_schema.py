@@ -1,6 +1,4 @@
-"""Original v1 schema and message table reused by the unified central schema."""
-
-SCHEMA_VERSION = 1
+"""Account-state message table within the only supported central schema."""
 
 MESSAGES_DDL = """
 CREATE TABLE telemetry_messages (
@@ -25,29 +23,4 @@ CREATE TABLE telemetry_messages (
 ) STRICT;
 CREATE INDEX telemetry_messages_source_capture
 ON telemetry_messages(source_id, captured_at_utc, message_id);
-"""
-
-SCHEMA = f"""
-BEGIN IMMEDIATE;
-CREATE TABLE accounts (
-    account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
-    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 128),
-    server TEXT NOT NULL CHECK(length(server) BETWEEN 1 AND 128),
-    currency TEXT NOT NULL CHECK(length(currency) BETWEEN 1 AND 16),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TABLE sources (
-    source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27)
-) STRICT;
-CREATE TRIGGER sources_no_reassignment
-BEFORE UPDATE OF account_id ON sources
-WHEN NEW.account_id != OLD.account_id
-BEGIN
-    SELECT RAISE(ABORT, 'source account is immutable');
-END;
-{MESSAGES_DDL}
-PRAGMA user_version = {SCHEMA_VERSION};
-COMMIT;
 """

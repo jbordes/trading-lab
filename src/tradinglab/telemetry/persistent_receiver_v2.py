@@ -10,7 +10,7 @@ from pathlib import Path
 from tradinglab.telemetry.admission_v2 import (
     ProducerRegistration,
     ProducerRole,
-    V2ProducerDirectory,
+    TradingEventsProducerDirectory,
 )
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
@@ -45,7 +45,7 @@ class PersistentV2TelemetryReceiver:
             sources = {source.role: source.source_id for source in evidence.sources}
             if set(sources) != {ProducerRole.LIVE, ProducerRole.ACTIVITY}:
                 raise ValueError("La cuenta v2 requiere fuentes live y activity provisionadas")
-            self._directory = V2ProducerDirectory(
+            self._directory = TradingEventsProducerDirectory(
                 (
                     ProducerRegistration(
                         account_id,
@@ -90,7 +90,7 @@ class PersistentV2TelemetryReceiver:
             self._require_open()
             return {
                 "status": "ready",
-                "storage": "sqlite-v2",
+                "storage": "sqlite",
                 "accepted": self._accepted,
                 "duplicates": self._duplicates,
                 "out_of_order": self._out_of_order,

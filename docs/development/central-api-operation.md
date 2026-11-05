@@ -1,20 +1,19 @@
 # API central FastAPI: operación local
 
-Estado: la API local anterior fue validada en Juampi el 5 de noviembre de 2026.
-La variante de archivo único/esquema 6 está implementada en la rama de
-preparación, pero aún no fue mergeada ni desplegada. No sustituye EAs de trading.
+Estado: el piloto local anterior fue validado en Juampi el 5 de noviembre de
+2026. El contrato descriptivo y esquema 7 están en la rama actual, pendientes de
+integración y revisión; no están instalados. No sustituye EAs de trading.
 
-El dashboard admite v1/v2 en el mismo puerto mediante `--central-api-port`.
-Ver [arranque conjunto y pruebas](central-api-dashboard.md). El diagnóstico
-`GET /v1/health` requiere lectura v1 y no expone el snapshot; `/health` permanece
-mínimo y público.
+El dashboard admite las lecturas de cuenta y trading en el mismo puerto mediante
+`--central-api-port`. Ver [arranque conjunto y operación](central-api-dashboard.md).
+`GET /api/accounts/health` requiere credencial de lectura de cuenta; `/health`
+permanece mínimo y público.
 
 ## Qué cambia
 
-El comando `scripts/central_api.py` sirve ingesta y lecturas v1/v2 en un único
-puerto. Ambos contratos usan el mismo archivo SQLite central/esquema 6; FastAPI
-abre un adaptador de almacenamiento por contrato sobre ese archivo. No crea ni
-migra la base durante el arranque.
+El comando `scripts/central_api.py` sirve ingesta y lecturas descriptivas en un
+único puerto. El contrato nuevo usa `central.sqlite3`, esquema global 7 y no
+crea ni migra la base durante el arranque.
 
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
@@ -27,35 +26,32 @@ dependen de esa UI. No se guarda la autorización entre recargas y se desactiva
 el validador externo de Swagger. Los ejemplos son sintéticos: reemplazar fuente,
 identidad y fechas antes de probar una ingesta. Usar un directorio y bases de prueba.
 
-Las rutas `/v1/telemetry`, `/v1/snapshot`, `/v1/deals`, `/v1/account-history`,
-`/v2/telemetry`, `/v2/activity`, `/v2/activity-progress`, `/v2/position-cycles` y
-`/v2/position-cycle-magics` están disponibles con modelos documentados. Los
-receptores legacy y sus catálogos `/docs` y `/docs.json` continúan en el repo
-solo para compatibilidad si se inician en puertos separados. En la topología
-validada, los collectors envían al relay `8776/8777`, éste reenvía a FastAPI
-`8781` y el dashboard `8775` lee FastAPI. No iniciar receptores legacy en esos
-puertos ocupados.
+El contrato nuevo ofrece `POST /api/account-state` y `POST /api/trading-events`,
+además de las lecturas `/api/accounts/*` y `/api/trading/*`. Las rutas antiguas
+y los receptores separados son históricos; no se deben usar como configuración
+del nuevo contrato. En el piloto local validado, los collectors envían al relay
+`8776/8777`, éste reenvía a FastAPI `8781` y el dashboard `8775` lee FastAPI.
 
 ## Preparación
 
 Sincronizar el entorno: `uv sync --locked`. Se usa Python 3.14 y las versiones
 de FastAPI, Pydantic, Uvicorn y herramientas de prueba fijadas en `uv.lock`.
 
-Crear y provisionar una base central/esquema 6 nueva con el bootstrap remoto.
+Crear y provisionar una base central/esquema 7 nueva con el bootstrap remoto.
 Mantenerla en un directorio privado de disco local, fuera de Git y de carpetas
-sincronizadas. La cuenta y las tres fuentes (telemetry-v1, live y activity) deben
-estar registradas. El arranque no convierte las dos bases del piloto anterior.
+sincronizadas. La cuenta y las tres fuentes de estado de cuenta, live y activity
+deben estar registradas. El arranque no convierte las bases del piloto anterior.
 
 Configurar cinco credenciales distintas en el entorno o en un archivo ignorado
 `.env.central`, con asignaciones `NOMBRE=valor`, sin comillas:
 
 | Variable | Uso |
 | --- | --- |
-| `CENTRAL_V1_INGEST` | Productor/relay de estado vivo v1 |
-| `CENTRAL_V1_READ` | Lecturas v1 |
-| `CENTRAL_V2_LIVE` | Productor/relay live v2, si se utiliza |
-| `CENTRAL_V2_ACTIVITY` | Productor/relay de actividad v2 |
-| `CENTRAL_V2_READ` | Lecturas v2 |
+| `CENTRAL_SNAPSHOT_INGEST` | Ingesta de estado de cuenta |
+| `CENTRAL_ACCOUNT_READ` | Lecturas de cuenta |
+| `CENTRAL_LIVE_INGEST` | Ingesta de trading live |
+| `CENTRAL_ACTIVITY_INGEST` | Ingesta de actividad |
+| `CENTRAL_TRADING_READ` | Lecturas de trading |
 
 Todas deben tener 24..256 caracteres ASCII imprimibles sin espacios. Ninguna es
 el token humano del dashboard. Los tokens centrales de ingesta deben coincidir
@@ -103,9 +99,10 @@ no promete que cada etiqueta de error de los handlers antiguos sea idéntica.
 Las garantías de aceptación, idempotencia y tipos de negocio se conservan.
 
 La integración local validada envía el relay a ambos targets:
-`http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`. El ACK central y la persistencia fueron
-confirmados. El despliegue privado remoto, TLS/Tailscale y cualquier operación
+`http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. La verificación de ACK central y
+persistencia para el contrato nuevo queda pendiente de su implementación y
+cutover coordinado. El despliegue privado remoto, TLS/Tailscale y cualquier operación
 con cuentas reales siguen pendientes. Cambiar targets de una cola existente
 exige un corte planificado porque están vinculados a la identidad del stream.
 No reutilizar la cola operativa a ciegas.

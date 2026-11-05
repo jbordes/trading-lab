@@ -32,6 +32,62 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RemoteHostTests(unittest.TestCase):
+    def test_scheduled_job_launches_only_prepared_central_api_and_records_result(self) -> None:
+        self.directory.mkdir()
+        (self.directory / "host.json").write_text("{}", encoding="utf-8")
+        module = runpy.run_path(str(ROOT / "scripts/run_central_api_job.py"))
+        for code in (0, 7):
+            with (
+                self.subTest(code=code),
+                patch("tradinglab.telemetry.operational_job.run_logged", return_value=code) as run,
+            ):
+                self.assertEqual(module["main"](["--data-dir", str(self.directory)]), code)
+                command = run.call_args.args[0]
+                self.assertEqual(
+                    command,
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts/run_remote_host.py"),
+                        "--data-dir",
+                        str(self.directory),
+                    ],
+                )
+                status = json.loads(
+                    (self.directory / "operations/central-api-status.json").read_text()
+                )
+                self.assertEqual(status["state"], "succeeded" if code == 0 else "failed")
+
+    def test_old_storage_versions_are_rejected_without_migration(self) -> None:
+        self.prepare()
+        database = self.directory / "central.sqlite3"
+        for version in (1, 3, 4, 5, 6):
+            with self.subTest(version=version):
+                with closing(sqlite3.connect(database)) as connection:
+                    connection.execute(f"PRAGMA user_version = {version}")
+                    connection.commit()
+                before = database.read_bytes()
+                with self.assertRaises(TelemetryStorageError), open_registry(database):
+                    self.fail("No admite esquemas anteriores")
+                with self.assertRaises(V2StorageError), open_v2_registry(database):
+                    self.fail("No admite esquemas anteriores")
+                self.assertEqual(database.read_bytes(), before)
+
+    def test_database_only_cli_previews_creates_and_refuses_overwrite(self) -> None:
+        config = self.directory.parent / "config.json"
+        config.write_text(json.dumps(asdict(self.config)), encoding="utf-8")
+        database = self.directory.parent / "central.sqlite3"
+        module = runpy.run_path(str(ROOT / "scripts/create_central_db.py"))
+        arguments = ["--config", str(config), "--database", str(database)]
+        self.assertEqual(module["main"](arguments), 0)
+        self.assertFalse(database.exists())
+        self.assertEqual(module["main"]([*arguments, "--apply"]), 0)
+        with open_registry(database), open_v2_registry(database):
+            pass
+        before = database.read_bytes()
+        self.assertEqual(module["main"]([*arguments, "--apply"]), 1)
+        self.assertEqual(database.read_bytes(), before)
+        self.assertFalse((database.parent / ".env.central").exists())
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -81,14 +137,14 @@ class RemoteHostTests(unittest.TestCase):
             self.assertEqual(
                 db.execute(
                     "SELECT role FROM sources WHERE source_id = ?",
-                    (self.config.v1_source_id,),
+                    (self.config.snapshot_source_id,),
                 ).fetchone()[0],
-                "telemetry-v1",
+                "snapshot",
             )
         with open_registry(database) as registry:
             self.assertFalse(
                 registry.register_source(
-                    self.config.v1_source_id,
+                    self.config.snapshot_source_id,
                     self.config.account_id,
                     created_at=datetime.now(UTC),
                 )
@@ -161,7 +217,7 @@ class RemoteHostTests(unittest.TestCase):
             '{"port": 8781, "port": 8782}',
             "[]",
             json.dumps({**asdict(self.config), "command": "not-allowed"}),
-            json.dumps({**asdict(self.config), "v1_source_id": "../unsafe"}),
+            json.dumps({**asdict(self.config), "snapshot_source_id": "../unsafe"}),
         ):
             path.write_text(content)
             with self.subTest(content=content), self.assertRaises(ValueError):
@@ -169,7 +225,7 @@ class RemoteHostTests(unittest.TestCase):
         for changes in (
             {"server": "REEMPLAZAR-SERVIDOR"},
             {"port": True},
-            {"v1_source_id": self.config.v2_activity_source_id},
+            {"snapshot_source_id": self.config.activity_source_id},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 replace(self.config, **changes)
@@ -200,7 +256,7 @@ class RemoteHostTests(unittest.TestCase):
         self.prepare()
         settings = CentralSettings(
             self.directory / "central.sqlite3",
-            self.config.v1_source_id,
+            self.config.snapshot_source_id,
             self.config.account_id,
             *(f"synthetic-central-credential-{i}" for i in range(5)),
             allowed_hosts=("localhost", "127.0.0.1", "mac.example.ts.net"),
@@ -235,7 +291,7 @@ class RemoteHostTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.directory.exists())
-        self.assertNotIn("CENTRAL_V1_INGEST=", result.stdout + result.stderr)
+        self.assertNotIn("CENTRAL_SNAPSHOT_INGEST=", result.stdout + result.stderr)
 
     def test_launcher_only_passes_private_files_and_allowed_host_to_central_cli(self) -> None:
         self.prepare()

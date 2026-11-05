@@ -1,19 +1,25 @@
-"""Single-file SQLite schema for the central API's v1 and v2 contracts."""
+"""Single SQLite schema for account-state and trading-event observations."""
 
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from pathlib import Path
 
-from tradinglab.telemetry.schema_v1 import MESSAGES_DDL
-from tradinglab.telemetry.schema_v2 import build_schema, expected_schema_objects, schema_objects
+from tradinglab.telemetry.account_state_schema import MESSAGES_DDL
+from tradinglab.telemetry.trading_events_schema import (
+    build_schema,
+    expected_schema_objects,
+    schema_objects,
+)
 
-CENTRAL_SCHEMA_VERSION = 6
+CENTRAL_SCHEMA_VERSION = 7
+DATABASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.sqlite3\Z")
 
 CENTRAL_SCHEMA = build_schema(
     version=CENTRAL_SCHEMA_VERSION,
-    source_roles_sql="'live', 'activity', 'telemetry-v1'",
+    source_roles_sql="'live', 'activity', 'snapshot'",
     extra_tables=MESSAGES_DDL,
 )
 

@@ -51,17 +51,31 @@ instalaciones, tests nativos ni benchmarks.
   prohibidas por SQLite, con 0 y 128 registros; cuenta/fuentes y autorización
   preservadas, y hash corrupto aún rechazado por auditoría. `fast` correcto.
 
-### PY02 — Lecturas de actividad comparten lock con el ingreso
+### PY02 — Lecturas de actividad compartían lock con el ingreso
 
 - **Prioridad:** alta. **Ubicación:** `persistent_receiver_v2.py`, rutas
   `activity_history` y `position_cycles`.
-- Lecturas comparten `RLock` con accept/state; una consulta puede retenerlo y
-  retrasar ingreso/health. Contención posible confirmada; duración no medida.
-  No confundir con `account_history` de snapshots, que ya tiene lector separado.
-- **Propuesta:** lector read-only acotado con transacción consistente para página
-  y cobertura, deadline/admisión explícitos y escrituras atómicas sin cambios.
-- **Aceptación:** lectura lenta no retiene lock escritor; página/cobertura son
-  consistentes.
+- **Estado:** implementado; CI y merge humano pendientes.
+- **Hallazgo de base:** las rutas compartían `RLock` con accept/state, por lo que
+  una consulta podía retrasar ingreso/health. Esta contención en memoria se ha
+  eliminado; no se promete eliminar toda contención interna de SQLite.
+- **Cambio:** `activity_history`, `position_cycles`, `activity_progress` y
+  `position_cycle_magics` usan lectores SQLite independientes `mode=ro` y
+  `query_only`. La página y su coverage comparten una transacción snapshot por
+  solicitud, no un snapshot global entre páginas. Se admiten como máximo dos
+  lecturas concurrentes; admisión sin espera. Presupuesto cooperativo de 2 s,
+  progreso SQL cada 1000 operaciones con chequeos antes/después del procesamiento
+  Python y espera de locks SQLite de hasta 0.1 s. El código Python no se
+  interrumpe instantáneamente ni ofrece límite de tiempo real.
+- **Saturación/fallo:** se devuelve `V2StorageError` y HTTP 503
+  `storage_unavailable` según el contrato existente, nunca una respuesta parcial.
+  Cada lector cierra conexión y libera cupo incluso ante fallos; lectores ya
+  admitidos pueden terminar al cerrar el receptor y nuevas consultas se rechazan.
+  El ingreso conserva escritura atómica y ACK tras commit.
+- **Evidencia dirigida:** 59 pruebas en `test_telemetry_v2_readers`,
+  `test_telemetry_v2_sqlite`, `test_central_api` y
+  `test_telemetry_v2_persistent_http`; 8 nuevas se repitieron tras el ajuste
+  final. `fast` correcto; no se ejecutó `full` local.
 
 ### PY03 — Parseo de snapshot repetido en varias fronteras
 
@@ -174,7 +188,7 @@ configuración/secretos, backup, jobs, bootstrap, CLI y harness/tests.
 
 Orden propuesto, no aprobación de implementación:
 
-1. PY01 queda guardado; priorizar PY02 y PY06 con tests dirigidos y contrato
+1. PY01 y PY02 quedan guardados; priorizar PY06 con tests dirigidos y contrato
    explícito de deduplicación.
 2. MQ01 y MQ02 antes de instalar en cuenta con historial denso.
 3. PY03, PY04 y PY07.

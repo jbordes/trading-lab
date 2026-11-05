@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     V2CoverageReport,
     V2PositionCyclePage,
     V2StorageError,
+    V2TelemetryRegistry,
+    open_v2_history_reader,
     open_v2_registry,
 )
 
@@ -37,8 +40,10 @@ class PersistentV2TelemetryReceiver:
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._account_id = account_id
+        self._database = database.resolve(strict=True)
         self._lock = threading.RLock()
-        self._context = open_v2_registry(database, cross_thread=True)
+        self._history_admission = threading.BoundedSemaphore(2)
+        self._context = open_v2_registry(self._database, cross_thread=True)
         self._registry = self._context.__enter__()
         try:
             registration = self._registry.account_registration(account_id)
@@ -107,11 +112,10 @@ class PersistentV2TelemetryReceiver:
         limit: int = 50,
         cursor: str | None = None,
     ) -> tuple[V2ActivityPage, V2CoverageReport]:
-        """Read one page and its coverage without interleaving a write."""
+        """Read page and coverage from one snapshot without holding the writer lock."""
 
-        with self._lock:
-            self._require_open()
-            page = self._registry.activity_page(
+        with self._history_reader() as registry:
+            page = registry.activity_page(
                 self._account_id,
                 entity_type,
                 from_msc=from_msc,
@@ -120,7 +124,7 @@ class PersistentV2TelemetryReceiver:
                 limit=limit,
                 cursor=cursor,
             )
-            coverage = self._registry.coverage_report(
+            coverage = registry.coverage_report(
                 self._account_id,
                 entity_type,
                 from_msc=from_msc,
@@ -143,9 +147,8 @@ class PersistentV2TelemetryReceiver:
     ) -> V2PositionCyclePage:
         """Read a bounded page of durable position cycles."""
 
-        with self._lock:
-            self._require_open()
-            return self._registry.position_cycles(
+        with self._history_reader() as registry:
+            return registry.position_cycles(
                 self._account_id,
                 owner_magic=owner_magic,
                 owner_magics=owner_magics,
@@ -159,14 +162,24 @@ class PersistentV2TelemetryReceiver:
             )
 
     def activity_progress(self) -> V2ActivityProgress | None:
-        with self._lock:
-            self._require_open()
-            return self._registry.latest_activity_progress(self._account_id)
+        with self._history_reader() as registry:
+            return registry.latest_activity_progress(self._account_id)
 
     def position_cycle_magics(self) -> tuple[str, ...]:
+        with self._history_reader() as registry:
+            return registry.position_cycle_magics(self._account_id)
+
+    @contextmanager
+    def _history_reader(self) -> Iterator[V2TelemetryRegistry]:
         with self._lock:
             self._require_open()
-            return self._registry.position_cycle_magics(self._account_id)
+            if not self._history_admission.acquire(blocking=False):
+                raise V2StorageError("Hay demasiadas consultas históricas simultáneas")
+        try:
+            with open_v2_history_reader(self._database) as registry:
+                yield registry
+        finally:
+            self._history_admission.release()
 
     def close(self) -> None:
         with self._lock:

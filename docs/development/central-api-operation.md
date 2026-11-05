@@ -22,6 +22,18 @@ de hashes y sus validaciones, y puede leer la evidencia histórica. El snapshot
 actual sí puede leerse en el arranque. No cambian el esquema 7 ni la regla de no
 migrar automáticamente.
 
+Las consultas de actividad usan lectores SQLite independientes en modo de solo
+lectura. Las lecturas admitidas comparten una transacción consistente entre
+página y coverage dentro de cada solicitud, no entre páginas. Se admiten hasta
+dos a la vez sin esperar en cola; el límite cooperativo es de 2 s, con progreso
+SQL cada 1000 operaciones y espera de locks SQLite de hasta 0.1 s. No es una
+interrupción instantánea ni elimina toda contención SQLite. Si se satura o vence
+el presupuesto, la API devuelve el error existente `503 storage_unavailable`,
+nunca datos parciales. El lector cierra su conexión y libera cupo incluso ante
+fallos; durante el cierre del receptor las consultas ya admitidas pueden
+terminar y las nuevas se rechazan. El ingreso mantiene escritura atómica y ACK
+posterior al commit.
+
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
 - `http://127.0.0.1:8781/redoc`: referencia alternativa.

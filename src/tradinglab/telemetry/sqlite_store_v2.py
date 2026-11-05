@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1213,14 +1214,15 @@ class V2TelemetryRegistry:
             raise
 
 
-@contextmanager
-def open_v2_registry(
+def _open_v2_connection(
     path: Path,
     *,
     cross_thread: bool = False,
     read_only: bool = False,
-) -> Iterator[V2TelemetryRegistry]:
-    """Open the exact central schema without creating or migrating it."""
+    timeout_seconds: float = 5.0,
+    deadline: float | None = None,
+) -> sqlite3.Connection:
+    """Open and validate one owned connection without creating or migrating it."""
 
     if path.suffix != ".sqlite3":
         raise ValueError("La base debe usar extensión .sqlite3")
@@ -1230,9 +1232,12 @@ def open_v2_registry(
         connection = sqlite3.connect(
             resolved.as_uri() + ("?mode=ro" if read_only else "?mode=rw"),
             uri=True,
-            timeout=5.0,
+            timeout=timeout_seconds,
             check_same_thread=not cross_thread,
         )
+        if deadline is not None:
+            connection.execute("PRAGMA query_only = ON")
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         connection.execute("PRAGMA foreign_keys = ON")
         if not read_only:
             connection.execute("PRAGMA synchronous = FULL")
@@ -1248,7 +1253,56 @@ def open_v2_registry(
         if connection is not None:
             connection.close()
         raise
+    return connection
+
+
+@contextmanager
+def open_v2_registry(
+    path: Path,
+    *,
+    cross_thread: bool = False,
+    read_only: bool = False,
+) -> Iterator[V2TelemetryRegistry]:
+    """Open the exact central schema without creating or migrating it."""
+
+    connection = _open_v2_connection(path, cross_thread=cross_thread, read_only=read_only)
     try:
         yield V2TelemetryRegistry(connection)
     finally:
+        connection.close()
+
+
+@contextmanager
+def open_v2_history_reader(
+    path: Path, *, timeout_seconds: float = 2.0
+) -> Iterator[V2TelemetryRegistry]:
+    """Own an isolated read-only snapshot with a cooperative query deadline."""
+
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not 0 < timeout_seconds <= 30
+    ):
+        raise ValueError("El plazo de lectura debe estar entre 0 y 30 segundos")
+    deadline = time.monotonic() + timeout_seconds
+    connection = _open_v2_connection(
+        path,
+        read_only=True,
+        timeout_seconds=min(0.1, timeout_seconds),
+        deadline=deadline,
+    )
+    try:
+        if time.monotonic() >= deadline:
+            raise V2StorageError("La consulta histórica superó el plazo seguro")
+        connection.execute("BEGIN")
+        yield V2TelemetryRegistry(connection)
+        if time.monotonic() >= deadline:
+            raise V2StorageError("La consulta histórica superó el plazo seguro")
+        connection.commit()
+    except sqlite3.Error as exc:
+        raise V2StorageError(
+            "No se pudo completar la lectura histórica dentro del plazo seguro"
+        ) from exc
+    finally:
+        connection.set_progress_handler(None, 0)
         connection.close()

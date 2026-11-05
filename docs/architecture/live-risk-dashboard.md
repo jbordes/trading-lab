@@ -19,7 +19,7 @@ El Excel deja de ser el producto prioritario. Podrá reaparecer como exportació
 ## Flujo vigente del piloto
 
 ```text
-Telemetry v1 + Activity v2 -> relay local 8776/8777 -> FastAPI 8781 -> SQLite local
+Telemetry v1 + Activity v2 -> relay local 8776/8777 -> FastAPI 8781 -> central.sqlite3
                                                         ^
                                                         |
                                                  dashboard 8775
@@ -156,12 +156,12 @@ El piloto captura desde ahora las observaciones directas disponibles, pero no pr
 
 ## Estado y persistencia
 
-- V1 persiste observaciones de cuenta en SQLite. Los buffers de lectura son
+- V1 persiste observaciones de cuenta en la SQLite central. Los buffers de lectura son
   acotados y descartables; no sustituyen ese historial persistido.
-- V2 persiste en SQLite mensajes, cobertura, deals, órdenes y ciclos de posición.
+- V2 persiste en el mismo archivo los mensajes, cobertura, deals, órdenes y ciclos de posición.
   SQLite es la fuente de verdad local del historial piloto.
 - El diagnóstico MT5 puede seguir generando evidencia inmutable bajo `_storage/`.
-- Las proyecciones de ciclos y los índices de consulta ya existen en SQLite v2.
+- Las proyecciones de ciclos y los índices de consulta forman parte del esquema central 6.
   Una caché futura será acotada; no habrá una proyección histórica ilimitada en RAM.
 - PostgreSQL y TimescaleDB no forman parte del piloto; requieren evidencia de
   concurrencia, volumen o centralización.

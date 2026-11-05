@@ -8,8 +8,13 @@ automáticamente firewall, servicios, Tailscale ni suspensión del sistema.
 
 El piloto actual validado es local: los collectors envían al relay durable y este
 reenvía a FastAPI y SQLite. El setup del host remoto prepara una API central en
-loopback y bases nuevas. No demuestra todavía un piloto extremo a extremo por
+loopback y una base nueva. No demuestra todavía un piloto extremo a extremo por
 Tailscale ni una migración de datos operativos.
+
+La estructura unificada y el esquema global 6 se describen en la guía de
+[SQLite de la API central](central-sqlite.md) y siguen el
+[ADR-0020](../adr/0020-single-central-sqlite-database.md), que reemplaza la
+decisión inicial de dos archivos del ADR-0019.
 
 No se han confirmado instalaciones reales de este procedimiento en Mac o Linux.
 La validación Python disponible es en Windows; las instalaciones manuales en los
@@ -37,19 +42,21 @@ el `PATH`. Luego prepara Python 3.14 y dependencias bloqueadas mediante
 `scripts/prepare_remote_host.py`.
 
 El núcleo portable valida el JSON de configuración. Sin `--apply` muestra una
-vista previa y no modifica archivos; con `--apply` crea las bases y credenciales
+vista previa y no modifica archivos; con `--apply` crea la base y credenciales
 locales. La vista previa del wrapper de instalación no valida todo el JSON: la
 validación completa ocurre en el núcleo cuando se aplica.
 
 El resultado previsto es:
 
-- `central-v1.sqlite3`, esquema v1;
-- `central-v2.sqlite3`, esquema v2, SQLite `user_version=5`;
+- `central.sqlite3`, esquema central global, SQLite `user_version=6`, con ambos
+  flujos de captura y una sola identidad compartida de cuenta/fuentes;
 - `.env.central`, con cinco credenciales de API generadas;
 - `.env.dashboard`, con un token humano generado;
 - `host.json`, metadatos públicos escritos al final como señal de finalización.
 
-El creador comprueba integridad y foreign keys. En POSIX crea el directorio con
+Los endpoints `/v1/telemetry` y `/v2/telemetry` conservan sus contratos actuales;
+el número 6 solo identifica el esquema completo del archivo SQLite. El creador
+comprueba integridad y foreign keys. En POSIX crea el directorio con
 permisos `700` y los archivos privados con `600`. En Windows limita la ACL al SID
 del usuario actual y `SYSTEM`. No instala MT5 ni configura el relay, dashboard,
 servicios del sistema, firewall, suspensión, Tailscale o reglas de red.
@@ -98,7 +105,7 @@ cp -i docs/development/remote-host.example.json "$HOME/remote-host.json"
 Edite la copia y sustituya `REEMPLAZAR-SERVIDOR` por el nombre de servidor MT5
 exacto. `login_masked` debe coincidir con la forma enmascarada que ya registra
 el relay. La cuenta y las fuentes deben coincidir con la configuración actual
-del relay. El instalador registra en las bases nuevas los IDs que indique: no
+del relay. El instalador registra en la base nueva los IDs que indique: no
 descubre ni verifica automáticamente la configuración real de su relay.
 
 `v2_live_source_id` es una fuente distinta, reservada para un productor v2 live;
@@ -440,7 +447,7 @@ consume la API del Mac. En este incremento priorice la API y SQLite y compruebe 
 health desde la VPS; el recorrido remoto completo API/relay/dashboard corresponde
 a una validación posterior.
 
-Las bases del host comienzan vacías. No reinician cursores MT5, no migran datos y
+La base del host comienza vacía. No reinicia cursores MT5, no migra datos y
 no generan un backfill histórico automáticamente. Mantenga las bases, cursores,
 identidades y outbox actuales intactos hasta que haya un plan de traslado y
 reconciliación aprobado.

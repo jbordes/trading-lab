@@ -9,7 +9,7 @@ Este documento conserva el plan fechado del 29 de octubre; no es el estado
 operativo actual ni requiere otro OK global para continuar el trabajo aprobado.
 Captura v1, actividad/ciclos v2, recuperación reanudable, consultas paginadas y
 métricas de memoria acotada están implementadas en el piloto local. El flujo
-Telemetry/Activity → relay durable → FastAPI → SQLite v1/v2 schema 5 → dashboard
+Telemetry/Activity → relay durable → FastAPI → central.sqlite3 schema 6 → dashboard
 también está implementado y probado localmente. Los cambios locales todavía
 requieren revisión humana y CI; no se afirma su merge.
 
@@ -46,9 +46,11 @@ destructiva o despliegue requerirán sus ADR antes de activarse.
 
 ## Estado de partida y límites
 
-El piloto documentado utiliza receptores v1 y v2, bases separadas y un dashboard
-arrancados por un supervisor común. V1 aporta el estado vivo; v2 conserva actividad
-y ciclos. El supervisor administra sus procesos Python, no la terminal MT5.
+El piloto utiliza receptores v1 y v2 bajo un supervisor común. V1 aporta el estado
+vivo; v2 conserva actividad y ciclos. La API central persiste ambos flujos en un
+único archivo SQLite/esquema 6; los receptores independientes documentados en la
+guía anterior son herramientas del piloto aislado. El supervisor administra sus
+procesos Python, no la terminal MT5.
 El collector de actividad ya dispone de ventanas, solapamiento, cursor y
 confirmación: ampliar ese mecanismo antes de introducir otro recolector.
 

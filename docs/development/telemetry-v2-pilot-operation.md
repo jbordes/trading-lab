@@ -1,5 +1,11 @@
 # Operación del piloto de recuperación histórica v2
 
+> Guía histórica del piloto con bases independientes. La topología de FastAPI
+> usa `central.sqlite3` (esquema global 6) para v1 y v2. Prepare el host remoto
+> con [su manual](remote-host-setup.md); no use esta guía para ese bootstrap.
+> `run_telemetry_maintenance.py` ahora respalda únicamente una base central; el
+> mantenimiento antiguo de dos archivos requiere el código de su piloto original.
+
 Este procedimiento mantiene el estado vivo actual en v1 y obtiene el historial
 recuperable mediante `TradingLabActivity` y SQLite v2. Solo se usa en la terminal
 demo Juampi. No modificar ni instalarlo en la terminal del socio.

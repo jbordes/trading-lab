@@ -3,7 +3,7 @@
 ## Resumen vigente — 5 de noviembre de 2026
 
 El piloto local demo ya tiene captura separada para estado vivo (v1) y actividad
-histórica/ciclos (v2), persistencia SQLite v5, recuperación histórica reanudable,
+histórica/ciclos (v2), persistencia SQLite central esquema 6, recuperación histórica reanudable,
 consultas paginadas y métricas con memoria acotada. FastAPI, relay durable y
 logging de collectors están integrados y validados localmente, incluido un corte
 breve del relay. Los cambios locales aún requieren revisión y CI; este resumen no

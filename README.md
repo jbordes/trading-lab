@@ -79,11 +79,13 @@ configuración central con `--central-api-port`, y la aplicación no descubre te
 El modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
 descrito debajo utiliza el puerto `8775`.
 
-El flujo MT5 central del piloto utiliza collectors de solo lectura en cuentas
-demo aprobadas:
+La arquitectura objetivo del piloto MT5 utiliza collectors de solo lectura en
+cuentas demo aprobadas. El piloto local actualmente desplegado aún conserva los
+dos archivos SQLite previos; el PR de plataforma remota los reemplaza por un
+archivo central/esquema 6 antes del despliegue en la Mac:
 
 ```text
-EAs -> relay local 8776/8777 -> FastAPI 8781 -> SQLite v1 + v2 (schema 5)
+EAs -> relay local 8776/8777 -> FastAPI 8781 -> central.sqlite3 (schema 6)
                                             -> dashboard local 8775
 ```
 

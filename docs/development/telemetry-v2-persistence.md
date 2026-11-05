@@ -1,4 +1,8 @@
-# Persistencia y composición aisladas de telemetría v2
+# Persistencia v2 del piloto aislado
+
+> Esta implementación conserva el esquema v2 independiente para pruebas del
+> piloto anterior. La FastAPI central y el bootstrap remoto usan el esquema
+> unificado 6 en `central.sqlite3`; consulte [ADR-0020](../adr/0020-single-central-sqlite-database.md).
 
 **Estado:** activo como piloto local opt-in; la migración a esquema 4 está
 implementada en código pero todavía no fue aplicada a la base de Juampi.

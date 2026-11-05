@@ -8,8 +8,10 @@
 
 El piloto local ya ejecuta los collectors Telemetry `0.2.1` y Activity
 `activity-0.7.1`, una outbox durable con listeners `8776/8777`, FastAPI `8781`,
-SQLite v1 y v2/esquema 5 y el dashboard `8775` con sesión humana y lecturas por
-API. Los cuatro scripts nativos pasaron en Juampi y se validó un corte breve del
+el dashboard `8775` y el modelo previo de dos archivos SQLite. El PR #64 prepara
+el cambio a una sola `central.sqlite3`/esquema 6 para el host remoto; aún requiere
+CI, revisión humana y prueba supervisada antes de reemplazar el modelo local.
+Los cuatro scripts nativos pasaron en Juampi y se validó un corte breve del
 relay con logging. La infraestructura de jobs está definida, pero no se afirma
 que esté activada.
 
@@ -37,7 +39,7 @@ probadas en el piloto local; la instalación vigente se describe en
 [credenciales y permisos](credential-management-plan.md) sigue pendiente.
 
 El piloto remoto alojará API, backend y
-SQLite v5 en una Mac conectada privadamente con la VPS. La base permanecerá en
+SQLite central/esquema 6 en una Mac conectada privadamente con la VPS. La base permanecerá en
 disco local junto al backend; nunca se abrirá SQLite mediante una carpeta de red.
 
 La implementación conservará receptores locales en la VPS y añadirá transporte
@@ -98,9 +100,10 @@ validación local conocidas; no afirman merge o CI de una rama o PR.
 **Paso 1 implementado localmente:** [contrato central](../architecture/central-ingestion-api-contract.md),
 ingesta, lecturas y documentación OpenAPI. API central probada localmente.
 
-**Paso 2 implementado localmente:** [creación limpia SQLite v5](create-sqlite-v5.md),
-con vista previa, aplicación explícita y destino local fuera del checkout. No
-implica creación o traslado de una base operativa remota.
+**Paso 2 implementado localmente:** bootstrap de la [base central SQLite esquema 6](central-sqlite.md)
+con vista previa, aplicación explícita y destino local fuera del checkout,
+documentado en [preparación del host remoto](remote-host-setup.md). No implica
+creación o traslado de una base operativa remota.
 
 **Paso 3 implementado y activado en el piloto local:** [relay y outbox durable](durable-telemetry-relay.md),
 integrados con los dos EAs y FastAPI. El traslado de API y SQLite a la Mac sigue
@@ -113,15 +116,18 @@ conocido; el despliegue remoto no se da por hecho.
 1. **Contrato central y seguridad — implementado localmente.** Delimitar ingesta v1/v2, ACK durable,
    autenticación por productor, límites y lecturas del dashboard. No exponer
    operaciones genéricas de baja o modificación a los collectors.
-2. **Creación limpia de SQLite v5 — implementado localmente.** Proveer un comando portable que cree una base
-   nueva, registre cuenta y fuentes, y nunca sobrescriba un destino existente.
+2. **Creación limpia de la base central SQLite esquema 6 — implementado localmente.**
+   El bootstrap portable crea una base nueva, registra cuenta y fuentes, y no
+   sobrescribe un destino existente. Ver [SQLite central](central-sqlite.md) y
+   [preparación del host](remote-host-setup.md).
 3. **Relay y outbox durable — implementado en el piloto local.** Mantener los EAs en loopback y reenviar desde la VPS
    con idempotencia, reintentos, backoff y confirmación central.
 4. **Servicio piloto en la Mac — pendiente.** Ejecutar API y SQLite juntas, usar conectividad
    privada y evitar suspensión o exposición pública accidental.
    La [preparación portable del host](remote-host-setup.md) y el
-   [ADR-0019](../adr/0019-private-remote-host-bootstrap.md) agregan bootstrap para
-   Mac/Linux/Windows, bases nuevas y el procedimiento Tailscale VPS → API.
+   [ADR-0019](../adr/0019-private-remote-host-bootstrap.md) y
+   [ADR-0020](../adr/0020-single-central-sqlite-database.md) agregan bootstrap para
+   Mac/Linux/Windows, una base central nueva y el procedimiento Tailscale VPS → API.
    No equivalen a instalación nativa ni enlace remoto ya validados.
 5. **Validación extremo a extremo — parcial.** Probar cortes, reinicios, ACK perdido,
    duplicados, recuperación, atraso y reconciliación de conteos.
@@ -130,9 +136,10 @@ conocido; el despliegue remoto no se da por hecho.
 7. **Cierre del programa — pendiente.** Revisar seguridad y robustez, retirar la excepción de
    ramas, actualizar documentación vigente y abrir el PR final hacia `main`.
 
-Para el primer piloto se prefiere una base v5 vacía porque los datos actuales son
-de prueba. La herramienta de traslado se implementará antes de conectar una base
-que deba conservarse.
+Para el primer piloto remoto se prefiere una base central esquema 6 vacía porque
+los datos actuales son de prueba. Antes de conectar una base con datos que deban
+preservarse se requiere un traslado verificable y planificado; no se asume que el
+bootstrap migre datos ni reconcilie cursores.
 
 ## Gates
 

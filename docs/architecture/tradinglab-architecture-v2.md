@@ -123,8 +123,9 @@ al navegador salvo el token humano durante el login local.
 
 La [separación de collectors](collector-responsibilities.md) distingue estado vivo
 y actividad histórica sobre la terminal actual, sin requerir una terminal
-observadora adicional. Telemetry v1 y Activity v2, la admisión por rol, las bases
-separadas y los ciclos durables ya están implementados en el piloto. La
+observadora adicional. Telemetry v1 y Activity v2 mantienen contratos de captura
+distintos y persisten en una SQLite central compartida con esquema global 6;
+la separación de collectors no implica separar archivos de base. La
 [guía vigente](../development/mt5-collector-operations.md) documenta instalación,
 recuperación y logs de las versiones validadas.
 
@@ -135,10 +136,12 @@ API y relay ya funcionan separados del dashboard en la VPS; mover API y SQLite
 juntas a la Mac requiere conectividad privada y aprobación. No se abrirá SQLite
 por red. PostgreSQL y el catálogo productivo siguen fuera del piloto actual.
 
-La persistencia v1 conserva las observaciones de cuenta; v2/esquema 5 conserva
-actividad, cobertura y ciclos reconstruidos, consultables por período y Magic.
-Las proyecciones históricas son durables. Las evoluciones usan migraciones
-explícitas; una caché futura será acotada, descartable y reconstruible desde SQLite.
+La persistencia conserva las observaciones v1 y la actividad, cobertura y ciclos
+v2, consultables por período y Magic, en un único archivo `central.sqlite3`.
+`PRAGMA user_version = 6` identifica el esquema central completo; los prefijos
+HTTP v1/v2 identifican los contratos de los collectors. Las proyecciones
+históricas son durables. Las evoluciones usan migraciones explícitas; una caché
+futura será acotada, descartable y reconstruible desde SQLite.
 
 La navegación separa `Trading` (actividad en curso), `Performance financiera`
 (operaciones cerradas y métricas) y `Performance de ejecución` (Registro MT5),

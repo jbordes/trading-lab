@@ -7,9 +7,10 @@ amplían el formato de telemetría y los procedimientos de arranque.
 El piloto local validado usa los collectors MT5 Telemetry `0.2.1` y Activity
 `0.7.1`, que envían únicamente al relay en `127.0.0.1:8776/8777`. Ambos
 listeners comparten proceso, outbox SQLite y worker. El relay reenvía a FastAPI
-en `:8781`, que persiste en SQLite v1 y v2 (esquema 5); el dashboard local en
-`:8775` lee la API central. Se validó localmente el 5 de noviembre de 2026; no
-está desplegado en Mac ni producción y no sustituye EAs de trading.
+en `:8781`; el dashboard local en `:8775` lee la API central. El despliegue
+actual conserva dos archivos SQLite; el cambio a `central.sqlite3`/esquema global
+6 está implementado en la rama de preparación, pero aún requiere revisión,
+merge y despliegue. No está instalado en Mac ni producción y no sustituye EAs de trading.
 
 La referencia OpenAPI vigente se sirve desde FastAPI: Swagger UI en
 `http://127.0.0.1:8781/docs`, JSON en `/openapi.json` y ReDoc en `/redoc`.

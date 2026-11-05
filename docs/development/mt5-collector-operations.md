@@ -29,15 +29,16 @@ la cuenta; duplicar collectors puede producir duplicados y conflictos de fuente.
 
 ```text
 Telemetry v1 ─┐
-              ├─> Relay local :8776/:8777 ─> FastAPI :8781 ─> SQLite v1 + v2 (schema 5)
+              ├─> Relay local :8776/:8777 ─> FastAPI :8781 ─> central.sqlite3 (schema 6)
 Activity v2 ──┘                                       └─> Dashboard :8775 ─> navegador
 ```
 
 El relay mantiene una única cola local para sus dos listeners y reenvía al API.
 FastAPI recibe y sirve las lecturas; el dashboard consulta la API. El dashboard
-no lee las bases SQLite por red. La cola del relay tampoco es la base histórica
-v2/esquema 5. Cada componente debe usar las rutas y archivos que ya fueron
-provisionados para el piloto; no se debe crear una cola o base nueva al arrancar.
+no lee SQLite por red. La cola del relay tampoco es la base histórica. El piloto
+local anterior usaba archivos v1/v2 independientes; el bootstrap remoto crea el
+archivo unificado central/esquema 6. Cada componente debe usar los recursos
+provisionados para su topología; no se debe crear una cola o base nueva al arrancar.
 
 Los puertos de loopback de este flujo son:
 
@@ -139,8 +140,8 @@ registra automáticamente. Un `SourceId` identifica la fuente; no concede permis
 Arranque los servicios en este orden, usando el checkout y archivos locales que
 ya se usan para el piloto:
 
-1. **FastAPI**, con las bases v1 y v2 provisionadas, credenciales centrales y
-   puerto `8781`.
+1. **FastAPI**, con `central.sqlite3` en esquema global 6, identidades
+   provisionadas, credenciales centrales y puerto `8781`.
 2. **Relay**, con la misma outbox y topología provisionadas, sus secretos locales
    y centrales, y ambos listeners `8776` y `8777`. Su topología debe apuntar a
    FastAPI en `8781`, no a los listeners del propio relay.
@@ -236,7 +237,7 @@ binarios previos preservados y una instalación supervisada.
 ## 7. Permitir WebRequest y configurar los inputs
 
 En MT5 abra **Herramientas > Opciones > Asesores Expertos**. Autorice exactamente
-estas dos bases loopback en esa terminal:
+estos dos listeners loopback en esa terminal:
 
 - `http://127.0.0.1:8776`
 - `http://127.0.0.1:8777`

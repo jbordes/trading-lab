@@ -1,18 +1,20 @@
 # Contrato de la API central de ingesta
 
-Estado: contrato objetivo aprobado para el programa remoto; transporte y
-despliegue pendientes. Las rutas y mensajes locales ya existen.
+Estado: API y contratos implementados en el programa remoto; el despliegue
+conectado a la Mac y la migración de datos siguen pendientes.
 
 ## Fronteras y compatibilidad
 
 Los EAs publican por loopback en la VPS. Un relay persistirá mensajes pendientes
 y los enviará por HTTPS a la API central. API y SQLite viven en el mismo host.
 Se mantienen `POST /v1/telemetry` y `POST /v2/telemetry` con sus sobres actuales;
-la versión HTTP no equivale a la versión 5 del esquema SQLite.
+la versión HTTP no equivale a la versión 6 del esquema central SQLite.
 
-V1 continúa aportando estado vivo y v2 actividad y ciclos. No se fusionan bases
-ni se fuerza una conversión v1/v2 en este incremento. El despliegue deberá
-resolver ambos receptores y sus lecturas para mantener completo el dashboard.
+V1 continúa aportando estado vivo y v2 actividad y ciclos. Ambos contratos se
+persisten en un único archivo SQLite central, con tablas y fuentes separadas por
+rol bajo el esquema global 6 ([ADR-0020](../adr/0020-single-central-sqlite-database.md)).
+El prefijo HTTP versiona el contrato del collector; no representa la versión de
+SQLite. Las lecturas v1/v2 siguen disponibles para mantener completo el dashboard.
 
 ## Identidad y permisos
 
@@ -76,10 +78,11 @@ Se sirve sin JavaScript/CDN, sin guardar credenciales ni ejecutar escrituras.
 
 ## Entregables y cierre de este paso
 
-Este contrato formaliza las fronteras y la referencia HTTP navegable. La creación
-v5, el relay durable y las credenciales separadas v1 están preparados en entregas
-sucesivas. Permanecen pendientes traslado entre hosts, HTTPS, servicio macOS y
-pruebas de cortes entre máquinas. No constituye aprobación de despliegue remoto.
+Este contrato formaliza las fronteras y la referencia HTTP navegable. El bootstrap
+de la base central con esquema 6, el relay durable y las credenciales separadas
+están descritos en sus guías operativas. Permanecen pendientes el traslado entre
+hosts, HTTPS, el servicio macOS y las pruebas de cortes entre máquinas. No
+constituye aprobación de despliegue remoto.
 
 Evolución: el [relay optativo](../development/durable-telemetry-relay.md) implementa
 outbox, reintentos y ACK local/central con tests SQLite. La activación remota y

@@ -1,11 +1,12 @@
 # Probar dashboard, API central y relay juntos
 
-Estado: integración local operativa y validada el 5 de noviembre de 2026. El
-dashboard se ha observado durante el piloto; no se afirma una batería exhaustiva
-de pruebas UI. No está desplegada en Mac ni producción y no sustituye EAs de trading.
+Estado: la topología local anterior fue verificada. La preparación del host
+remoto usa una sola base SQLite central/esquema 6; ese cambio está en revisión y
+aún no se desplegó en la VPS o Mac. El dashboard se ha observado durante el
+piloto; no se afirma una batería exhaustiva de pruebas UI ni se sustituyen EAs.
 
 ```text
-EAs -> relay 8776/8777 -> FastAPI 8781 -> SQLite v1 + SQLite v2/esquema 5
+EAs -> relay 8776/8777 -> FastAPI 8781 -> central.sqlite3/esquema 6
                         ^
                         |
                  dashboard 8775 -> navegador
@@ -32,8 +33,11 @@ Si no se usa ese archivo, el token humano se lee del entorno o se solicita ocult
 El entorno prevalece sobre los archivos. No usar el `.env.local` multivariable
 como `.env.dashboard`: este último admite únicamente el token humano.
 
-Las bases deben existir, con cuenta/fuentes registradas y v2 en esquema 5. El
-arranque no crea ni migra datos. Si hay receptores legacy ejecutándose en esos
+`central.sqlite3` debe existir, con cuenta y las fuentes v1/live/activity
+registradas en el esquema global 6. El arranque no crea ni migra datos. El
+bootstrap del [host remoto](remote-host-setup.md) prepara esta base desde cero;
+no convierte automáticamente las dos bases del piloto anterior. Si hay
+receptores legacy ejecutándose en esos
 puertos, detenerlos antes de iniciar relay y FastAPI. Para pruebas destructivas usar copias
 consistentes aisladas; no copiar archivos SQLite activos con una copia simple.
 
@@ -42,7 +46,7 @@ consistentes aisladas; no copiar archivos SQLite activos con una copia simple.
 Ejemplo con las rutas e identidades del piloto Juampi:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/central_api.py --v1-db 'C:\TradingLab 2.0\.tmp-session-main\_storage\piloto.sqlite3' --v2-db 'C:\TradingLab 2.0\.tmp-session-main\_storage\piloto-v2.sqlite3' --source-id juampi-demo-01 --account-id cuenta-demo-juampi --secrets-file .env.central --port 8781
+.\.venv\Scripts\python.exe scripts/central_api.py --db 'C:\TradingLab 2.0\.tmp-session-main\_storage\central.sqlite3' --source-id juampi-demo-01 --account-id cuenta-demo-juampi --secrets-file .env.central --port 8781
 ```
 
 ## Consola 2: dashboard

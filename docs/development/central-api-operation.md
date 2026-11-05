@@ -1,7 +1,8 @@
 # API central FastAPI: operación local
 
-Estado: operativa y validada en el piloto local Juampi el 5 de noviembre de
-2026. No está desplegada en Mac ni producción y no sustituye EAs de trading.
+Estado: la API local anterior fue validada en Juampi el 5 de noviembre de 2026.
+La variante de archivo único/esquema 6 está implementada en la rama de
+preparación, pero aún no fue mergeada ni desplegada. No sustituye EAs de trading.
 
 El dashboard admite v1/v2 en el mismo puerto mediante `--central-api-port`.
 Ver [arranque conjunto y pruebas](central-api-dashboard.md). El diagnóstico
@@ -11,8 +12,9 @@ mínimo y público.
 ## Qué cambia
 
 El comando `scripts/central_api.py` sirve ingesta y lecturas v1/v2 en un único
-puerto. Utiliza las dos bases durables existentes y abre/cierra sus receptores
-mediante lifespan. No crea ni migra las bases durante el arranque.
+puerto. Ambos contratos usan el mismo archivo SQLite central/esquema 6; FastAPI
+abre un adaptador de almacenamiento por contrato sobre ese archivo. No crea ni
+migra la base durante el arranque.
 
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
@@ -39,10 +41,10 @@ puertos ocupados.
 Sincronizar el entorno: `uv sync --locked`. Se usa Python 3.14 y las versiones
 de FastAPI, Pydantic, Uvicorn y herramientas de prueba fijadas en `uv.lock`.
 
-Provisionar las bases locales v1 y v2/esquema 5 por sus comandos independientes.
-Mantenerlas en un directorio privado de disco local, fuera de Git y de carpetas
-sincronizadas. La fuente v1 y la cuenta v2 ya deben estar registradas. Ver
-[creación v5](create-sqlite-v5.md) y [operación v1](telemetry-operation.md).
+Crear y provisionar una base central/esquema 6 nueva con el bootstrap remoto.
+Mantenerla en un directorio privado de disco local, fuera de Git y de carpetas
+sincronizadas. La cuenta y las tres fuentes (telemetry-v1, live y activity) deben
+estar registradas. El arranque no convierte las dos bases del piloto anterior.
 
 Configurar cinco credenciales distintas en el entorno o en un archivo ignorado
 `.env.central`, con asignaciones `NOMBRE=valor`, sin comillas:
@@ -65,7 +67,7 @@ El archivo admite exclusivamente estas cinco variables y el entorno prevalece.
 Ejemplo Windows, reemplazando rutas e identidades:
 
 ```text
-uv run python scripts/central_api.py --v1-db "C:\TradingLabData\piloto.sqlite3" --v2-db "C:\TradingLabData\piloto-v2.sqlite3" --source-id demo-terminal-01 --account-id account-demo --secrets-file .env.central --port 8781
+uv run python scripts/central_api.py --db "C:\TradingLabData\central.sqlite3" --source-id demo-terminal-01 --account-id account-demo --secrets-file .env.central --port 8781
 ```
 
 En macOS utilizar rutas absolutas `/Users/tu_usuario/TradingLabData/...`. El
@@ -73,10 +75,8 @@ comando se limita a loopback, un worker y concurrencia acotada. No acepta header
 proxy de clientes. El servicio privado HTTPS/Tailscale y sus reglas de Host/Origin
 se resolverán antes del despliegue remoto; no basta con cambiar el bind a público.
 
-Un lock asociado a la base v2 evita otra instancia de esta CLI sobre ese mismo
-archivo. No impide abrir intencionadamente otros lectores/receptores; durante el
-piloto usar solo un escritor central por base. Detener con Ctrl+C para cerrar
-recursos mediante lifespan.
+Un lock asociado a la base evita otra instancia de esta CLI sobre el mismo
+archivo. Detener con Ctrl+C para cerrar recursos mediante lifespan.
 
 ## Semántica y verificaciones
 

@@ -1,10 +1,13 @@
 # Collectors MT5: recuperación y trabajo acotado
 
-Estado: cuatro pruebas nativas actualizadas ejecutadas con cero fallos e
-instalación supervisada de Telemetry `0.2.1` y Activity `activity-0.7.1` en Juampi
-el 2026-11-05. ACK central y logging JSONL comprobados en corte breve del relay.
-Siguen pendientes las pruebas operacionales de 401/403, desconexión del broker y
-carga.
+Estado: en Juampi se instalaron bajo supervisión Telemetry `0.2.1` y Activity
+`activity-0.7.1`; los cuatro scripts nativos actualizados pasaron con cero fallos.
+Se verificaron ACK central, logging JSONL y pruebas operacionales EA→relay para
+401/403 el 2026-11-05. Siguen pendientes la desconexión del broker y la prueba
+nativa con historial denso. Por decisión del usuario, esta última queda fuera del
+alcance y de los criterios de cierre de este PR; se retomará en una tarea futura.
+El usuario considera suficientes por ahora las pruebas realizadas. La carga
+sintética local está descrita abajo; no es una prueba end-to-end ni un SLO.
 
 Rama: `feature/mt5-collector-resilience`, desde `fix/relay-multiple-listeners`.
 Runtime instalado: Telemetry `0.2.1`, Activity `activity-0.7.1`. Se preservaron
@@ -74,6 +77,82 @@ del collector, no directamente los hilos de los otros EAs. No se afirma un
 consumo óptimo ni una mejora porcentual sin una prueba controlada de carga.
 
 ## Compilación y pruebas
+
+### Prueba operacional supervisada de 401/403 (EA → relay)
+
+La utilidad `scripts/collector_access_probe.py` sustituye temporalmente ambos
+listeners del relay, solo en loopback, sin abrir bases, leer archivos de secretos,
+guardar mensajes ni responder ACK. No es un relay ni sirve `/health`. Su salida
+solo muestra hora UTC, ruta fija y código HTTP; no contiene headers ni payloads.
+
+1. Solo en Juampi demo, detener el relay con Ctrl+C. Mantener MT5, collectors,
+   API y dashboard abiertos. No modificar inputs, tokens, cursores ni cola.
+2. Desde la raíz de esta rama, ejecutar:
+
+   ```text
+   uv run python scripts/collector_access_probe.py --status 401 --seconds 180
+   ```
+
+3. Esperar un rechazo de cada ruta y un segundo intento de cada una unos 60 s
+   después de su primer rechazo. La llegada inicial de Activity depende del
+   siguiente lote o heartbeat. Si no alcanza el plazo, repetir el escenario;
+   la ausencia de tráfico no demuestra un rechazo ni recuperación.
+4. Parar la utilidad con Ctrl+C antes de iniciar el relay original, con su misma
+   cola y configuración. También se detiene automáticamente a los 180 s; no
+   reinicia el relay. Observar la recuperación hasta al menos 90 s después.
+5. Esperar `receiver_access_blocked` y después `RESOLVED`, sin recargar EAs.
+   Activity debe conservar el lote/identidad pendiente y no adelantar su cursor
+   hasta confirmación. Telemetry puede descartar snapshots al llenar su FIFO;
+   no exigir continuidad de todas las muestras vivas.
+6. Tras confirmar recuperación y ACK central, repetir con `--status 403`.
+
+La prueba valida la reacción del collector al código HTTP, no las reglas reales
+de autenticación/autorización ni la frontera relay → API. No dar por validada la
+inmutabilidad del cursor/lote solo por el log de recuperación: contrastar identidad
+y cobertura con evidencia del receptor, sin exponer secretos ni cuerpos en logs.
+Las pruebas nativas cubren las invariantes internas. Registrar por separado cada
+código, rutas observadas, recuperación, descartes y cualquier evidencia faltante.
+No detener MT5: eso prueba reinicio, no desconexión del broker con el EA activo.
+
+### Resultado operacional 401/403 — 2026-11-05
+
+En Juampi el usuario confirmó `RESOLVED` tras restaurar el relay en ambos
+escenarios. Las observaciones UTC registradas fueron:
+
+| Escenario | Telemetry v1 | Activity v2 |
+| --- | --- | --- |
+| HTTP 401 | 00:09:47, 00:10:47, 00:11:47 | 00:08:59, 00:10:09, 00:11:09 |
+| HTTP 403 | 00:16:57, 00:17:57, 00:18:57 | 00:17:09, 00:18:09, 00:19:09 |
+
+Son marcas de los rechazos observados, no una auditoría completa de cursor,
+deduplicación o cobertura. No se afirma aquí que la inmutabilidad del cursor o la
+deduplicación hayan quedado demostradas operacionalmente; los tests nativos
+cubren las invariantes internas. La desconexión real del broker sigue pendiente.
+
+El cierre del probe se corrigió para llamar `server_close()` desde el context
+manager. Pasaron cinco tests del probe, incluidos cierre, timeout, Ctrl+C y fallo
+de bind parcial.
+
+### Carga sintética del relay local — 2026-11-05
+
+Comando reproducible desde la raíz del checkout:
+
+```powershell
+.venv\Scripts\python.exe tests/manual/activity_load_probe.py
+```
+
+La prueba usó `TestClient`, no sockets HTTP reales ni MT5. Generó 20 ventanas con
+100 deals y 100 órdenes cada una, más 1.000 reconciliaciones de posición: 1.020
+mensajes en total, cinco EAs, 2.000 deals, 2.000 órdenes y 1.000 ciclos cerrados.
+La cola persistió y reabrió; después de un ACK perdido tras el commit central,
+reintentó y repitió todos los mensajes. Los conteos paginados no tuvieron
+duplicados y quedaron cero pendientes.
+
+Tiempo total: 34.685 s; 7.301 s de preparación y encolado; 24.799 s de reenvío y
+replay. La outbox ocupó 3.526.656 bytes después de los ACK. Las bases temporales
+aisladas usaron fixtures limpios y se limpiaron al terminar; no se tocaron datos
+operativos. No es un SLO, una medición de RAM, una prueba nativa con historial
+denso ni una carga end-to-end con sockets o MT5.
 
 En esta VPS el compilador autorizado es únicamente
 `C:\Program Files\MetaTrader 5- Roboforex\metaeditor64.exe`. Cualquier otra

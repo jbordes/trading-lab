@@ -83,16 +83,12 @@ uv run python scripts/live_dashboard.py --central-api-port 8781 --snapshot-sourc
 ```
 
 Opcionalmente ajuste frescura con `--capture-interval` y
-`--snapshot-max-age`. No combine el modo central con flags históricos de
-receptor/telemetría.
+`--snapshot-max-age`. El dashboard no descubre terminales MT5 ni lee
+receptores independientes.
 
 El comando solicita de forma oculta un token humano local para el dashboard. Se
 ingresa ese mismo token en `/login`; no se escribe en argumentos ni en Git. El
-modo de fuente siempre es explícito: usar `--demo` o el API central con
-`--central-api-port 8781` y los IDs `--snapshot-source` y `--activity-source`.
-No descubre terminales MT5 ni ofrece los modos retirados `--telemetry` o
-`--history-v2`.
-El modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
+modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
 descrito debajo utiliza el puerto `8775`.
 
 La arquitectura del piloto MT5 utiliza collectors de solo lectura en cuentas

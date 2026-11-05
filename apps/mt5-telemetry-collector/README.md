@@ -1,99 +1,60 @@
-# Collectors de telemetría MT5
+# Collectors MT5
 
-## Contrato nuevo en preparación
+## Estado del código
 
-Esta rama prepara Telemetry `0.3.0` y Activity `activity-0.8.0` para las rutas
-`/api/account-state` y `/api/trading-events`. Requieren el relay y API descriptivos
-y la SQLite central de esquema 7. No son intercambiables con los binarios
-instalados. La guía vigente es el [manual de collectors](../../docs/development/mt5-collector-operations.md)
-y el [corte coordinado](../../docs/development/descriptive-api-cutover.md).
-Los apartados siguientes conservan el contexto del piloto anterior; sus recetas
-de receptores independientes están retiradas y no deben ejecutarse con esta rama.
+Las versiones preparadas para el contrato descriptivo son `0.3.0` y
+`activity-0.8.0`. No están instaladas: requieren un cutover coordinado de API,
+relay y outbox. No son versiones 1 y 2 del mismo collector. `-v1` en los
+formatos wire indica la primera versión de cada contrato independiente.
 
-Estos EAs emiten observaciones desde un terminal MT5 hacia receptores locales.
-No abren, cierran ni modifican operaciones y no aceptan instrucciones remotas.
+| EA | Versión | Responsabilidad | Rol | Ruta de ingesta | Formato wire |
+| --- | --- | --- | --- | --- | --- |
+| `TradingLabTelemetry.mq5` | `0.3.0` | Estado actual de cuenta, balance/equity, posiciones y órdenes | `snapshot` | `POST /api/account-state` | `mt5-account-state-v1` |
+| `TradingLabActivity.mq5` | `activity-0.8.0` | Deals y órdenes históricas, recuperación, progreso y reconciliación de posiciones | `activity` | `POST /api/trading-events` | `mt5-trading-events-v1` |
 
-La revisión de diseño, recuperación automática, límites y pruebas de las nuevas
-versiones se documenta en [robustez de collectors](../../docs/development/mt5-collector-resilience.md).
-Al compilar las versiones preparadas se deben incluir tres headers:
-`TradingLabCollectorCommon.mqh`, `TradingLabActivityState.mqh` y
-`TradingLabCollectorLog.mqh`. Telemetry `0.2.1` y Activity `activity-0.7.1`
-se instalaron bajo supervisión en Juampi el 2026-11-05, después de ejecutar los
-cuatro scripts nativos actualizados con cero fallos. Se preservaron con hashes
-verificados los binarios previos en `_storage/collector-releases/2026-11-05-before-logging`;
-el ZIP previo del socio permanece intacto. No se modificaron EAs de trading,
-inputs ni cursores. El fix de strings validado en Activity se conserva en la
-versión instalada; la evidencia y limitaciones están en
-[robustez de collectors](../../docs/development/mt5-collector-resilience.md).
+La topología es EA → relay local → API central → `central.sqlite3` (esquema 7);
+el dashboard lee a través de la API. El ACK del relay confirma admisión en la
+outbox local, no persistencia central ni cobertura histórica completa.
 
-El logger escribe por terminal en `MQL5\Files\TradingLab\logs\` archivos
-`telemetry-<SourceId>-YYYYMMDD.jsonl` o `activity-<SourceId>-YYYYMMDD.jsonl`
-(en el nombre, `:` de SourceId se sustituye por `~`; fecha UTC). Emite `WARN`,
-`ERROR` y `RESOLVED` al cerrar una incidencia; no registra INFO ni eventos healthy
-de inicio/parada. Los Expertos solo registran errores críticos y un aviso si el
-sink falla o alcanza la cuota. Los registros son acotados y no incluyen tokens,
-headers, payloads ni credenciales. No se usa `FILE_COMMON` ni se ejecuta E/S de
-logging en `OnTradeTransaction`.
+Los EAs leen la cuenta MT5 completa, no solo el símbolo o timeframe del gráfico.
+No abren, cierran ni modifican órdenes, no ejecutan SQLite y no aceptan
+instrucciones remotas. `OnTradeTransaction` registra señales mínimas en memoria;
+la consulta de historial, la red y la reconciliación se realizan desde el
+temporizador, fuera del callback.
 
-- `TradingLabTelemetry.mq5`: snapshot v1 vigente de cuenta, posiciones, órdenes
-  pendientes y una ventana reciente de deals.
-- `TradingLabActivity.mq5`: piloto v2 de actividad histórica con deals, órdenes
-  finalizadas y recuperación por tramos. La instalación de la versión con logging
-  fue manual y supervisada.
+## Identidad, transición y compilación
 
-## Collector vigente v1
+El `SourceId` y token local de cada EA deben coincidir con la fuente y credencial
+configuradas en el relay. La credencial central del relay es distinta. Durante
+la transición conserva los `SourceId` y tokens actuales; no los rotes por el
+cambio de contrato. Antes de adoptar las versiones preparadas, sigue el
+[cutover coordinado](../../docs/development/descriptive-api-cutover.md). No
+reinicies ni borres cursores o datos para recrear la base central.
 
-- Solo admite un endpoint `http://127.0.0.1:<puerto>/...`.
-- El EA no crea una base; el receptor decide si persiste los snapshots.
-- Envía estado de cuenta, posiciones y órdenes activas.
-- `OnTradeTransaction` solo marca actividad; el envío se realiza en el siguiente
-  tick del temporizador para no bloquear el callback.
-- No envían velas ni estado interno de otros EAs.
-- El archivo compilado `.ex5` nunca se versiona.
+Compila desde este workspace con el MetaEditor RoboForex autorizado. Mantén
+juntos los tres headers:
 
-## Prueba manual autorizada
+- `TradingLabCollectorCommon.mqh`
+- `TradingLabActivityState.mqh`
+- `TradingLabCollectorLog.mqh`
 
-Para el piloto existente, usar el
-[procedimiento de arranque y recuperación](../../docs/development/telemetry-operation.md).
-El arranque conjunto usa los puertos 8776/8775; los ejemplos individuales
-de abajo conservan los valores genéricos 8766/8765.
+La compilación no instala los EAs. Los `.ex5` son artefactos locales y no se
+versionan en Git; cualquier instalación requiere el procedimiento supervisado.
 
-1. Ejecutar el receptor con un token de prueba configurado fuera de Git.
-2. Compilar `TradingLabTelemetry.mq5` mediante MetaEditor.
-3. Autorizar exactamente `http://127.0.0.1:8766` en la lista de WebRequest de
-   una terminal demo separada.
-4. Adjuntar el EA a un solo gráfico con el mismo token y un `SourceId` no sensible.
-5. Comparar `/health` con la captura Python actual.
+## Logs
 
-La compilación, instalación y conexión a MT5 requieren aprobación humana y no
-forman parte de las validaciones automáticas.
+Los archivos por terminal están en `MQL5\Files\TradingLab\logs\`:
 
-## Collector de actividad v2
+- `telemetry-<SourceId>-YYYYMMDD.jsonl`
+- `activity-<SourceId>-YYYYMMDD.jsonl`
 
-El collector v2 exige un inicio histórico explícito y usa tiempo de servidor MT5.
-Consulta ventanas de hasta seis horas por defecto, filtra exactamente por
-milisegundos y envía como máximo 200 deals y 200 órdenes por lote. Si un rango
-supera ese límite, lo divide hasta `MinimumWindowSeconds`. Un mínimo todavía
-saturado utiliza páginas estables; no se confirma el rango hasta completarlo.
+La fecha es UTC y `:` del `SourceId` se sustituye por `~` en el nombre. Se
+registran `WARN`, `ERROR` y `RESOLVED` al cerrar una incidencia; no hay mensajes
+de inicio/parada ni estado healthy. El registro nunca incluye tokens, headers,
+payloads ni credenciales.
 
-El cursor se conserva en las variables globales de la terminal, asociado a la
-fuente y la identidad demo. Solo avanza después de HTTP 200/202 y fuerza el
-guardado a disco. Un corte antes de confirmar vuelve a consultar con solapamiento;
-la composición del backend resuelve reobservaciones por ticket. Los fallos
-transitorios reintentan el mismo cuerpo con espera creciente. Desde
-`activity-0.7.0`, 401/403 conservan el lote y reintentan cada 60 segundos; otros
-rechazos no recuperables detienen el EA y requieren revisión.
+## Referencias
 
-Desde `activity-0.2.0`, cuando una ventana contiene una salida o reversión, el
-collector selecciona además el historial completo de esa posición con
-`HistorySelectByPosition`. Solo envía `position_reconcile` si puede demostrar una
-única posición, su orden inicial y volumen neto cerrado; después confirma el cursor
-del rango. Una caída entre ambos envíos vuelve a recorrer la ventana, por lo que
-no pierde silenciosamente la oportunidad de reconciliar. El mensaje por posición
-no declara cobertura temporal de toda la cuenta.
-
-La base y el cursor no se coordinan automáticamente. Si se recrea la base, cambia
-la fuente o se desea reiniciar el período, el operador debe revisar y eliminar
-manualmente las variables `TL2.ACT.*` correspondientes antes de volver a adjuntar
-el EA. No ejecutar dos instancias con la misma fuente. La instalación piloto debe
-seguir un procedimiento supervisado y contrastarse con el historial de MT5.
+- [Manual de instalación y operación](../../docs/development/mt5-collector-operations.md)
+- [API, relay y dashboard](../../docs/development/central-api-dashboard.md)
+- [Resiliencia y evidencia histórica](../../docs/development/mt5-collector-resilience.md)

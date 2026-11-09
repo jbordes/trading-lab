@@ -104,7 +104,8 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
     ).fetchone()[0]
     counts = connection.execute(
         """WITH messages AS (
-             SELECT json_extract(payload_json, '$.kind') AS kind, captured_at_utc,
+             SELECT CASE WHEN compacted_broker_day IS NOT NULL THEN 'account_snapshot'
+                         ELSE json_extract(payload_json, '$.kind') END AS kind, captured_at_utc,
                     'account-state' AS channel FROM telemetry_messages
              UNION ALL
              SELECT kind, captured_at_utc, 'trading-events' FROM telemetry_v2_messages

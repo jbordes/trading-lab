@@ -1,19 +1,42 @@
 # Manual de instalación y operación de los collectors MT5
 
-**Versiones descritas:** Telemetry `0.3.0` y Activity `activity-0.8.0`
+Nota para la rama de histórico diario: el backend nuevo crea/exige esquema 8;
+las referencias a esquema 7 de las recetas anteriores describen el corte previo.
+No reiniciar el piloto con código nuevo sin la
+[migración supervisada 7 → 8](daily-account-history-storage.md). Este cambio no
+requiere renombrar endpoints, rotar tokens ni reiniciar EAs de trading.
 
-**Estado:** preparadas y compiladas; instalación y pruebas nativas en MT5 pendientes.
+Para que el ecosistema mantenga el histórico sin el dashboard abierto, continuar
+con el [manual de mantenimiento automático](automatic-maintenance.md). Se instala
+en el host de la base (Windows, Linux o Mac), no en la terminal MT5 por defecto.
+La configuración de API, relay, collectors y mantenimiento son pasos separados.
+
+**Versiones actuales en la rama:** Telemetry `0.3.1` y Activity `activity-0.8.0`
+
+**Estado:** el piloto local Juampi usa esquema 8 y ambas versiones están
+instaladas. Las cuatro pruebas nativas anteriores corresponden al incremento
+previo; las nuevas pruebas nativas del reloj de Telemetry 0.3.1 siguen pendientes.
+
+Actualización del piloto Juampi: instalación y comprobaciones automáticas locales
+ejecutadas el 2026-11-06. Véanse los resultados, hallazgos y pruebas humanas aún
+pendientes en la [validación del piloto unificado](local-unified-pilot-validation-2026-11-06.md).
+Esto no certifica producción ni el despliegue remoto.
+
+La rama de progresión incorpora Telemetry `0.3.1` (`1.101`): corrige el puerto
+predeterminado a 8776 y añade una referencia opcional del reloj del broker para
+histórico diario observado. Se instaló en Juampi el 2026-11-06 tras actualizar
+API/relay; se confirmó recepción con reloj del broker. En otra instalación,
+actualizar primero API/relay y seguir la [activación supervisada](account-progression-history.md).
 
 **Alcance:** terminales MT5 demo locales previamente aprobadas. Esta guía no
 autoriza cuentas reales ni amplía la guarda de seguridad de los EAs.
 
-> El piloto instalado usa binarios anteriores. La evidencia operativa de Juampi
-> del 2026-11-05 corresponde únicamente a esos binarios y está en la
-> [guía de resiliencia](mt5-collector-resilience.md). Las versiones descritas
-> aquí son `0.3.0` y `activity-0.8.0` (`#property 1.100`), preparadas para el
-> contrato descriptivo y SQLite esquema 7; no están instaladas ni autorizadas
-> para un corte. Siga la [guía de cutover](descriptive-api-cutover.md) antes de
-> cualquier transición.
+> La evidencia operativa del 2026-11-05 en la
+> [guía de resiliencia](mt5-collector-resilience.md) corresponde a los binarios
+> anteriores y no certifica automáticamente la versión actual. Las recetas
+> de esquema 7 que siguen describen ese corte previo; para una instalación
+> actual aplicar la migración explícita a 8 y la
+> [guía de cutover](descriptive-api-cutover.md), sin migraciones automáticas.
 
 ## 1. Qué hacen los collectors
 
@@ -200,16 +223,25 @@ Los tres headers deben estar junto a los dos fuentes durante la compilación.
 5. Mantenga los `.ex5` fuera de Git. La compilación por sí sola no instala el EA
    en ninguna terminal.
 
-Las versiones `0.3.0`/`activity-0.8.0` están preparadas y compiladas, pero su
-ejecución nativa e instalación siguen pendientes. La validación de Juampi del
-5 de noviembre de 2026 se refiere a los binarios anteriores; consulte la
+Las versiones `0.3.0`/`activity-0.8.0` están preparadas y compiladas; los cuatro
+scripts de pruebas nativas pasaron según la evidencia de la sección 5.1. La
+instalación y captura con los nuevos collectors siguen pendientes. La validación
+previa de captura en Juampi del 5 de noviembre se refiere a los binarios anteriores; consulte la
 [evidencia de resiliencia](mt5-collector-resilience.md). Un ZIP antiguo no
 representa las versiones descritas ni garantiza sus capacidades.
 
 ### 5.1 Pruebas nativas al cambiar de versión
 
-Estas pruebas nativas para las versiones descritas siguen pendientes; ejecútelas
-solo como parte de un corte aprobado. La validación completa del código corresponde al gate del
+Los cuatro scripts del build `20261105-223601`, código `6c6f464`, fueron
+compilados con MetaEditor RoboForex `5.0.0.6230` y ejecutados manualmente por el
+usuario en Juampi el 2026-11-05. Expertos informó `0 failure(s)` en Activity,
+Common, Logger y Outbox entre 23:08 y 23:09 (horario mostrado por MT5).
+El mensaje `encoding_failed` de Activity corresponde a una inyección deliberada.
+Esta evidencia valida los scripts, no acredita captura real con los collectors
+nuevos ni sustituye el corte supervisado. El build y los hashes se conservan
+localmente bajo `_storage/collector-builds/20261105-223601/`.
+
+Para repetirlas, ejecútelas solo en la demo aprobada. La validación completa del código corresponde al gate del
 PR en GitHub, no a ejecutar toda la suite Python en cada instalación.
 
 1. En el MetaEditor autorizado, abra y compile los cuatro scripts en

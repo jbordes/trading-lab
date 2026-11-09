@@ -66,6 +66,7 @@ class TelemetrySchemaTest(unittest.TestCase):
                     "activity_observations",
                     "activity_coverage",
                     "position_cycle_observations",
+                    "account_daily_observations",
                 },
             )
 

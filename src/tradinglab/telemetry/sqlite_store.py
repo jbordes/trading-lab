@@ -293,12 +293,14 @@ class TelemetryRegistry:
             if account is None:
                 raise MessageAdmissionError("Fuente no registrada")
             existing = connection.execute(
-                """SELECT message_id, payload_json, content_sha256 FROM telemetry_messages
+                """SELECT message_id, payload_json, content_sha256, compacted_broker_day
+                FROM telemetry_messages
                 WHERE source_id = ? AND session_id = ? AND sequence = ?""",
                 identity,
             ).fetchone()
             if existing is not None:
-                if existing[1:] != (canonical, digest):
+                compacted = existing[3] is not None and existing[1] == "null"
+                if existing[2] != digest or (not compacted and existing[1] != canonical):
                     raise MessageConflictError("Identidad de mensaje con contenido diferente")
                 return StoredMessage(existing[0], duplicate=True, sequence_gap=False)
             if envelope.kind == "account_snapshot":

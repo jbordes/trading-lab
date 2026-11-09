@@ -18,6 +18,24 @@ from tradinglab.telemetry.windows_tasks import task_plan  # noqa: E402
 
 
 class TelemetryWindowsTasksTest(unittest.TestCase):
+    def test_daily_account_is_opt_in_and_never_sent_to_api_process(self) -> None:
+        api, maintenance = task_plan(
+            Path("checkout"),
+            Path("data"),
+            start_date=date(2026, 11, 6),
+            daily_account_id="test-account",
+        )
+        self.assertNotIn("--daily-account-id", api.arguments)
+        self.assertIn("--daily-account-id", maintenance.arguments)
+        self.assertIn("test-account", maintenance.arguments)
+        with self.assertRaises(ValueError):
+            task_plan(
+                Path("checkout"),
+                Path("data"),
+                start_date=date(2026, 11, 6),
+                daily_account_id="bad/../id",
+            )
+
     def test_public_host_is_preserved_in_api_task_and_not_added_to_maintenance(self) -> None:
         root = Path("Trading Lab & checkout")
         storage = Path("Trading Lab data")

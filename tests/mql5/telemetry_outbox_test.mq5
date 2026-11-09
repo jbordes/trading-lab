@@ -43,6 +43,10 @@ void ResetQueue()
 
 void OnStart()
 {
+   Check(IsStableAnchorClock(1000, 1000, 1000, 1000), "stable balance anchor clock");
+   Check(!IsStableAnchorClock(1000, 1060, 1000, 1060), "stale quote is not an anchor");
+   Check(!IsStableAnchorClock(1000, 1000, 1001, 1001), "cross-second sample is not an anchor");
+   Check(!IsStableAnchorClock(0, 0, 0, 0), "missing clock is not an anchor");
    TestHistoryRecovery();
    TestPilotGuards();
    TestNumericRejection();

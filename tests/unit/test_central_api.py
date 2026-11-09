@@ -518,11 +518,11 @@ class CentralApiTest(unittest.TestCase):
     def test_storage_failure_returns_no_ack_and_no_internal_details(self) -> None:
         receiver = self.app.state.services.trading_events
         with patch.object(
-            type(receiver), "accept", side_effect=V2StorageError("private database path")
+            type(receiver), "_accept_validated", side_effect=V2StorageError("private database path")
         ):
             response = self.client.post(
                 "/api/trading-events",
-                json=models.EXAMPLE_TRADING_EVENTS,
+                json={**models.EXAMPLE_TRADING_EVENTS, "source_id": "synthetic-live"},
                 headers={"Authorization": f"Bearer {self.settings.live_ingest}"},
             )
         self.assertEqual(response.status_code, 503, response.text)

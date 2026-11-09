@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from tradinglab.telemetry import api_models as m
+from tradinglab.telemetry.account_progression_store import read_account_progression
 from tradinglab.telemetry.admission_v2 import (
     V2AuthenticationError,
     V2AuthorizationError,
@@ -490,6 +491,48 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
             _single_query(request, {"source_id", "from_msc", "to_msc"})
             return services(request).account_state.account_history(
                 source_id, from_msc=integer(from_msc), to_msc=integer(to_msc)
+            )
+        except ValueError:
+            raise HTTPException(400, "invalid_history_query") from None
+
+    @app.get(
+        "/api/accounts/evolution",
+        response_model=m.AccountEvolution,
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
+        responses=errors,
+    )
+    def account_evolution(request: Request, source_id: str, from_msc: str, to_msc: str):
+        try:
+            _single_query(request, {"source_id", "from_msc", "to_msc"})
+            if source_id != settings.source_id:
+                raise HTTPException(403, "source_not_allowed")
+            return services(request).account_state.account_evolution(
+                source_id, from_msc=integer(from_msc), to_msc=integer(to_msc)
+            )
+        except ValueError:
+            raise HTTPException(400, "invalid_history_query") from None
+
+    @app.get(
+        "/api/accounts/progression",
+        response_model=m.AccountProgression,
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
+        responses=errors,
+    )
+    def account_progression(
+        request: Request, source_id: str, from_server_msc: str, to_server_msc: str
+    ):
+        try:
+            _single_query(request, {"source_id", "from_server_msc", "to_server_msc"})
+            if source_id != settings.source_id:
+                raise HTTPException(403, "source_not_allowed")
+            return read_account_progression(
+                settings.database,
+                source_id,
+                settings.account_id,
+                from_msc=integer(from_server_msc),
+                to_msc=integer(to_server_msc),
             )
         except ValueError:
             raise HTTPException(400, "invalid_history_query") from None

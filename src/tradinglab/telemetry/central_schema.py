@@ -7,20 +7,36 @@ import re
 import sqlite3
 from pathlib import Path
 
-from tradinglab.telemetry.account_state_schema import MESSAGES_DDL
+from tradinglab.telemetry.account_state_schema import (
+    BROKER_DAY_INDEX,
+    MESSAGE_COMPACTION_DDL,
+    MESSAGES_DDL,
+    OBSERVED_BROKER_DAY_DDL,
+    UNCOMPACTED_CAPTURE_INDEX,
+)
+from tradinglab.telemetry.daily_account_schema import DAILY_ACCOUNT_DDL
 from tradinglab.telemetry.trading_events_schema import (
     build_schema,
     expected_schema_objects,
     schema_objects,
 )
 
-CENTRAL_SCHEMA_VERSION = 7
+CENTRAL_SCHEMA_VERSION = 8
 DATABASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.sqlite3\Z")
 
 CENTRAL_SCHEMA = build_schema(
     version=CENTRAL_SCHEMA_VERSION,
     source_roles_sql="'live', 'activity', 'snapshot'",
-    extra_tables=MESSAGES_DDL,
+    extra_tables="\n".join(
+        (
+            MESSAGES_DDL,
+            MESSAGE_COMPACTION_DDL,
+            OBSERVED_BROKER_DAY_DDL,
+            UNCOMPACTED_CAPTURE_INDEX,
+            BROKER_DAY_INDEX,
+            DAILY_ACCOUNT_DDL,
+        )
+    ),
 )
 
 

@@ -1,5 +1,14 @@
 # Referencia de APIs de TradingLab
 
+En la rama de histórico diario (aún sin activar en el piloto),
+`GET /api/accounts/evolution?source_id=SOURCE&from_msc=START&to_msc=END`
+es la consulta unificada del gráfico principal. Usa Bearer de lectura de cuenta,
+rango UTC hasta 366 días y hasta 480 puntos. Cada punto declara `daily|recent`,
+balance/equity observados y hora del broker cuando existe. La respuesta señala
+`unconsolidated_history`; no ejecuta trabajos ni reconstrucciones al leer.
+El dashboard la expone como `GET /api/account-evolution` bajo sesión humana.
+Detalle: [histórico diario](daily-account-history-storage.md).
+
 Esta es la puerta de entrada única para las interfaces HTTP implementadas por
 TradingLab. Describe el contrato operativo vigente; los documentos enlazados
 amplían el formato de telemetría y los procedimientos de arranque.
@@ -58,6 +67,19 @@ Proxy con sesión del historial de capturas de cuenta del receptor v1. Requiere
 366 días y devuelve hasta 480 puntos, agrupados en buckets de al menos un minuto
 con la última observación disponible. No preserva extremos de cada bucket, no
 rellena huecos ni cambia la retención. La respuesta refleja capturas existentes.
+
+### `GET /api/account-progression`
+
+Requiere sesión web. Acepta `from_msc` y `to_msc`, pero en esta ruta representan
+el reloj del broker. Devuelve PnL realizado y, si existe una referencia válida,
+balance reconstruido de la cuenta. Nunca reconstruye equity. Hasta 366 días y
+480 puntos. Los estados de cobertura y de referencia distinguen valores
+desconocidos de cero. Véase [la definición y activación](account-progression-history.md).
+
+El backend central correspondiente es `GET /api/accounts/progression`, con Bearer
+de lectura de cuenta y parámetros `source_id`, `from_server_msc`, `to_server_msc`.
+Ambas respuestas identifican `account-ledger-v1`, `broker_wall_clock`,
+`pnl_from_server_msc`, `status`, `balance_status` y `points`.
 
 ### `GET /api/state`
 

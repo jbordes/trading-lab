@@ -41,7 +41,7 @@ def exclusive_job_lock(path: Path) -> Iterator[None]:
 def write_job_status(path: Path, *, job: str, state: str, detail: str) -> None:
     """Atomically replace a bounded, secret-free operational status record."""
 
-    if state not in {"running", "succeeded", "failed"}:
+    if state not in {"running", "succeeded", "failed", "partial", "deferred"}:
         raise ValueError("Estado operativo inválido")
     document = {
         "format": "tradinglab-job-status-v1",

@@ -47,7 +47,7 @@ class CreateCentralDbCliTest(unittest.TestCase):
             created = subprocess.run(command + ["--apply"], capture_output=True, check=False)
             self.assertEqual(created.returncode, 0, created.stderr)
             with closing(sqlite3.connect(database)) as connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
                 self.assertEqual(
                     connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 1
                 )

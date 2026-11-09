@@ -109,6 +109,7 @@ class SnapshotDealHistory(WireModel):
 
 
 class AccountStateSnapshotPayload(WireModel):
+    server_time_msc: DecimalText | SkipJsonSchema[None] = None
     reason: Literal["startup", "timer", "trade_activity"]
     account: SnapshotAccount
     positions_total: Counter
@@ -325,6 +326,26 @@ class AccountHistory(WireModel):
     points: list[AccountPoint]
 
 
+class EvolutionPoint(AccountPoint):
+    resolution: Literal["daily", "recent"]
+    broker_day: str | None
+    broker_time: str | None
+
+
+class AccountEvolution(WireModel):
+    account_id: str
+    source_id: str
+    from_msc: int
+    to_msc: int
+    sampling: Literal["daily_close_and_recent"]
+    time_basis: Literal["utc"]
+    bucket_msc: int
+    recent_basis: Literal["none", "broker_day", "last_24h_unassigned"]
+    recent_from_msc: int | None
+    unconsolidated_history: bool
+    points: list[EvolutionPoint] = Field(max_length=480)
+
+
 class ActivityItem(WireModel):
     message_id: int
     ticket: str
@@ -345,6 +366,29 @@ class CoverageRange(WireModel):
 class Coverage(WireModel):
     complete_ranges: list[CoverageRange]
     incomplete_batches: int
+
+
+class AccountProgressionPoint(WireModel):
+    time_msc: DecimalText
+    balance: float | None
+    realized_pnl: float | None
+    net_cash_flow: float | None
+    adjustments: float | None
+
+
+class AccountProgression(WireModel):
+    calculation_version: Literal["account-ledger-v1"]
+    account_id: str
+    source_id: str
+    from_server_msc: int
+    to_server_msc: int
+    time_basis: Literal["broker_wall_clock"]
+    bucket_msc: int
+    status: Literal["complete", "partial"]
+    balance_status: Literal["available", "missing_anchor", "ambiguous_anchor", "incomplete_ledger"]
+    pnl_from_server_msc: DecimalText | None
+    anchor_server_msc: DecimalText | None
+    points: Annotated[list[AccountProgressionPoint], Field(max_length=480)]
 
 
 class ActivityPage(WireModel):

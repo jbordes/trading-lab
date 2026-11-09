@@ -45,6 +45,23 @@ def api_catalog(contract: str) -> dict[str, object]:
                 "source_id, from_msc, to_msc "
                 "obligatorios. Hasta 366 días y 480 puntos; requiere persistencia.",
             ),
+            (
+                "GET",
+                "/api/accounts/evolution",
+                "Bearer de cuenta",
+                "source_id, from_msc, to_msc obligatorios (UTC). Hasta 366 días y 480 puntos. "
+                "Combina cierres diarios y último día observado sin escribir. "
+                "unconsolidated_history indica días antiguos pendientes de consolidar.",
+            ),
+            (
+                "GET",
+                "/api/accounts/progression",
+                "Bearer de cuenta",
+                "source_id, from_server_msc y to_server_msc obligatorios; "
+                "reloj del broker, hasta 366 días y 480 puntos. PnL realizado y balance "
+                "reconstruido con referencia válida; no reconstruye equity. "
+                "status, balance_status y pnl_from_server_msc informan cobertura.",
+            ),
         ]
         if contract == "account-state"
         else [

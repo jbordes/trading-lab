@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.operational_job import exclusive_job_lock
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", required=True, type=Path, help="SQLite central schema 7")
+    parser.add_argument("--db", required=True, type=Path, help="SQLite central schema 8")
     parser.add_argument("--source-id", required=True, help="Fuente de estado ya provisionada")
     parser.add_argument("--account-id", required=True, help="Cuenta ya provisionada")
     parser.add_argument("--secrets-file", type=Path, help="Archivo local .env.central ignorado")

@@ -24,3 +24,30 @@ CREATE TABLE telemetry_messages (
 CREATE INDEX telemetry_messages_source_capture
 ON telemetry_messages(source_id, captured_at_utc, message_id);
 """
+
+# Additive part of the not-yet-deployed schema 8. Keep MESSAGES_DDL unchanged
+# so the explicit migration can still recognize the exact former schema 7.
+MESSAGE_COMPACTION_DDL = """ALTER TABLE telemetry_messages
+ADD COLUMN compacted_broker_day TEXT CHECK(
+    (compacted_broker_day IS NULL AND payload_json != 'null') OR
+    (compacted_broker_day IS NOT NULL AND length(compacted_broker_day) = 10
+     AND payload_json = 'null')
+);"""
+
+UNCOMPACTED_CAPTURE_INDEX = """CREATE INDEX telemetry_messages_uncompacted_capture
+ON telemetry_messages(source_id, captured_at_utc, message_id)
+WHERE compacted_broker_day IS NULL;"""
+
+OBSERVED_BROKER_DAY_DDL = """ALTER TABLE telemetry_messages
+ADD COLUMN observed_broker_day TEXT GENERATED ALWAYS AS (
+    CASE WHEN json_valid(payload_json) THEN
+      CASE WHEN json_extract(payload_json, '$.kind') = 'account_snapshot' THEN
+        date(CAST(json_extract(payload_json, '$.payload.server_time_msc') AS INTEGER)/1000,
+             'unixepoch')
+      END
+    END
+) VIRTUAL;"""
+
+BROKER_DAY_INDEX = """CREATE INDEX telemetry_messages_broker_day
+ON telemetry_messages(source_id, observed_broker_day, message_id)
+WHERE compacted_broker_day IS NULL AND observed_broker_day IS NOT NULL;"""

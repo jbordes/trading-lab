@@ -25,6 +25,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--database", default="central.sqlite3")
+    parser.add_argument(
+        "--daily-account-id", help="Incluye consolidación/retención en la tarea diaria"
+    )
     parser.add_argument(
         "--tailscale-host",
         type=tailscale_hostname,
@@ -42,7 +46,12 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("Falta preparar el host central o el Python de .venv")
         tasks = task_plan(
-            ROOT, storage, start_date=date.today(), tailscale_host=args.tailscale_host
+            ROOT,
+            storage,
+            start_date=date.today(),
+            tailscale_host=args.tailscale_host,
+            daily_account_id=args.daily_account_id,
+            database=args.database,
         )
         if not args.apply:
             print("Vista previa; no se modificó Task Scheduler:")

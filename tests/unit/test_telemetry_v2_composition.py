@@ -10,7 +10,7 @@ from tradinglab.telemetry.admission_v2 import (
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
-    V2ProducerDirectory,
+    TradingEventsProducerDirectory,
 )
 from tradinglab.telemetry.composition_v2 import compose_account
 from tradinglab.telemetry.sqlite_store_v2 import (
@@ -33,8 +33,8 @@ def fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
 
 
-def directory() -> V2ProducerDirectory:
-    return V2ProducerDirectory(
+def directory() -> TradingEventsProducerDirectory:
+    return TradingEventsProducerDirectory(
         (
             ProducerRegistration(
                 "account-demo",

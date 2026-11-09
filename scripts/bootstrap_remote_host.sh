@@ -22,7 +22,7 @@ case "$data_dir" in /*) ;; *) echo "--data-dir debe ser absoluto" >&2; exit 2 ;;
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ "$apply" = false ]; then
     echo "Vista previa de bootstrap: instalar uv si falta, Python 3.14 y dependencias locked."
-    echo "Después validar JSON y crear bases/credenciales en: $data_dir"
+    echo "Después validar JSON y crear la base central/credenciales en: $data_dir"
     echo "No se modificó nada. Repetir con --apply. Tailscale se configura según el manual."
     exit 0
 fi

@@ -1,13 +1,14 @@
-"""Isolated durable admission for the proposed telemetry v2 contract."""
+"""Durable trading-event admission and projections on central SQLite."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -28,6 +29,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import validate_central_schema
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     IDENTIFIER,
@@ -35,18 +37,6 @@ from tradinglab.telemetry.contract import (
 )
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
-from tradinglab.telemetry.schema_v2 import (
-    DATABASE_SCHEMA_VERSION,
-)
-from tradinglab.telemetry.schema_v2 import (
-    SCHEMA as _SCHEMA,
-)
-from tradinglab.telemetry.schema_v2 import (
-    expected_schema_objects as _expected_schema_objects,
-)
-from tradinglab.telemetry.schema_v2 import (
-    schema_objects as _schema_objects,
-)
 
 
 class V2StorageError(RuntimeError):
@@ -80,6 +70,14 @@ class RestoredV2Message:
 class RegisteredV2Source:
     source_id: str
     role: ProducerRole
+
+
+@dataclass(frozen=True, slots=True)
+class V2AccountRegistration:
+    account_id: str
+    label: str
+    identity: ProducerIdentity
+    sources: tuple[RegisteredV2Source, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +263,8 @@ class V2TelemetryRegistry:
                     raise V2RegistrationConflictError("La cuenta v2 ya tiene otra identidad")
                 return False
             connection.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO accounts(account_id, label, login_masked, server, currency, created_at_utc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (account, *expected, stamp),
             )
             return True
@@ -280,7 +279,10 @@ class V2TelemetryRegistry:
     ) -> bool:
         source = _identifier(source_id, "source_id")
         account = _identifier(account_id, "account_id")
-        if not isinstance(role, ProducerRole):
+        if not isinstance(role, ProducerRole) or role not in (
+            ProducerRole.LIVE,
+            ProducerRole.ACTIVITY,
+        ):
             raise ValueError("Rol de productor inválido")
         stamp = _timestamp(created_at)
         with self._transaction() as connection:
@@ -300,7 +302,8 @@ class V2TelemetryRegistry:
                 return False
             try:
                 connection.execute(
-                    "INSERT INTO sources VALUES (?, ?, ?, ?)",
+                    "INSERT INTO sources(source_id, account_id, role, created_at_utc) "
+                    "VALUES (?, ?, ?, ?)",
                     (source, account, role.value, stamp),
                 )
             except sqlite3.IntegrityError as exc:
@@ -319,9 +322,33 @@ class V2TelemetryRegistry:
 
         if not isinstance(authorized, AuthorizedEnvelope):
             raise ValueError("Mensaje autorizado inválido")
-        received = _timestamp(received_at)
         canonical_bytes = authorized.envelope.canonical_bytes()
         envelope = parse_envelope_v2(canonical_bytes)
+        return self._persist_authorized(envelope, authorized, canonical_bytes, received_at)
+
+    def _store_validated_authorized(
+        self,
+        authorized: AuthorizedEnvelope,
+        *,
+        received_at: datetime,
+    ) -> StoredV2Message:
+        """Persist an envelope validated by the API and producer directory."""
+
+        if not isinstance(authorized, AuthorizedEnvelope):
+            raise ValueError("Mensaje autorizado inv\u00e1lido")
+        envelope = authorized.envelope
+        return self._persist_authorized(
+            envelope, authorized, envelope.canonical_bytes(), received_at
+        )
+
+    def _persist_authorized(
+        self,
+        envelope: TelemetryEnvelope,
+        authorized: AuthorizedEnvelope,
+        canonical_bytes: bytes,
+        received_at: datetime,
+    ) -> StoredV2Message:
+        received = _timestamp(received_at)
         canonical = canonical_bytes.decode("utf-8")
         digest = hashlib.sha256(canonical_bytes).hexdigest()
         captured = _timestamp(datetime.fromisoformat(envelope.captured_at))
@@ -513,22 +540,30 @@ class V2TelemetryRegistry:
         deal_total: int,
         order_total: int,
     ) -> bool:
+        # Coverage needs page links, not the potentially large deal/order arrays.
         rows = connection.execute(
-            """SELECT m.payload_json
+            """SELECT json_extract(m.payload_json, '$.payload.pagination')
                FROM telemetry_v2_messages m
                JOIN sources s ON s.source_id = m.source_id
                WHERE s.account_id = ? AND m.source_id = ? AND m.kind = 'activity_batch'
                  AND json_extract(m.payload_json, '$.payload.window.from_server_msc') = ?
                  AND json_extract(m.payload_json, '$.payload.window.to_server_msc') = ?
-                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?""",
-            (account_id, source_id, str(from_msc), str(to_msc), snapshot_id),
-        ).fetchall()
+                 AND json_extract(m.payload_json, '$.payload.pagination.snapshot_id') = ?
+                 AND json_extract(m.payload_json, '$.payload.deals.total') = ?
+                 AND json_extract(m.payload_json, '$.payload.orders.total') = ?""",
+            (
+                account_id,
+                source_id,
+                str(from_msc),
+                str(to_msc),
+                snapshot_id,
+                deal_total,
+                order_total,
+            ),
+        )
         edges: dict[tuple[int, int, int], list[tuple[tuple[int, int, int], bool]]] = {}
         for (encoded,) in rows:
-            payload = json.loads(encoded)["payload"]
-            if payload["deals"]["total"] != deal_total or payload["orders"]["total"] != order_total:
-                continue
-            pagination = payload["pagination"]
+            pagination = json.loads(encoded)
             after = V2TelemetryRegistry._stored_page_key(pagination["after"])
             through = V2TelemetryRegistry._stored_page_key(pagination["through"])
             edges.setdefault(after, []).append((through, pagination["has_more"]))
@@ -829,7 +864,7 @@ class V2TelemetryRegistry:
         limit: int = 50,
         cursor: str | None = None,
     ) -> V2PositionCyclePage:
-        """Return the latest unambiguous durable observation of each position cycle."""
+        """Keep last unambiguous evidence, excluding it while a newer conflict exists."""
 
         account = _identifier(account_id, "account_id")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
@@ -866,16 +901,16 @@ class V2TelemetryRegistry:
             cursor_position == "0" or str(int(cursor_position)) != cursor_position
         ):
             raise ValueError("Cursor de ciclos inválido")
-        filters = ["account_id = ?"]
         parameters: list[object] = [account]
+        # Resolve revisions across all owners before applying the user's EA filter.
+        result_filter = "capture_rank = 1"
         if owner_magic is not None:
-            filters.append("owner_magic = ?")
+            result_filter += " AND owner_magic = ?"
             parameters.append(owner_magic)
         elif owner_magics:
             placeholders = ",".join("?" for _ in owner_magics)
-            filters.append(f"owner_magic IN ({placeholders})")
+            result_filter += f" AND owner_magic IN ({placeholders})"
             parameters.extend(owner_magics)
-        result_filter = "capture_rank = 1"
         if from_msc is not None and to_msc is not None:
             result_filter += " AND last_event_at_msc >= ? AND last_event_at_msc < ?"
             parameters.extend((from_msc, to_msc))
@@ -900,7 +935,7 @@ class V2TelemetryRegistry:
         rows = self._connection.execute(
             f"""WITH filtered AS (
                 SELECT * FROM position_cycle_observations
-                WHERE {" AND ".join(filters)}
+                WHERE account_id = ?
             ), capture_summary AS (
                 SELECT account_id, position_id, captured_at_utc,
                        COUNT(DISTINCT cycle_json) AS variants
@@ -919,8 +954,11 @@ class V2TelemetryRegistry:
             SELECT message_id, cycle_json, source_id, captured_at_utc,
                    position_id, owner_magic, started_at_msc, last_event_at_msc,
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
-                   observed_magics_json, deal_tickets_json, exclusions_json
-            FROM eligible WHERE {result_filter}
+                   observed_magics_json, deal_tickets_json, exclusions_json,
+                   (SELECT MAX(c.captured_at_utc) FROM capture_summary c
+                    WHERE c.position_id = e.position_id AND c.variants > 1
+                      AND c.captured_at_utc > e.captured_at_utc) AS conflict_at
+            FROM eligible e WHERE {result_filter}
             ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
                      position_id {direction}
             LIMIT ?""",
@@ -989,6 +1027,14 @@ class V2TelemetryRegistry:
                     raise V2StorageError("Detalle de operación inválido") from exc
             elif include_details and len(items) < limit:
                 raise V2StorageError("Falta la evidencia del ciclo")
+            if row[15] is not None:
+                # This is a read-time qualification, never a rewrite of the ledger.
+                cycle = replace(
+                    cycle,
+                    exclusions=tuple(
+                        dict.fromkeys((*cycle.exclusions, CycleExclusion.CONFLICTING_EVIDENCE))
+                    ),
+                )
             items.append(V2PositionCycleItem(int(row[0]), cycle, row[2], row[3], details))
         page_items = tuple(items[:limit])
         next_cursor = None
@@ -1038,24 +1084,50 @@ class V2TelemetryRegistry:
 
         return self.account_evidence(account_id).messages
 
+    def account_registration(self, account_id: str) -> V2AccountRegistration:
+        """Read provisioned identity and sources without loading historical messages."""
+
+        account = _identifier(account_id, "account_id")
+        try:
+            with self._read_transaction() as connection:
+                return self._account_registration(connection, account)
+        except V2AuthorizationError, V2StorageError:
+            raise
+        except (sqlite3.Error, UnicodeError, ValueError, TypeError) as exc:
+            raise V2StorageError("No se pudo leer el registro de cuenta") from exc
+
+    @staticmethod
+    def _account_registration(
+        connection: sqlite3.Connection, account_id: str
+    ) -> V2AccountRegistration:
+        metadata = connection.execute(
+            """SELECT label, login_masked, server, currency FROM accounts
+            WHERE account_id = ?""",
+            (account_id,),
+        ).fetchone()
+        if metadata is None:
+            raise V2AuthorizationError("Cuenta v2 no registrada")
+        source_rows = connection.execute(
+            """SELECT source_id, role FROM sources WHERE account_id = ?
+            AND role IN ('live', 'activity') ORDER BY role, source_id""",
+            (account_id,),
+        ).fetchall()
+        return V2AccountRegistration(
+            account_id=account_id,
+            label=metadata[0],
+            identity=ProducerIdentity(*metadata[1:]),
+            sources=tuple(
+                RegisteredV2Source(source_id, ProducerRole(role)) for source_id, role in source_rows
+            ),
+        )
+
     def account_evidence(self, account_id: str) -> V2AccountEvidence:
         """Read registered sources and verified messages in one transaction."""
 
         account = _identifier(account_id, "account_id")
         try:
             with self._read_transaction() as connection:
-                metadata = connection.execute(
-                    """SELECT label, login_masked, server, currency FROM accounts
-                    WHERE account_id = ?""",
-                    (account,),
-                ).fetchone()
-                if metadata is None:
-                    raise V2AuthorizationError("Cuenta v2 no registrada")
-                source_rows = connection.execute(
-                    """SELECT source_id, role FROM sources WHERE account_id = ?
-                    ORDER BY role, source_id""",
-                    (account,),
-                ).fetchall()
+                registration = self._account_registration(connection, account)
                 rows = connection.execute(
                     """SELECT m.message_id, m.source_id, s.role, m.session_id,
                               m.sequence, m.event_id, m.kind, m.captured_at_utc,
@@ -1067,15 +1139,18 @@ class V2TelemetryRegistry:
                     WHERE s.account_id = ? ORDER BY m.message_id""",
                     (account,),
                 ).fetchall()
-                messages = tuple(self._restore_message(row, account, metadata[1:]) for row in rows)
+                identity = registration.identity
+                messages = tuple(
+                    self._restore_message(
+                        row, account, (identity.login_masked, identity.server, identity.currency)
+                    )
+                    for row in rows
+                )
                 return V2AccountEvidence(
                     account_id=account,
-                    label=metadata[0],
-                    identity=ProducerIdentity(*metadata[1:]),
-                    sources=tuple(
-                        RegisteredV2Source(source_id, ProducerRole(role))
-                        for source_id, role in source_rows
-                    ),
+                    label=registration.label,
+                    identity=identity,
+                    sources=registration.sources,
                     messages=messages,
                 )
         except V2AuthorizationError, V2StorageError:
@@ -1182,14 +1257,15 @@ class V2TelemetryRegistry:
             raise
 
 
-@contextmanager
-def open_v2_registry(
+def _open_v2_connection(
     path: Path,
     *,
     cross_thread: bool = False,
     read_only: bool = False,
-) -> Iterator[V2TelemetryRegistry]:
-    """Open an existing exact v2 schema without creating or migrating it."""
+    timeout_seconds: float = 5.0,
+    deadline: float | None = None,
+) -> sqlite3.Connection:
+    """Open and validate one owned connection without creating or migrating it."""
 
     if path.suffix != ".sqlite3":
         raise ValueError("La base debe usar extensión .sqlite3")
@@ -1199,20 +1275,19 @@ def open_v2_registry(
         connection = sqlite3.connect(
             resolved.as_uri() + ("?mode=ro" if read_only else "?mode=rw"),
             uri=True,
-            timeout=5.0,
+            timeout=timeout_seconds,
             check_same_thread=not cross_thread,
         )
+        if deadline is not None:
+            connection.execute("PRAGMA query_only = ON")
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         connection.execute("PRAGMA foreign_keys = ON")
         if not read_only:
             connection.execute("PRAGMA synchronous = FULL")
-        if connection.execute("PRAGMA user_version").fetchone()[0] != DATABASE_SCHEMA_VERSION:
-            raise V2StorageError("Versión de esquema v2 no admitida")
-        if _schema_objects(connection) != _expected_schema_objects(_SCHEMA):
-            raise V2StorageError("El esquema no coincide con TradingLab v2")
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            raise V2StorageError("Falló la comprobación de integridad SQLite v2")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise V2StorageError("La base v2 contiene relaciones inválidas")
+        try:
+            validate_central_schema(connection)
+        except ValueError as exc:
+            raise V2StorageError(str(exc)) from exc
     except sqlite3.Error as exc:
         if connection is not None:
             connection.close()
@@ -1221,43 +1296,56 @@ def open_v2_registry(
         if connection is not None:
             connection.close()
         raise
+    return connection
+
+
+@contextmanager
+def open_v2_registry(
+    path: Path,
+    *,
+    cross_thread: bool = False,
+    read_only: bool = False,
+) -> Iterator[V2TelemetryRegistry]:
+    """Open the exact central schema without creating or migrating it."""
+
+    connection = _open_v2_connection(path, cross_thread=cross_thread, read_only=read_only)
     try:
         yield V2TelemetryRegistry(connection)
     finally:
         connection.close()
 
 
-def create_v2_database(path: Path) -> None:
-    """Create an isolated v2 database at an explicit new path, never replacing."""
+@contextmanager
+def open_v2_history_reader(
+    path: Path, *, timeout_seconds: float = 2.0
+) -> Iterator[V2TelemetryRegistry]:
+    """Own an isolated read-only snapshot with a cooperative query deadline."""
 
-    if path.suffix != ".sqlite3":
-        raise ValueError("La base debe usar extensión .sqlite3")
-    with path.open("xb"):
-        pass
-    connection: sqlite3.Connection | None = None
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not 0 < timeout_seconds <= 30
+    ):
+        raise ValueError("El plazo de lectura debe estar entre 0 y 30 segundos")
+    deadline = time.monotonic() + timeout_seconds
+    connection = _open_v2_connection(
+        path,
+        read_only=True,
+        timeout_seconds=min(0.1, timeout_seconds),
+        deadline=deadline,
+    )
     try:
-        connection = sqlite3.connect(path, timeout=5.0)
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA synchronous = FULL")
-        connection.executescript(_SCHEMA)
+        if time.monotonic() >= deadline:
+            raise V2StorageError("La consulta histórica superó el plazo seguro")
+        connection.execute("BEGIN")
+        yield V2TelemetryRegistry(connection)
+        if time.monotonic() >= deadline:
+            raise V2StorageError("La consulta histórica superó el plazo seguro")
+        connection.commit()
     except sqlite3.Error as exc:
         raise V2StorageError(
-            "No se pudo crear el esquema v2; revisar el archivo reservado"
+            "No se pudo completar la lectura histórica dentro del plazo seguro"
         ) from exc
     finally:
-        if connection is not None:
-            connection.close()
-
-
-def migrate_v2_database_v3_to_v4(path: Path, backup_path: Path) -> int:
-    """Compatibility entry point for the isolated schema-migration adapter."""
-    from tradinglab.telemetry.schema_migrations_v2 import migrate_v2_database_v3_to_v4 as migrate
-
-    return migrate(path, backup_path, project_cycle=V2TelemetryRegistry._project_position_cycle)
-
-
-def migrate_v2_database_v4_to_v5(path: Path, backup_path: Path) -> None:
-    """Compatibility entry point for the isolated schema-migration adapter."""
-    from tradinglab.telemetry.schema_migrations_v2 import migrate_v2_database_v4_to_v5 as migrate
-
-    migrate(path, backup_path)
+        connection.set_progress_handler(None, 0)
+        connection.close()

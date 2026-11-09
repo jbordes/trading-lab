@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 from tradinglab.telemetry.admission_v2 import (
     ProducerRegistration,
     ProducerRole,
-    V2ProducerDirectory,
+    TradingEventsProducerDirectory,
 )
+from tradinglab.telemetry.contract import TelemetryEnvelope
 from tradinglab.telemetry.sqlite_store_v2 import (
     StoredV2Message,
     V2ActivityPage,
@@ -19,6 +21,8 @@ from tradinglab.telemetry.sqlite_store_v2 import (
     V2CoverageReport,
     V2PositionCyclePage,
     V2StorageError,
+    V2TelemetryRegistry,
+    open_v2_history_reader,
     open_v2_registry,
 )
 
@@ -37,28 +41,30 @@ class PersistentV2TelemetryReceiver:
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._account_id = account_id
+        self._database = database.resolve(strict=True)
         self._lock = threading.RLock()
-        self._context = open_v2_registry(database, cross_thread=True)
+        self._history_admission = threading.BoundedSemaphore(2)
+        self._context = open_v2_registry(self._database, cross_thread=True)
         self._registry = self._context.__enter__()
         try:
-            evidence = self._registry.account_evidence(account_id)
-            sources = {source.role: source.source_id for source in evidence.sources}
+            registration = self._registry.account_registration(account_id)
+            sources = {source.role: source.source_id for source in registration.sources}
             if set(sources) != {ProducerRole.LIVE, ProducerRole.ACTIVITY}:
                 raise ValueError("La cuenta v2 requiere fuentes live y activity provisionadas")
-            self._directory = V2ProducerDirectory(
+            self._directory = TradingEventsProducerDirectory(
                 (
                     ProducerRegistration(
                         account_id,
                         sources[ProducerRole.LIVE],
                         ProducerRole.LIVE,
-                        evidence.identity,
+                        registration.identity,
                         live_authorization,
                     ),
                     ProducerRegistration(
                         account_id,
                         sources[ProducerRole.ACTIVITY],
                         ProducerRole.ACTIVITY,
-                        evidence.identity,
+                        registration.identity,
                         activity_authorization,
                     ),
                 )
@@ -77,20 +83,34 @@ class PersistentV2TelemetryReceiver:
             self._require_open()
             authorized = self._directory.authorize(body, authorization)
             stored = self._registry.store_authorized(authorized, received_at=self._clock())
-            if stored.disposition.value == "duplicate":
-                self._duplicates += 1
-            else:
-                self._accepted += 1
-                self._out_of_order += int(stored.out_of_order)
-                self._gaps += stored.sequence_gap
-            return stored
+            return self._record(stored)
+
+    def _accept_validated(self, envelope: TelemetryEnvelope, authorization: str) -> StoredV2Message:
+        """Accept after the HTTP boundary has parsed and schema-validated the body."""
+
+        with self._lock:
+            self._require_open()
+            authorized = self._directory.authorize_envelope(envelope, authorization)
+            stored = self._registry._store_validated_authorized(
+                authorized, received_at=self._clock()
+            )
+            return self._record(stored)
+
+    def _record(self, stored: StoredV2Message) -> StoredV2Message:
+        if stored.disposition.value == "duplicate":
+            self._duplicates += 1
+        else:
+            self._accepted += 1
+            self._out_of_order += int(stored.out_of_order)
+            self._gaps += stored.sequence_gap
+        return stored
 
     def state(self) -> dict[str, int | str]:
         with self._lock:
             self._require_open()
             return {
                 "status": "ready",
-                "storage": "sqlite-v2",
+                "storage": "sqlite",
                 "accepted": self._accepted,
                 "duplicates": self._duplicates,
                 "out_of_order": self._out_of_order,
@@ -107,11 +127,10 @@ class PersistentV2TelemetryReceiver:
         limit: int = 50,
         cursor: str | None = None,
     ) -> tuple[V2ActivityPage, V2CoverageReport]:
-        """Read one page and its coverage without interleaving a write."""
+        """Read page and coverage from one snapshot without holding the writer lock."""
 
-        with self._lock:
-            self._require_open()
-            page = self._registry.activity_page(
+        with self._history_reader() as registry:
+            page = registry.activity_page(
                 self._account_id,
                 entity_type,
                 from_msc=from_msc,
@@ -120,7 +139,7 @@ class PersistentV2TelemetryReceiver:
                 limit=limit,
                 cursor=cursor,
             )
-            coverage = self._registry.coverage_report(
+            coverage = registry.coverage_report(
                 self._account_id,
                 entity_type,
                 from_msc=from_msc,
@@ -143,9 +162,8 @@ class PersistentV2TelemetryReceiver:
     ) -> V2PositionCyclePage:
         """Read a bounded page of durable position cycles."""
 
-        with self._lock:
-            self._require_open()
-            return self._registry.position_cycles(
+        with self._history_reader() as registry:
+            return registry.position_cycles(
                 self._account_id,
                 owner_magic=owner_magic,
                 owner_magics=owner_magics,
@@ -159,14 +177,24 @@ class PersistentV2TelemetryReceiver:
             )
 
     def activity_progress(self) -> V2ActivityProgress | None:
-        with self._lock:
-            self._require_open()
-            return self._registry.latest_activity_progress(self._account_id)
+        with self._history_reader() as registry:
+            return registry.latest_activity_progress(self._account_id)
 
     def position_cycle_magics(self) -> tuple[str, ...]:
+        with self._history_reader() as registry:
+            return registry.position_cycle_magics(self._account_id)
+
+    @contextmanager
+    def _history_reader(self) -> Iterator[V2TelemetryRegistry]:
         with self._lock:
             self._require_open()
-            return self._registry.position_cycle_magics(self._account_id)
+            if not self._history_admission.acquire(blocking=False):
+                raise V2StorageError("Hay demasiadas consultas históricas simultáneas")
+        try:
+            with open_v2_history_reader(self._database) as registry:
+                yield registry
+        finally:
+            self._history_admission.release()
 
     def close(self) -> None:
         with self._lock:

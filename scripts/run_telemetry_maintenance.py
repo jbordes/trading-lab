@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Create verified, non-destructive backups for both pilot telemetry databases."""
+"""Verified central backup, with optional bounded daily consolidation/retention."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -17,47 +18,97 @@ if hasattr(sys.stdout, "reconfigure"):
 
 def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.backup import BackupPlan
-    from tradinglab.telemetry.operational_job import exclusive_job_lock, write_job_status
+    from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION
+    from tradinglab.telemetry.daily_account_maintenance import run_daily_account_maintenance
+    from tradinglab.telemetry.operational_job import (
+        JobAlreadyRunningError,
+        exclusive_job_lock,
+        write_job_status,
+    )
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--storage-root", type=Path, default=ROOT / "_storage")
-    parser.add_argument("--v1-database", default="piloto.sqlite3")
-    parser.add_argument("--v2-database", default="piloto-v2.sqlite3")
+    parser.add_argument("--database", default="central.sqlite3")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--daily-account-id", help="Activa el mantenimiento diario de esta cuenta")
+    parser.add_argument("--daily-max-days", type=int, default=14)
+    parser.add_argument("--daily-max-batches", type=int, default=32)
+    parser.add_argument("--daily-budget-seconds", type=float, default=60)
     args = parser.parse_args(argv)
     try:
         storage = args.storage_root.resolve(strict=True)
-        plans = (
-            BackupPlan(ROOT, args.v1_database, storage, (1,)),
-            BackupPlan(ROOT, args.v2_database, storage, (4,)),
-        )
-        for plan in plans:
-            _ = plan.source
+        plan = BackupPlan(ROOT, args.database, storage, (CENTRAL_SCHEMA_VERSION,))
+        _ = plan.source
+        daily_arguments = {
+            "max_days": args.daily_max_days,
+            "max_batches": args.daily_max_batches,
+            "budget_seconds": args.daily_budget_seconds,
+        }
         if not args.apply:
-            print("Vista previa: se crearían dos copias SQLite verificadas, sin eliminar otras.")
+            print("Vista previa: se crearía una copia SQLite central verificada.")
+            if args.daily_account_id is not None:
+                print(
+                    json.dumps(
+                        run_daily_account_maintenance(
+                            plan.source,
+                            args.daily_account_id,
+                            **daily_arguments,
+                        )
+                    )
+                )
             return 0
+        outcome = None
         status = storage / "operations" / "maintenance-status.json"
         with exclusive_job_lock(storage / "operations" / "maintenance.lock"):
-            write_job_status(status, job="telemetry-maintenance", state="running", detail="Inicio")
-            results = [plan.apply() for plan in plans]
-            write_job_status(
-                status,
-                job="telemetry-maintenance",
-                state="succeeded",
-                detail=f"Copias verificadas: {len(results)}",
-            )
-        print("Mantenimiento terminado: 2 copias verificadas.")
-    except (ValueError, OSError, sqlite3.Error, RuntimeError) as exc:
-        try:
-            if args.apply and args.storage_root.is_dir():
+            try:
                 write_job_status(
-                    args.storage_root / "operations" / "maintenance-status.json",
-                    job="telemetry-maintenance",
-                    state="failed",
-                    detail=type(exc).__name__,
+                    status, job="telemetry-maintenance", state="running", detail="Inicio"
                 )
-        except OSError:
-            pass
+                result = plan.apply()
+                if args.daily_account_id is not None:
+                    outcome = run_daily_account_maintenance(
+                        plan.source,
+                        args.daily_account_id,
+                        apply=True,
+                        **daily_arguments,
+                    )
+                write_job_status(
+                    status,
+                    job="telemetry-maintenance",
+                    state=outcome["state"] if outcome is not None else "succeeded",
+                    detail=(
+                        f"Copia verificada: {result.size_bytes} bytes"
+                        + (
+                            f"; días={outcome['consolidated_days']}; "
+                            f"compactados={outcome['compacted_messages']}; motivo={outcome['reason']}"
+                            if outcome is not None
+                            else ""
+                        )
+                    ),
+                )
+            except (ValueError, OSError, sqlite3.Error, RuntimeError) as exc:
+                # Only the lock owner may publish a terminal state, before releasing it.
+                try:
+                    write_job_status(
+                        status,
+                        job="telemetry-maintenance",
+                        state="failed",
+                        detail=type(exc).__name__,
+                    )
+                except OSError:
+                    pass  # Preserve the job's original failure if status storage also fails.
+                raise
+        print("Mantenimiento terminado: copia central verificada.")
+        if outcome is not None:
+            print(json.dumps(outcome))
+            if outcome["state"] in {"partial", "deferred"}:
+                return 3
+    except JobAlreadyRunningError:
+        print(
+            "Omitido: ya existe una ejecución activa de este job; estado intacto.", file=sys.stderr
+        )
+        return 2
+    except (ValueError, OSError, sqlite3.Error, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     return 0

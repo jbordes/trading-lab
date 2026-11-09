@@ -4,12 +4,33 @@
 Este procedimiento no despliega el dashboard en Mac, no cambia MT5 y no configura
 automáticamente firewall, servicios, Tailscale ni suspensión del sistema.
 
+Después de preparar y probar los servicios, seguir el
+[manual de mantenimiento automático](automatic-maintenance.md) para programar
+copias, consolidación diaria y compactación **en el host de SQLite**. Su
+instalador independiente funciona en Windows, Linux y macOS, con vista previa
+por defecto; no configura el arranque de API/relay ni necesita tokens.
+
 ## Estado y límites
+
+**Pendiente importante para la instalación de la base de prueba:** ejecutar en
+ese mismo host el [checklist de ensayo del mantenimiento automático](automatic-maintenance.md).
+Incluye un disparo real del scheduler, backup verificado, primer cierre diario
+y revisión de reinicio/reposo y permisos. Los ensayos quedan diferidos hasta
+esa instalación; no se activan ahora en la VPS ni se exige probar otros sistemas
+operativos antes del piloto elegido.
 
 El piloto actual validado es local: los collectors envían al relay durable y este
 reenvía a FastAPI y SQLite. El setup del host remoto prepara una API central en
-loopback y bases nuevas. No demuestra todavía un piloto extremo a extremo por
+loopback y una base nueva. No demuestra todavía un piloto extremo a extremo por
 Tailscale ni una migración de datos operativos.
+
+La estructura unificada y el esquema global 8 se describen en la guía de
+[SQLite de la API central](central-sqlite.md) y siguen el
+[ADR-0020](../adr/0020-single-central-sqlite-database.md) y su corrección
+[ADR-0021](../adr/0021-descriptive-central-api-contract.md). El contrato
+descriptivo está en la rama actual, pendiente de integración; el cutover está pendiente y se detalla
+en la [guía correspondiente](descriptive-api-cutover.md). ADR-0020 reemplaza la
+decisión inicial de dos archivos del ADR-0019.
 
 No se han confirmado instalaciones reales de este procedimiento en Mac o Linux.
 La validación Python disponible es en Windows; las instalaciones manuales en los
@@ -37,19 +58,38 @@ el `PATH`. Luego prepara Python 3.14 y dependencias bloqueadas mediante
 `scripts/prepare_remote_host.py`.
 
 El núcleo portable valida el JSON de configuración. Sin `--apply` muestra una
-vista previa y no modifica archivos; con `--apply` crea las bases y credenciales
+vista previa y no modifica archivos; con `--apply` crea la base y credenciales
 locales. La vista previa del wrapper de instalación no valida todo el JSON: la
 validación completa ocurre en el núcleo cuando se aplica.
 
+Para crear manualmente solo la base central en un destino absoluto nuevo, use
+`scripts/create_central_db.py`; sin `--apply` muestra la vista previa y no
+escribe. Ejemplo:
+
+```text
+uv run python scripts/create_central_db.py --config RUTA\host.json --database RUTA\central.sqlite3
+uv run python scripts/create_central_db.py --config RUTA\host.json --database RUTA\central.sqlite3 --apply
+```
+
+La aplicación y el bootstrap llaman al mismo primitivo
+`create_registered_database`. Esta CLI crea esquema 8 y sus identidades, pero
+no genera secretos, no migra ni elimina bases anteriores y no cambia cursores.
+
 El resultado previsto es:
 
-- `central-v1.sqlite3`, esquema v1;
-- `central-v2.sqlite3`, esquema v2, SQLite `user_version=5`;
+- `central.sqlite3`, esquema central global, SQLite `user_version=8`, con ambos
+  flujos de captura y una sola identidad compartida de cuenta/fuentes;
 - `.env.central`, con cinco credenciales de API generadas;
 - `.env.dashboard`, con un token humano generado;
 - `host.json`, metadatos públicos escritos al final como señal de finalización.
 
-El creador comprueba integridad y foreign keys. En POSIX crea el directorio con
+Los nuevos endpoints descriptivos son `/api/account-state` y
+`/api/trading-events`, con contratos `mt5-account-state-v1` y
+`mt5-trading-events-v1`. El JSON de relay usa la clave `contract` con valores
+`account-state` con `role: snapshot` o `trading-events` con `role: live` o
+`role: activity`. Combinaciones incompatibles se rechazan. El esquema 8 del
+archivo no corresponde a la versión de esos contratos. El creador
+comprueba integridad y foreign keys. En POSIX crea el directorio con
 permisos `700` y los archivos privados con `600`. En Windows limita la ACL al SID
 del usuario actual y `SYSTEM`. No instala MT5 ni configura el relay, dashboard,
 servicios del sistema, firewall, suspensión, Tailscale o reglas de red.
@@ -98,11 +138,11 @@ cp -i docs/development/remote-host.example.json "$HOME/remote-host.json"
 Edite la copia y sustituya `REEMPLAZAR-SERVIDOR` por el nombre de servidor MT5
 exacto. `login_masked` debe coincidir con la forma enmascarada que ya registra
 el relay. La cuenta y las fuentes deben coincidir con la configuración actual
-del relay. El instalador registra en las bases nuevas los IDs que indique: no
+del relay. El instalador registra en la base nueva los IDs que indique: no
 descubre ni verifica automáticamente la configuración real de su relay.
 
-`v2_live_source_id` es una fuente distinta, reservada para un productor v2 live;
-no la confunda con la fuente v1 ni reutilice `v2_activity_source_id`. No cambie
+Use las claves `snapshot_source_id`, `live_source_id` y `activity_source_id`;
+son roles separados dentro de la cuenta compartida. No cambie
 la identidad de una fuente ya vinculada a la outbox del relay. El host JSON no
 contiene tokens.
 
@@ -237,6 +277,107 @@ ACL creada limita acceso al SID del usuario actual y `SYSTEM`.
 Si `uv` no está en PATH, para los comandos posteriores use
 `& "$env:USERPROFILE\.local\bin\uv.exe"` en lugar de `uv`.
 
+Para programar **solo mantenimiento**, usar
+`scripts/configure_telemetry_maintenance.py`, según el
+[manual multiplataforma](automatic-maintenance.md). Admite otra base mediante
+`--database` y una cuenta mediante `--account-id` sin tocar el arranque de API.
+
+Para programar **ambas tareas Windows** (API y copia), use primero la vista previa y
+aplique únicamente tras revisar el destino:
+
+```powershell
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01"
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --apply
+```
+
+Si el arranque debe aceptar el host HTTPS de Tailscale, use el mismo FQDN del
+arranque manual **en ambos comandos**, primero para revisar y luego para instalar:
+
+```powershell
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --tailscale-host mac.nombre-tailnet.ts.net
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --tailscale-host mac.nombre-tailnet.ts.net --apply
+```
+
+Reemplace el FQDN por el real. La vista previa muestra el host y su origen HTTPS;
+no ejecuta Task Scheduler. El argumento se conserva en la tarea de API, pasa a
+`run_central_api_job.py` y luego a `run_remote_host.py`, que configura Host y
+Origin HTTPS/443 según PY14. No se agrega al mantenimiento. No incluye tokens
+ni cambia el bind `127.0.0.1`. Sin el flag se conserva el modo local anterior.
+
+El modo predeterminado no instala tareas. La aplicación crea `TradingLab Central
+API` y la tarea de mantenimiento de `central.sqlite3`; el ejecutor de la API es
+`scripts/run_central_api_job.py --data-dir <HOSTDIR>`. No instale ni modifique
+tareas existentes automáticamente. Las tareas antiguas de receptores deben
+revisarse y deshabilitarse manualmente durante el cutover aprobado.
+Una tarea ya instalada no recibe este argumento por actualizar el checkout:
+revise su acción y acuerde su actualización en una ventana autorizada; el
+instalador sigue rechazando sobrescribir tareas existentes.
+
+### Logs del ejecutor supervisado
+
+`run_central_api_job.py` guarda stdout y stderr juntos en
+`<HOSTDIR>/operations/central-api.log`. El supervisor drena la salida en bloques
+de hasta 64 KiB y rota durante la misma ejecución, sin esperar un reinicio:
+archivo activo de hasta 5 MiB más tres copias (`.1` es la más reciente).
+Los archivos nuevos quedan acotados a 20 MiB en conjunto. No carga la salida
+completa en memoria ni necesita que el proceso escriba saltos de línea.
+
+Solo el propietario del lock del job escribe este log; los archivos se cierran
+antes de rotarlos, también en Windows. Si falla el destino de escritura, el
+supervisor detiene su hijo en lugar de dejarlo bloqueado en una tubería llena.
+La rotación es por bytes: una línea o carácter UTF-8 puede quedar dividido entre
+archivos. Los archivos sobredimensionados heredados se conservan como copias y
+van saliendo con la rotación normal; no se truncan para corregir su tamaño.
+
+Esta política corresponde al ejecutor supervisado, no a una API iniciada a mano
+ni a los logs de MT5. No agrega salida de tokens, configuración o argumentos;
+el proceso hijo sigue siendo responsable de no registrar credenciales. No es
+una redacción automática de secretos que el hijo hubiera impreso.
+
+### Estado del mantenimiento y ejecuciones simultáneas
+
+`run_telemetry_maintenance.py` actualiza `operations/maintenance-status.json`
+únicamente mientras posee `operations/maintenance.lock`, tanto para `running`
+como para `succeeded`, `partial`, `deferred` o `failed`. Un intento simultáneo no cambia ese archivo
+ni su temporal, y no inicia otra copia de seguridad.
+
+Sus códigos de salida son: `0` para vista previa o trabajo terminado, `1` para
+error real y `2` para intento omitido porque otro mantenimiento sigue activo.
+La modalidad opt-in `--daily-account-id CUENTA` integra consolidación y retención
+después de la copia verificada. Devuelve `3` cuando queda trabajo pendiente o
+falta una referencia segura del reloj del broker; no relanza bucles de reintento.
+Véase el [mantenimiento diario](daily-account-history-storage.md).
+El código `2` se explica en stderr; no representa un fallo del propietario.
+Errores previos a obtener el lock (configuración, ruta o permisos) también se
+informan por stderr sin sustituir el estado de otra ejecución. Si falla guardar
+el estado de error, se conserva el error original del trabajo en la salida.
+
+### Publicación de las copias SQLite
+
+Cada backup se prepara en `backups/.tmp-telemetry-*`: base SQLite comprobada,
+hash SHA-256, tamaño y `manifest.json` leído de nuevo para verificar su contenido.
+Se sincronizan ambos archivos antes de publicar. La publicación mueve la carpeta
+completa a su nombre definitivo con un único renombrado dentro de `backups/`.
+El lock `operations/backup-publication.lock` serializa a los publicadores de
+TradingLab; cualquier destino existente, incluso vacío, bloquea la publicación.
+El directorio operativo debe seguir bajo control del usuario del servicio: esta
+guarda no protege frente a otro programa que modifique rutas sin respetar el lock.
+
+Un fallo previo al renombrado deja únicamente el paquete nuevo temporal; las
+copias anteriores permanecen intactas. No se borran esos temporales ni se reintenta
+su publicación automáticamente. Si hay contención en el lock de publicación,
+se informa como fallo del trabajo que ya había comenzado, no como una omisión
+por mantenimiento simultáneo.
+
+En macOS/Linux también se sincronizan las entradas de directorio antes y después
+de publicar. Windows no ofrece aquí una sincronización portable del directorio;
+se sincronizan los archivos, sin prometer supervivencia ante todo corte eléctrico.
+Si falla la sincronización **después** del renombrado, el paquete ya publicado
+queda completo, pero el job informa error porque no pudo confirmar durabilidad.
+Revise ese paquete antes de reintentar: no se borra ni se considera parcial por
+el solo hecho de que el job haya fallado. Una copia verificada no sustituye una
+prueba de restauración, que continúa aplazada.
+
 ## 7. Manejo de credenciales
 
 El bootstrap genera cinco tokens para API y un token humano. No los imprime como
@@ -245,8 +386,8 @@ logs, chat o Git. No use `Get-Content`, `cat`, redirecciones a consola ni captur
 para inspeccionar `.env.central` o `.env.dashboard`.
 
 Para integrar el relay existente, transfiera por un canal manual revisado solo
-`CENTRAL_V1_INGEST` y `CENTRAL_V2_ACTIVITY` a las variables correspondientes
-`RELAY_LIVE_CENTRAL_TOKEN` y `RELAY_ACTIVITY_CENTRAL_TOKEN` de su entorno privado.
+`CENTRAL_SNAPSHOT_INGEST`, `CENTRAL_LIVE_INGEST` y `CENTRAL_ACTIVITY_INGEST` a
+las variables centrales correspondientes de su entorno privado.
 Estos nombres son ejemplos: use los nombres `central_token_env` de su topología
 real, que pueden ser distintos. Los valores nunca van dentro del JSON público.
 No sustituya los tokens locales que ya usan los EAs; esos secretos permanecen en
@@ -270,8 +411,9 @@ uv run --locked --no-sync python scripts/run_remote_host.py \
 ```
 
 En Windows reemplace la ruta por la ruta aprobada en ese host. La API escucha
-solo en `127.0.0.1:8781`. `--tailscale-host` agrega únicamente el FQDN exacto a
-`allowed_hosts`; no cambia el bind ni acepta comodines. Revise las salidas no
+solo en `127.0.0.1:8781`. `--tailscale-host` agrega el FQDN exacto a
+`allowed_hosts` y su origen `https://<FQDN>` (puerto 443) a `public_origins`;
+no cambia el bind ni acepta comodines. Revise las salidas no
 secretas del proceso.
 Use el nombre real obtenido en el paso de Tailscale, no el placeholder del ejemplo.
 También puede omitir `--tailscale-host` inicialmente para probar solo localhost.
@@ -408,10 +550,22 @@ curl.exe --fail --max-time 10 https://mac.nombre-tailnet.ts.net/health
 La respuesta `/health` es pública y mínima. Los proxies de confianza siguen
 desactivados; el API acepta el FQDN exacto, no un wildcard. Una falla TLS o Host
 se investiga en DNS, Serve y `allowed_hosts`; no se debe relajar la validación.
-Los POST desde navegador a través de TLS terminado en Serve pueden rechazarse
-por Origin: este incremento no habilita confianza en `X-Forwarded-*`. Use los
-clientes de servicio sin Origin para ingesta y conserve las protecciones; no
-dé por validado Swagger Try it out remoto como parte de esta preparación.
+El arranque manual con `--tailscale-host` permite ese origen HTTPS aunque Serve
+entregue HTTP al backend. La configuración es explícita: no se deduce de
+`X-Forwarded-*` ni `Forwarded`. Un origen identifica esquema, host y puerto,
+como explica la [referencia de FastAPI](https://fastapi.tiangolo.com/tutorial/cors/#origin).
+El puerto HTTPS 443 explícito u omitido representa el mismo origen; otros puertos
+requieren autorización exacta mediante `--public-origin` en la CLI central.
+No se permiten HTTP público, orígenes ajenos, listas, duplicados, `null`, rutas,
+credenciales ni valores ambiguos. Loopback sigue admitiendo únicamente su mismo
+esquema/host/puerto. Las peticiones sin Origin (relay) no cambian y la autenticación
+Bearer sigue siendo obligatoria en rutas protegidas. Esto no habilita CORS entre sitios.
+
+La política se probó con ASGI local; Swagger Try it out y el recorrido HTTPS real
+con Serve siguen pendientes de validación manual. Para arranque programado,
+indique `--tailscale-host` al preparar la tarea como se explica en la sección 6:
+no hereda los flags de otra ejecución manual ni actualiza tareas ya instaladas.
+No relaje Host/Origin para compensar una tarea con argumentos antiguos.
 
 ### Verificar dirección de acceso
 
@@ -440,7 +594,7 @@ consume la API del Mac. En este incremento priorice la API y SQLite y compruebe 
 health desde la VPS; el recorrido remoto completo API/relay/dashboard corresponde
 a una validación posterior.
 
-Las bases del host comienzan vacías. No reinician cursores MT5, no migran datos y
+La base del host comienza vacía. No reinicia cursores MT5, no migra datos y
 no generan un backfill histórico automáticamente. Mantenga las bases, cursores,
 identidades y outbox actuales intactos hasta que haya un plan de traslado y
 reconciliación aprobado.

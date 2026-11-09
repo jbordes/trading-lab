@@ -37,6 +37,10 @@ def parse_magic_selection(values: list[str]) -> tuple[str, ...]:
 class AccountHistoryProvider(Protocol):
     def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
 
+    def account_progression(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
+    def account_evolution(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
 
 STATIC_ROOT = Path(__file__).with_name("static")
 STATIC_ROUTES = {
@@ -227,7 +231,11 @@ def create_server(
                     return
                 self._send_json(state)
                 return
-            if path == "/api/account-history":
+            if path in {
+                "/api/account-history",
+                "/api/account-progression",
+                "/api/account-evolution",
+            }:
                 if session is None:
                     self._send_json(
                         {"error": "authentication_required"}, status=HTTPStatus.UNAUTHORIZED
@@ -246,7 +254,18 @@ def create_server(
                     start, end = selected["from_msc"], selected["to_msc"]
                     if end - start > 366 * 86400000 or end >= 253402300799000:
                         raise ValueError("La ventana máxima es de 12 meses")
-                    result = account_history_provider.account_history(from_msc=start, to_msc=end)
+                    if path == "/api/account-evolution":
+                        result = account_history_provider.account_evolution(
+                            from_msc=start, to_msc=end
+                        )
+                    elif path == "/api/account-progression":
+                        result = account_history_provider.account_progression(
+                            from_msc=start, to_msc=end
+                        )
+                    else:
+                        result = account_history_provider.account_history(
+                            from_msc=start, to_msc=end
+                        )
                 except ValueError:
                     self._send_json(
                         {"error": "invalid_history_query"}, status=HTTPStatus.BAD_REQUEST

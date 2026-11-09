@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-SCHEMA_VERSION = "mt5-telemetry-v1"
+SCHEMA_VERSION = "mt5-account-state-v1"
 MAX_BODY_BYTES = 256 * 1024
 MAX_STRING_LENGTH = 512
 MAX_COLLECTION_ITEMS = 1_000
@@ -144,6 +144,10 @@ def parse_envelope(body: bytes) -> TelemetryEnvelope:
         _validate_heartbeat(payload)
     else:
         _validate_account_snapshot(payload)
+        if "server_time_msc" in payload:
+            captured_msc = int(datetime.fromisoformat(captured_at).timestamp() * 1000)
+            if abs(int(payload["server_time_msc"]) - captured_msc) > 14 * 3600000 + 2000:
+                raise TelemetryValidationError("Hora del broker incompatible con la captura")
 
     return TelemetryEnvelope(
         schema_version=schema_version,
@@ -168,13 +172,20 @@ def _validate_account_snapshot(payload: dict[str, Any]) -> None:
     _require_exact_fields(
         payload,
         {"reason", "account", "positions_total", "orders_total", "positions", "orders"}
-        | ({"history"} if "history" in payload else set()),
+        | ({"history"} if "history" in payload else set())
+        | ({"server_time_msc"} if "server_time_msc" in payload else set()),
         "snapshot",
     )
     if _required_string(payload, "reason") not in ALLOWED_REASONS:
         raise TelemetryValidationError("Motivo de snapshot no admitido")
     if "history" in payload:
         _validate_history(payload["history"])
+    if "server_time_msc" in payload:
+        value = payload["server_time_msc"]
+        if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+            raise TelemetryValidationError("Hora del servidor inválida")
+        if str(int(value)) != value or not 0 < int(value) < 253402300799000 or int(value) % 1000:
+            raise TelemetryValidationError("Hora del servidor inválida")
 
     account = payload["account"]
     if not isinstance(account, dict):

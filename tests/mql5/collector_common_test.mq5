@@ -29,8 +29,8 @@ void OnStart()
          "same approved account resumes after reconnect");
    Check(EvaluateCaptureState(true, true, ACCOUNT_TRADE_MODE_DEMO, 2, "DEMO", 1, "DEMO") == CAPTURE_STOPPED,
          "another account never resumes automatically");
-   Check(IsLoopbackCollectorUrl("http://127.0.0.1:8776/v1/telemetry", "/v1/telemetry"), "loopback URL");
-   Check(!IsLoopbackCollectorUrl("http://evil.invalid:8776/v1/telemetry", "/v1/telemetry"), "remote denied");
+   Check(IsLoopbackCollectorUrl("http://127.0.0.1:8776/api/account-state", "/api/account-state"), "loopback URL");
+   Check(!IsLoopbackCollectorUrl("http://evil.invalid:8776/api/account-state", "/api/account-state"), "remote denied");
    Check(JsonEscape("\"\\") == "\\\"\\\\", "quotes and slash escaped");
    for(int code = 0; code < 32; code++)
    {

@@ -1,11 +1,42 @@
 # Manual de instalación y operación de los collectors MT5
 
-**Versión documentada:** Telemetry `0.2.1` y Activity `activity-0.7.1`
+Nota para la rama de histórico diario: el backend nuevo crea/exige esquema 8;
+las referencias a esquema 7 de las recetas anteriores describen el corte previo.
+No reiniciar el piloto con código nuevo sin la
+[migración supervisada 7 → 8](daily-account-history-storage.md). Este cambio no
+requiere renombrar endpoints, rotar tokens ni reiniciar EAs de trading.
 
-**Validación supervisada:** Juampi, 2026-11-05
+Para que el ecosistema mantenga el histórico sin el dashboard abierto, continuar
+con el [manual de mantenimiento automático](automatic-maintenance.md). Se instala
+en el host de la base (Windows, Linux o Mac), no en la terminal MT5 por defecto.
+La configuración de API, relay, collectors y mantenimiento son pasos separados.
+
+**Versiones actuales en la rama:** Telemetry `0.3.1` y Activity `activity-0.8.0`
+
+**Estado:** el piloto local Juampi usa esquema 8 y ambas versiones están
+instaladas. Las cuatro pruebas nativas anteriores corresponden al incremento
+previo; las nuevas pruebas nativas del reloj de Telemetry 0.3.1 siguen pendientes.
+
+Actualización del piloto Juampi: instalación y comprobaciones automáticas locales
+ejecutadas el 2026-11-06. Véanse los resultados, hallazgos y pruebas humanas aún
+pendientes en la [validación del piloto unificado](local-unified-pilot-validation-2026-11-06.md).
+Esto no certifica producción ni el despliegue remoto.
+
+La rama de progresión incorpora Telemetry `0.3.1` (`1.101`): corrige el puerto
+predeterminado a 8776 y añade una referencia opcional del reloj del broker para
+histórico diario observado. Se instaló en Juampi el 2026-11-06 tras actualizar
+API/relay; se confirmó recepción con reloj del broker. En otra instalación,
+actualizar primero API/relay y seguir la [activación supervisada](account-progression-history.md).
 
 **Alcance:** terminales MT5 demo locales previamente aprobadas. Esta guía no
 autoriza cuentas reales ni amplía la guarda de seguridad de los EAs.
+
+> La evidencia operativa del 2026-11-05 en la
+> [guía de resiliencia](mt5-collector-resilience.md) corresponde a los binarios
+> anteriores y no certifica automáticamente la versión actual. Las recetas
+> de esquema 7 que siguen describen ese corte previo; para una instalación
+> actual aplicar la migración explícita a 8 y la
+> [guía de cutover](descriptive-api-cutover.md), sin migraciones automáticas.
 
 ## 1. Qué hacen los collectors
 
@@ -14,10 +45,10 @@ local. Son de solo lectura: no crean, modifican ni cierran órdenes. La captura 
 refiere a la cuenta completa, no solo al símbolo o período del gráfico donde se
 adjunte el EA.
 
-- **Telemetry v1** publica snapshots vivos de cuenta, posiciones y órdenes, más
+- **Telemetry (estado de cuenta)** publica snapshots de cuenta, posiciones y órdenes, más
   una ventana reciente de operaciones. Mantiene una FIFO volátil de hasta 12
   snapshots durante interrupciones.
-- **Activity v2** recorre el historial del broker por ventanas y conserva cursores
+- **Activity (actividad)** recorre el historial del broker por ventanas y conserva cursores
   confirmados. Incluye recuperación profunda del período configurado y una vía
   reciente para actividad nueva. La fecha de inicio es obligatoria.
 
@@ -28,23 +59,25 @@ la cuenta; duplicar collectors puede producir duplicados y conflictos de fuente.
 ## 2. Arquitectura del piloto
 
 ```text
-Telemetry v1 ─┐
-              ├─> Relay local :8776/:8777 ─> FastAPI :8781 ─> SQLite v1 + v2 (schema 5)
-Activity v2 ──┘                                       └─> Dashboard :8775 ─> navegador
+Telemetry ─┐
+           ├─> Relay :8776/:8777 ─> FastAPI :8781 ─> central.sqlite3 (esquema 7)
+Activity ──┘                         └─> Dashboard :8775 ─> navegador
 ```
 
 El relay mantiene una única cola local para sus dos listeners y reenvía al API.
 FastAPI recibe y sirve las lecturas; el dashboard consulta la API. El dashboard
-no lee las bases SQLite por red. La cola del relay tampoco es la base histórica
-v2/esquema 5. Cada componente debe usar las rutas y archivos que ya fueron
-provisionados para el piloto; no se debe crear una cola o base nueva al arrancar.
+no lee SQLite por red. La cola del relay tampoco es la base histórica. El piloto
+local anterior usaba archivos independientes; el bootstrap del contrato actual
+crea un único archivo central de esquema 7. Cada componente debe usar los recursos
+provisionados para su topología. El corte requiere una outbox nueva; el runtime
+no debe crearla al arrancar ni adoptar automáticamente una outbox anterior.
 
 Los puertos de loopback de este flujo son:
 
 | Servicio | Puerto | Uso |
 | --- | ---: | --- |
-| Relay, listener v1 | 8776 | Ingesta local de Telemetry |
-| Relay, listener v2 | 8777 | Ingesta local de Activity |
+| Relay, listener de estado | 8776 | Ingesta local de Telemetry |
+| Relay, listener de actividad | 8777 | Ingesta local de Activity |
 | FastAPI | 8781 | Ingesta central y lecturas autenticadas |
 | Dashboard | 8775 | Interfaz web local |
 
@@ -52,34 +85,37 @@ Los EAs apuntan al relay. El destino central del relay apunta a FastAPI. No
 configure el relay para reenviar a sus propios puertos `8776` o `8777`: eso
 crearía un bucle. Si se parte de
 [`telemetry-relay.example.json`](telemetry-relay.example.json)
-o de otra topología anterior, revise ambos `target` y adáptelos a
-`http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`, respectivamente. No edite el ejemplo
-compartido para configurar el piloto; use la topología local provisionada.
+o de otra topología anterior, tenga en cuenta que los targets del contrato
+nuevo son `http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. No los cambie en una outbox activa
+sin corte aprobado. En la topología JSON nueva `contract` sustituye `version`;
+los valores son `account-state` y `trading-events`.
 
 ## 3. Antes de empezar
 
 Este procedimiento presupone que la topología completa ya está preparada:
 
-- La cuenta demo y sus fuentes v1/v2 están provisionadas en los receptores y en
-  las bases correspondientes. Los roles de productor son `live` para Telemetry
-  y `activity` para Activity.
+- La cuenta demo y sus dos fuentes están provisionadas en la base central de
+  esquema 7. Sus roles son `snapshot` para Telemetry (estado) y `activity` para
+  Activity; no son versiones de collector.
 - La identidad MT5 aprobada contiene el login y servidor esperados. Compruebe
   ambos directamente en la terminal demo con el operador responsable.
-- FastAPI, relay y dashboard usan los archivos, bases, secretos y cola existentes
-  de ese piloto. La API y el dashboard no provisionan fuentes ni migran bases al
-  arrancar.
+- FastAPI, relay y dashboard usan la configuración y los secretos preparados
+  para este contrato, la base central de esquema 7 y su outbox provisionada.
+  La API y el dashboard no provisionan fuentes ni migran bases al arrancar.
 - La configuración del relay asocia cada `SourceId`, cuenta, rol y token local
-  con su destino central autorizado. Los productores no se autoprovisionan.
+  con su destino central autorizado. El JSON usa `contract: account-state` para
+  estado y `contract: trading-events` para actividad. Los productores no se
+  autoprovisionan.
 - Se revisó el commit de las fuentes que se instalarán y su compatibilidad con la
-  API, el relay y las bases actuales.
+  API, el relay y la base central.
 
 Si falta cualquiera de estos elementos, deténgase y siga las guías de preparación:
 
 - [Arranque conjunto de dashboard y API central](central-api-dashboard.md)
 - [Operación local de la API central](central-api-operation.md)
 - [Relay con outbox durable](durable-telemetry-relay.md)
-- [Creación de la base SQLite v5](create-sqlite-v5.md)
+- [Base SQLite central](central-sqlite.md)
 
 La creación de bases, la migración, la actualización de targets de una outbox y
 la instalación en terminales son operaciones distintas. No reutilice una cola o
@@ -87,7 +123,7 @@ base de otro piloto y no cambie un target operativo sin un corte planificado.
 
 ### 3.1 Demo y guarda de identidad
 
-La versión instalada solo acepta una cuenta demo cuyo login y servidor coinciden
+La versión descrita solo acepta una cuenta demo cuyo login y servidor coinciden
 con `ExpectedDemoLogin` y `ExpectedDemoServer`. Estos inputs deben corresponder a
 la identidad demo confirmada por el operador. No son un almacén de credenciales
 del broker: nunca introduzca una contraseña de trading.
@@ -105,9 +141,10 @@ los productores son:
 | --- | --- |
 | Token local de Telemetry EA al relay | `RELAY_LIVE_LOCAL_TOKEN` |
 | Token local de Activity EA al relay | `RELAY_ACTIVITY_LOCAL_TOKEN` |
-| Token central del relay para ingesta v1 | `RELAY_LIVE_CENTRAL_TOKEN`, alineado con `CENTRAL_V1_INGEST` |
-| Token central del relay para ingesta v2 Activity | `RELAY_ACTIVITY_CENTRAL_TOKEN`, alineado con `CENTRAL_V2_ACTIVITY` |
-| Token de lectura del dashboard/API | `CENTRAL_V1_READ` y `CENTRAL_V2_READ` |
+| Token central para ingesta snapshot | `CENTRAL_SNAPSHOT_INGEST` |
+| Token central para ingesta live | `CENTRAL_LIVE_INGEST` |
+| Token central para ingesta Activity | `CENTRAL_ACTIVITY_INGEST` |
+| Tokens centrales de lectura | `CENTRAL_ACCOUNT_READ` y `CENTRAL_TRADING_READ` |
 | Token humano de login al dashboard | `TRADINGLAB_DASHBOARD_TOKEN` |
 
 Los tokens locales de Telemetry y Activity son distintos. Los tokens centrales,
@@ -136,12 +173,12 @@ registra automáticamente. Un `SourceId` identifica la fuente; no concede permis
 
 ## 4. Preparar los servicios locales
 
-Arranque los servicios en este orden, usando el checkout y archivos locales que
-ya se usan para el piloto:
+Arranque los servicios en este orden, usando el checkout y los archivos locales
+preparados para el contrato descriptivo:
 
-1. **FastAPI**, con las bases v1 y v2 provisionadas, credenciales centrales y
-   puerto `8781`.
-2. **Relay**, con la misma outbox y topología provisionadas, sus secretos locales
+1. **FastAPI**, con `central.sqlite3` en esquema global 7, identidades
+   provisionadas, credenciales centrales y puerto `8781`.
+2. **Relay**, con la outbox nueva provisionada para el corte y la topología, secretos locales
    y centrales, y ambos listeners `8776` y `8777`. Su topología debe apuntar a
    FastAPI en `8781`, no a los listeners del propio relay.
 3. **Dashboard**, conectado a FastAPI en `8781`, con los dos `SourceId` ya
@@ -151,10 +188,12 @@ Los comandos completos con flags de esta instalación están en
 [arranque conjunto](central-api-dashboard.md). Allí se muestran rutas ilustrativas;
 reemplace rutas por las del piloto local sin crear archivos operativos nuevos.
 La configuración local de credenciales vive fuera de Git. El relay requiere su
-archivo de cola y configuración existentes; FastAPI requiere sus bases existentes.
+archivo de cola y configuración provisionados; FastAPI requiere la base central
+de esquema 7.
 
 No genere, inicialice, recree ni migre una base o una cola como parte del arranque
-normal. No cambie destinos centrales de la outbox sin plan. Un ACK local del relay
+normal. No reutilice automáticamente una outbox anterior ni cambie destinos centrales
+sin un corte aprobado. Un ACK local del relay
 significa que el mensaje entró en la cola durable; el ACK central llega después y
 es una confirmación distinta.
 
@@ -184,14 +223,25 @@ Los tres headers deben estar junto a los dos fuentes durante la compilación.
 5. Mantenga los `.ex5` fuera de Git. La compilación por sí sola no instala el EA
    en ninguna terminal.
 
-La versión `0.2.1`/`activity-0.7.1` se validó en Juampi el 5 de noviembre de 2026.
-No use un ZIP antiguo preparado para otra persona como sustituto de esta versión:
-ese ZIP no representa los binarios de este manual ni garantiza su logging.
+Las versiones `0.3.0`/`activity-0.8.0` están preparadas y compiladas; los cuatro
+scripts de pruebas nativas pasaron según la evidencia de la sección 5.1. La
+instalación y captura con los nuevos collectors siguen pendientes. La validación
+previa de captura en Juampi del 5 de noviembre se refiere a los binarios anteriores; consulte la
+[evidencia de resiliencia](mt5-collector-resilience.md). Un ZIP antiguo no
+representa las versiones descritas ni garantiza sus capacidades.
 
 ### 5.1 Pruebas nativas al cambiar de versión
 
-La versión documentada ya superó estas pruebas; repítalas si cambia el código o
-el build a instalar. La validación completa del código corresponde al gate del
+Los cuatro scripts del build `20261105-223601`, código `6c6f464`, fueron
+compilados con MetaEditor RoboForex `5.0.0.6230` y ejecutados manualmente por el
+usuario en Juampi el 2026-11-05. Expertos informó `0 failure(s)` en Activity,
+Common, Logger y Outbox entre 23:08 y 23:09 (horario mostrado por MT5).
+El mensaje `encoding_failed` de Activity corresponde a una inyección deliberada.
+Esta evidencia valida los scripts, no acredita captura real con los collectors
+nuevos ni sustituye el corte supervisado. El build y los hashes se conservan
+localmente bajo `_storage/collector-builds/20261105-223601/`.
+
+Para repetirlas, ejecútelas solo en la demo aprobada. La validación completa del código corresponde al gate del
 PR en GitHub, no a ejecutar toda la suite Python en cada instalación.
 
 1. En el MetaEditor autorizado, abra y compile los cuatro scripts en
@@ -210,7 +260,9 @@ PR en GitHub, no a ejecutar toda la suite Python en cada instalación.
 
 ## 6. Instalar los binarios en la terminal demo
 
-Instale únicamente los dos `.ex5` compilados y revisados en el paso anterior.
+La instalación de las versiones descritas sigue pendiente y requiere un corte
+aprobado. Los pasos siguientes son el procedimiento para ese corte; no autorizan
+a ejecutarlo. Cuando se autorice, instale únicamente los dos `.ex5` compilados y revisados.
 Copiar los `.mq5` y `.mqh` es opcional: hágalo solo si necesita mantener las
 fuentes junto a los binarios y copie los dos `.mq5` y los tres `.mqh` como grupo.
 No compile de nuevo desde una copia parcial ni use F4 para compilar desde una
@@ -236,7 +288,7 @@ binarios previos preservados y una instalación supervisada.
 ## 7. Permitir WebRequest y configurar los inputs
 
 En MT5 abra **Herramientas > Opciones > Asesores Expertos**. Autorice exactamente
-estas dos bases loopback en esa terminal:
+estos dos listeners loopback en esa terminal:
 
 - `http://127.0.0.1:8776`
 - `http://127.0.0.1:8777`
@@ -250,13 +302,13 @@ Activity. No arrastre un collector encima de un EA de trading activo; MT5 puede
 reemplazar el EA que ya ocupa ese gráfico. El símbolo y timeframe elegidos no
 reducen la captura: se observa la cuenta MT5 completa.
 
-### 7.1 Telemetry v1
+### 7.1 Telemetry (estado de cuenta)
 
 | Input | Valor piloto o default | Descripción |
 | --- | --- | --- |
-| `IngestUrl` | Cambiar al puerto actual `http://127.0.0.1:8776/v1/telemetry` | La fuente trae default `8766`; el piloto actual usa `8776`. Cambie el input, no el código. |
-| `Token` | Token local privado para v1 | Debe coincidir con el relay y ser distinto del token Activity. |
-| `SourceId` | Fuente live v1 provisionada | Ejemplo de default: `demo-terminal-01`; no asumir que ya existe en el relay. |
+| `IngestUrl` | `http://127.0.0.1:8776/api/account-state` | La fuente trae default `8766`; la topología aprobada usa `8776`. Cambie el input, no el código. |
+| `Token` | Token local privado para estado | Debe coincidir con el relay y ser distinto del token Activity. |
+| `SourceId` | Fuente `snapshot` provisionada | Ejemplo: `demo-terminal-01`; no asumir que ya existe en el relay. |
 | `IntervalSeconds` | 5 | Intervalo de snapshots; rango permitido 2–60. |
 | `RequestTimeoutMs` | 500 | Timeout HTTP; debe estar entre 500 y un cuarto del intervalo en milisegundos. |
 | `MaxItemsPerSnapshot` | 200 | Máximo de elementos por colección; rango 1–500. |
@@ -266,17 +318,17 @@ reducen la captura: se observa la cuenta MT5 completa.
 | `ExpectedDemoLogin` | Login de la demo aprobada | Obligatorio y exacto; no es contraseña. |
 | `ExpectedDemoServer` | Servidor de la demo aprobada | Obligatorio y exacto. |
 
-El input URL de ejemplo puede mostrar `8766`, pero el piloto utiliza `8776`.
-Verifique siempre que la URL termine en `/v1/telemetry` y coincida con la fuente
-provisionada del relay.
+El input URL local de ejemplo puede mostrar `8766`, pero el piloto utiliza `8776`.
+Verifique siempre que la URL termine en `/api/account-state` y coincida con la
+fuente `snapshot` provisionada del relay. El formato es `mt5-account-state-v1`.
 
-### 7.2 Activity v2
+### 7.2 Activity (actividad)
 
 | Input | Valor piloto o default | Descripción |
 | --- | --- | --- |
-| `IngestUrl` | `http://127.0.0.1:8777/v2/telemetry` | Listener v2 del relay. |
+| `IngestUrl` | `http://127.0.0.1:8777/api/trading-events` | Listener de actividad del relay. |
 | `Token` | Token local privado de Activity | Distinto del token local de Telemetry. |
-| `SourceId` | Fuente Activity v2 provisionada | Default ilustrativo: `demo-activity-01`. |
+| `SourceId` | Fuente `activity` provisionada | Default ilustrativo: `demo-activity-01`. |
 | `IntervalSeconds` | 10 | Ciclo del EA; rango 2–300. |
 | `RequestTimeoutMs` | 1000 | Timeout; al menos 500 ms y no mayor a la mitad del intervalo. |
 | `HistoryStartServerTime` | Fecha/hora de servidor MT5 aprobada | Obligatoria, mayor que cero; fija el inicio histórico. |
@@ -303,14 +355,16 @@ backfill.
 
 Deje los demás límites en sus defaults salvo que exista un plan de carga y
 validación. No optimice ventanas o presupuestos a ciegas.
+El formato de actividad es `mt5-trading-events-v1`; `v1` identifica la primera
+versión de este formato, no una numeración compartida entre collectors.
 
 ## 8. Adjuntar los EAs
 
 1. Confirme que API, relay y dashboard están disponibles en sus puertos de
    loopback y que las fuentes corresponden a la demo elegida.
 2. Abra dos gráficos nuevos vacíos en la terminal demo aprobada.
-3. Adjunte `TradingLabTelemetry` a un gráfico y configure inputs v1.
-4. Adjunte `TradingLabActivity` al otro gráfico y configure inputs v2, incluida
+3. Adjunte `TradingLabTelemetry` a un gráfico y configure los inputs Telemetry.
+4. Adjunte `TradingLabActivity` al otro gráfico y configure los inputs Activity, incluida
    una fecha histórica de inicio válida.
 5. Verifique visualmente `SourceId`, URL, login y servidor antes de confirmar cada
    diálogo. No guarde ni comparta un preset `.set` con tokens.
@@ -336,12 +390,12 @@ Valide cada etapa por separado:
 4. **Dashboard:** abra `http://127.0.0.1:8775/dashboard` e inicie sesión con el
    token humano, nunca con el token de un EA. Compare valores visibles con MT5 y
    la fuente aprobada. El dashboard consulta FastAPI, no la base directamente.
-5. Consulte progreso v2 para distinguir historial confirmado de trabajo pendiente.
+5. Consulte el progreso de Activity para distinguir historial confirmado de trabajo pendiente.
    El ACK de un lote no significa que se haya completado toda la historia.
 
-La conexión API/relay/dashboard y la recepción central fueron verificadas para
-estas versiones en Juampi. Un operador debe volver a comprobar su propio estado
-local. No registre login, balance, posiciones completas ni capturas de pantalla
+La conexión API/relay/dashboard verificada en Juampi corresponde a los binarios
+anteriores, no a las versiones descritas aquí. La verificación de estas versiones
+queda pendiente de ejecución supervisada. No registre login, balance, posiciones completas ni capturas de pantalla
 que revelen información de cuenta en Git.
 
 ### 9.1 Indicador «Datos parciales»
@@ -418,13 +472,17 @@ casos de desconexión, carga o interrupción larga.
    los collectors; no los quite de los gráficos.
 3. Espere alrededor de 30 segundos. Activity debe conservar el lote pendiente y
    reintentar. Telemetry puede acumular snapshots en su FIFO volátil de hasta 12.
-4. Reinicie el relay con el mismo comando, archivo de configuración, outbox y
-   secretos que antes. No inicialice otra cola.
+4. Reinicie el relay con el mismo comando, archivo de configuración, outbox nueva
+   provisionada para el corte y secretos que antes. No inicialice otra cola.
 5. Espere a que el backoff permita nuevos intentos (hasta 90 segundos) y revise
-   los health checks, ACK central y datos v1/v2.
+   los health checks, ACK central y datos de estado/actividad.
 6. Compruebe en ambos JSONL el `WARN` y su `RESOLVED`; en Activity la secuencia del
    lote pendiente debe mantenerse entre ambos eventos. En Expertos no debe haber
    ruido de inicios o estados saludables.
+
+Esta receta no afirma que las versiones descritas ya hayan superado el corte.
+La prueba supervisada previa corresponde a los binarios anteriores y se resume
+en [resiliencia del collector](mt5-collector-resilience.md).
 
 Activity conserva el cursor y puede reconciliar rangos históricos. Telemetry
 mantiene muestras vivas en una FIFO de 12; su política de reintento puede agotar
@@ -432,8 +490,10 @@ los intentos y descartar una muestra (`snapshot_dropped`). Por tanto, la prueba
 no garantiza recuperar todos los snapshots intermedios. En la validación
 supervisada de Juampi ambos flujos volvieron a recibir ACK central y la cola,
 pendientes, rechazos y errores terminaron en cero; Activity no quedó bloqueado.
-No extrapole ese resultado a 401/403, desconexión del broker, carga ni a todas las
-muestras de Telemetry.
+La prueba 401/403 separada está documentada en
+[resiliencia del collector](mt5-collector-resilience.md). El corte no valida la
+desconexión del broker ni garantiza recuperar todos los snapshots intermedios;
+la prueba nativa densa sigue pendiente.
 
 ## 12. Diagnóstico
 
@@ -479,7 +539,7 @@ una compilación revisada.
 ## 14. Lista de cierre
 
 - [ ] Cuenta demo, login y servidor coinciden con la identidad aprobada.
-- [ ] Fuentes v1 y v2, roles y destinos ya estaban provisionados.
+- [ ] Fuentes `snapshot` y `activity`, roles y destinos están provisionados en SQLite 7.
 - [ ] Tres headers estuvieron junto a ambos fuentes durante la compilación.
 - [ ] MetaEditor correcto produjo ambos binarios con cero errores y cero warnings.
 - [ ] Solo se instalaron los dos `.ex5` del mismo build en la terminal objetivo.
@@ -489,7 +549,7 @@ una compilación revisada.
 - [ ] Relay→API confirmó datos y el dashboard mostró las fuentes previstas.
 - [ ] El corte breve se ejecutó solo si estaba aprobado y se revisaron WARN/RESOLVED.
 - [ ] No se compartieron secretos, presets sensibles, payloads ni cuentas reales.
-- [ ] Se mantienen pendientes las pruebas separadas de 401/403, broker y carga.
+- [ ] Se mantiene pendiente la prueba de desconexión del broker y la prueba nativa densa.
 
 ## Referencias operativas
 
@@ -499,5 +559,5 @@ de diseño y evidencia de robustez consulte
 pruebas integradas consulte [API, relay y dashboard](central-api-dashboard.md),
 [operación de API](central-api-operation.md) y
 [operación de outbox](durable-telemetry-relay.md). Para una base nueva consulte
-[creación SQLite v5](create-sqlite-v5.md); no aplique esa guía como paso de rutina
-en un piloto ya provisionado.
+[base central SQLite](central-sqlite.md) y [guía de cutover descriptivo](descriptive-api-cutover.md);
+no aplique creación de base ni cambio de outbox como paso de rutina en un piloto ya provisionado.

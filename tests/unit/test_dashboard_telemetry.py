@@ -36,7 +36,7 @@ def envelope(
     source_id: str = "demo-terminal-01",
 ) -> TelemetryEnvelope:
     return TelemetryEnvelope(
-        schema_version="mt5-telemetry-v1",
+        schema_version="mt5-account-state-v1",
         collector_version="0.1.0",
         source_id=source_id,
         session_id="session-1",

@@ -55,7 +55,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Puerto loopback; repetir para varios listeners (por defecto: 8780).",
     )
     parser.add_argument("--max-mib", type=int, default=64)
-    parser.add_argument("--max-records", type=int, default=100_000)
+    parser.add_argument(
+        "--max-records",
+        type=int,
+        default=100_000,
+        help="Límite de mensajes pendientes o rechazados (por defecto: 100000)",
+    )
     args = parser.parse_args(argv)
     try:
         if not args.queue.is_absolute() or args.queue.suffix != ".sqlite3":

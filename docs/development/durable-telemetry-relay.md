@@ -78,8 +78,10 @@ Un ACK central válido es HTTP 200 (duplicado) o 202 (aceptado), con JSON
 `status`, `sequence_gap` entero no negativo y, para v2, `out_of_order` booleano.
 El commit local posterior cambia a `acked`, borra el cuerpo y el error, registra
 `confirmed_at` y resta el tamaño del cuerpo a `pending_bytes`; `records` no
-cambia. Fallos de red, timeout, 5xx, 408 o 429 dejan el mensaje `pending` con
-error y reintento programado. Redirecciones y otros 4xx lo dejan `rejected`,
+cambia porque cuenta las filas retenidas para deduplicación. Al confirmar, el
+mensaje deja de ocupar la cuota `max_records`. Fallos de red, timeout, 5xx,
+408 o 429 dejan el mensaje `pending` con error y reintento programado.
+Redirecciones y otros 4xx lo dejan `rejected`,
 conservando cuerpo y bloqueando ese stream. `--retry-stream` primero muestra
 una vista previa; con `--apply` cambia los rechazados del stream a `pending`,
 pone `due=0` y limpia `error`, sin modificar identidad, cuerpo ni intentos.
@@ -161,12 +163,23 @@ El ejemplo es genérico; no describe el almacenamiento del piloto validado.
 
 Copiar y adaptar [la topología de ejemplo](telemetry-relay.example.json) a un
 archivo local. Define las identidades y targets; las credenciales se referencian
-por nombre de variable. V1 utiliza rol live; v2 admite live/activity según fuente.
+por nombre de variable. En la configuración descriptiva, `contract` sustituye
+la clave anterior `version` y usa `account-state` o `trading-events` según la
+fuente. `account-state` requiere `role: snapshot`; `trading-events` admite
+`role: live` o `role: activity`. El relay rechaza combinaciones incompatibles.
+No edite el ejemplo compartido como parte de una configuración local.
 Configurar credenciales distintas para cada productor y frontera. El token local
 debe coincidir con el EA; el central, con el receptor de destino. Los targets
-`8776/8777` del ejemplo son ilustrativos de receptores legacy: para la topología
-FastAPI validada, adaptarlos a `http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`. No apuntar el relay a sí mismo.
+`8776/8777` del ejemplo son ilustrativos de receptores legacy: para el contrato
+descriptivo de FastAPI, usar `http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. No apuntar el relay a sí mismo.
+El cambio de targets y configuración requiere el corte coordinado descrito en
+[la guía de cutover](descriptive-api-cutover.md); no reescriba una outbox activa.
+El relay nuevo valida que las fuentes pendientes estén configuradas y rechaza
+mensajes cuya fuente falta para no dejarlos huérfanos sin aviso. También rechaza
+bindings v1/v2 antiguos incluso con todos sus mensajes ACKed; no adopta esa cola
+automáticamente. Drene la cola anterior y cree una nueva antes del cutover, o
+presérvela intacta y cree otra solo con aprobación y plan de recuperación.
 
 Se admiten variables del proceso o un archivo local ignorado `.env.relay` con
 asignaciones `RELAY_...=valor`, una por línea y sin comillas. No versionarlo ni
@@ -178,7 +191,8 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 
 El listener queda en `127.0.0.1:8780` y admite ambas rutas POST, `/v1/telemetry`
 y `/v2/telemetry`. `GET /health` incluye `diagnostics_version` (actualmente 2),
-`states`, `pending_bytes`, `oldest_pending_seconds`, `max_records`, `max_bytes`,
+`states`, `active_records`, `retained_records`, `pending_bytes`,
+`oldest_pending_seconds`, `max_records`, `max_bytes`,
 `last_central_ack_at`, `errors` e `ingress_rejections`; no expone cuerpos ni
 tokens. `last_central_ack_at` es Unix UTC en segundos o null. Los motivos fijos
 de `ingress_rejections` incluyen errores de Host/Origin, autenticación,
@@ -232,14 +246,18 @@ desde Python. El archivo lock puede permanecer al cerrar, sin retener el bloqueo
   HTTP se permite solo con `127.0.0.1` para pruebas.
 - Un 200/202 sin el cuerpo JSON esperado conserva el pendiente. Un ACK local
   describe admisión local; nunca implica cobertura ni persistencia central.
-- Por defecto: 64 MiB de cuerpos pendientes y 100.000 registros totales, incluyendo
-  huellas ya confirmadas. Al alcanzar un límite, rechaza mensajes nuevos con 503;
-  los duplicados siguen siendo reconocibles. `--max-mib` y `--max-records` ajustan
-  límites. Son límites lógicos; el archivo incluye índices, páginas libres y
-  metadatos adicionales. No constituye una cuota rígida del filesystem.
-- La compactación/retención de huellas requiere otra política. Esta entrega no
-  borra huellas automáticamente; al agotar el total hay que revisar capacidad
-  antes de extender límites. No borrar la outbox para desbloquear una captura real.
+- Por defecto: 64 MiB de cuerpos pendientes/rechazados y 100.000 mensajes no
+  confirmados (`pending` o `rejected`). Al alcanzar un límite, rechaza mensajes
+  nuevos con 503; los duplicados ya reconocidos siguen resolviéndose antes de la
+  cuota. `--max-mib` y `--max-records` ajustan esos límites. Son límites lógicos;
+  el archivo incluye índices, páginas libres y metadatos adicionales. No es una
+  cuota rígida del filesystem.
+- Las filas `acked` conservan identidad y hash para reconocer duplicados tras
+  reinicios y ya no consumen `max_records` ni `max-mib`. No se borran
+  automáticamente: el ledger local continúa creciendo. Definir compactación,
+  retención o rotación requiere una política aparte que preserve el contrato de
+  idempotencia; revisar crecimiento antes de producción y no borrar la outbox
+  para desbloquear una captura real.
 
 La combinación cuenta/rol/identidad/target queda vinculada al stream en la cola.
 Se pueden rotar tokens manteniendo esa vinculación; cambiar el host exige un
@@ -254,24 +272,24 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 Agregar `--apply` para rehabilitar esos mensajes y arrancar de nuevo. Mantiene
 identidad y contenido; no omite un 409 ni cambia la operación que lo produjo.
 
-## Compatibilidad con el sistema actual
+## Componentes anteriores retirados
 
-El relay no sirve las lecturas `/v1/snapshot` o `/v2/activity` del dashboard;
-éstas se consultan en FastAPI central `8781` en la topología validada. Los
-receptores SQLite legacy permanecen para compatibilidad y solo deben iniciarse
-aparte, en puertos libres; no son parte del arranque habitual. FastAPI separa
-ingesta v1 con `CENTRAL_V1_INGEST` y lectura con `CENTRAL_V1_READ`.
-`TRADINGLAB_V1_READ_TOKEN` corresponde solo al receptor legacy.
-
-Los receptores SQLite admiten mensajes con capturas antiguas; sus proyecciones
-conservan la captura original y no infieren frescura del ACK. El modo memoria v1
-no es un destino válido para garantías durables: usar siempre receptor SQLite.
+El relay no sirve lecturas del dashboard; éstas se consultan en FastAPI central
+`8781`. En el contrato descriptivo, las lecturas usan `/api/accounts/*` y
+`/api/trading/*`. Los
+Los receptores SQLite independientes y sus CLIs fueron retirados del producto;
+no intente iniciarlos desde recetas históricas. FastAPI separa
+credenciales de ingesta de snapshot/live/activity y de lectura de cuenta/trading;
+consulte [la guía de cutover](descriptive-api-cutover.md) para los nombres
+vigentes.
+Los antiguos datasets se conservan como archivos, pero no hay runtime para
+abrirlos ni migrarlos automáticamente. La ingesta central admite esquema 7.
 
 ## Despliegue remoto futuro
 
 - Preparar servicios macOS y transporte privado HTTPS/Tailscale.
 - Conectar las lecturas del dashboard al backend remoto y sus credenciales.
-- Confirmar configuración persistente de receptores y permisos del directorio.
+- Confirmar configuración persistente de la API central y permisos del directorio.
 - Observar capacidad y atraso del piloto; definir retención de huellas y manejo
   de crecimiento, así como objetivos operativos antes de una cuenta real.
 - La prioridad interna entre backfill y actividad reciente de una misma fuente

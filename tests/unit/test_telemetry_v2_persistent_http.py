@@ -9,10 +9,11 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
+from storage_fixtures import TradingTestPlan
+
 from tradinglab.telemetry.admission_v2 import ProducerIdentity
 from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/telemetry_v2"
@@ -40,20 +41,20 @@ class V2PersistentHttpTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
             page = response.read().decode("utf-8")
-            self.assertIn("/v2/telemetry", page)
+            self.assertIn("/api/trading-events", page)
             self.assertIn("curl", page)
             self.assertNotIn(read_authorization(), page)
         status, catalog = self.request("/docs.json")
         self.assertEqual(status, 200)
-        self.assertTrue(any(row["path"] == "/v2/activity" for row in catalog["routes"]))
-        self.assertEqual(self.request("/v2/activity-progress")[0], 401)
+        self.assertTrue(any(row["path"] == "/api/trading/activity" for row in catalog["routes"]))
+        self.assertEqual(self.request("/api/trading/activity-progress")[0], 401)
         self.assertEqual(self.request("/docs?token=example")[0], 404)
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        self.database = V2ProvisionPlan(
+        self.database = TradingTestPlan(
             root,
             "pilot.sqlite3",
             "account-demo",
@@ -121,16 +122,19 @@ class V2PersistentHttpTest(unittest.TestCase):
         live = self.encoded("live-empty")
         activity = self.encoded("activity-canceled-order")
         self.assertEqual(
-            self.request("/v2/telemetry", body=live, authorization=live_authorization())[0], 202
+            self.request("/api/trading-events", body=live, authorization=live_authorization())[0],
+            202,
         )
         self.assertEqual(
-            self.request("/v2/telemetry", body=activity, authorization=activity_authorization())[0],
+            self.request(
+                "/api/trading-events", body=activity, authorization=activity_authorization()
+            )[0],
             202,
         )
         self.stop_receiver()
         self.start_receiver()
         status, retry = self.request(
-            "/v2/telemetry", body=activity, authorization=activity_authorization()
+            "/api/trading-events", body=activity, authorization=activity_authorization()
         )
         self.assertEqual((status, retry["status"]), (200, "duplicate"))
         with open_v2_registry(self.database) as registry:
@@ -140,15 +144,19 @@ class V2PersistentHttpTest(unittest.TestCase):
 
     def test_authentication_precedes_parsing_and_roles_are_isolated(self) -> None:
         invalid = b"not-json"
-        self.assertEqual(self.request("/v2/telemetry", body=invalid)[0], 401)
-        self.assertEqual(self.request("/v2/telemetry", body=invalid, authorization="x")[0], 401)
+        self.assertEqual(self.request("/api/trading-events", body=invalid)[0], 401)
         self.assertEqual(
-            self.request("/v2/telemetry", body=invalid, authorization=live_authorization())[0],
+            self.request("/api/trading-events", body=invalid, authorization="x")[0], 401
+        )
+        self.assertEqual(
+            self.request("/api/trading-events", body=invalid, authorization=live_authorization())[
+                0
+            ],
             400,
         )
         self.assertEqual(
             self.request(
-                "/v2/telemetry",
+                "/api/trading-events",
                 body=self.encoded("activity-canceled-order"),
                 authorization=live_authorization(),
             )[0],
@@ -159,13 +167,13 @@ class V2PersistentHttpTest(unittest.TestCase):
         message = fixture("live-empty")
         body = json.dumps(message).encode()
         self.assertEqual(
-            self.request("/v2/telemetry", body=body, authorization=live_authorization())[0],
+            self.request("/api/trading-events", body=body, authorization=live_authorization())[0],
             202,
         )
         message["payload"]["account"]["balance"] = 2
         self.assertEqual(
             self.request(
-                "/v2/telemetry",
+                "/api/trading-events",
                 body=json.dumps(message).encode(),
                 authorization=live_authorization(),
             )[0],
@@ -175,7 +183,7 @@ class V2PersistentHttpTest(unittest.TestCase):
         reused_event["sequence"] = 2
         self.assertEqual(
             self.request(
-                "/v2/telemetry",
+                "/api/trading-events",
                 body=json.dumps(reused_event).encode(),
                 authorization=live_authorization(),
             )[0],
@@ -183,27 +191,30 @@ class V2PersistentHttpTest(unittest.TestCase):
         )
         status, health = self.request("/health")
         self.assertEqual(status, 200)
-        self.assertEqual((health["storage"], health["accepted"]), ("sqlite-v2", 1))
+        self.assertEqual((health["storage"], health["accepted"]), ("sqlite", 1))
         self.assertNotIn("account_id", health)
         self.assertEqual(
-            self.request("/v1/telemetry", body=body, authorization=live_authorization())[0], 404
+            self.request("/api/account-state", body=body, authorization=live_authorization())[0],
+            404,
         )
         self.assertEqual(
-            self.request("/v2/telemetry?x=1", body=body, authorization=live_authorization())[0],
+            self.request("/api/trading-events?x=1", body=body, authorization=live_authorization())[
+                0
+            ],
             404,
         )
 
     def test_activity_read_uses_separate_auth_and_returns_coverage(self) -> None:
         self.assertEqual(
             self.request(
-                "/v2/telemetry",
+                "/api/trading-events",
                 body=self.encoded("activity-canceled-order"),
                 authorization=activity_authorization(),
             )[0],
             202,
         )
         route = (
-            "/v2/activity?entity=order&from_msc=1792656000000"
+            "/api/trading/activity?entity=order&from_msc=1792656000000"
             "&to_msc=1792656060001&magic_number=11122&limit=1"
         )
         self.assertEqual(self.request(route)[0], 401)
@@ -222,15 +233,15 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertEqual(payload["coverage"]["incomplete_batches"], 0)
 
     def test_activity_authentication_precedes_query_validation(self) -> None:
-        self.assertEqual(self.request("/v2/activity?broken")[0], 401)
+        self.assertEqual(self.request("/api/trading/activity?broken")[0], 401)
         self.assertEqual(
-            self.request("/v2/activity?broken", authorization=read_authorization())[0],
+            self.request("/api/trading/activity?broken", authorization=read_authorization())[0],
             400,
         )
 
     def test_activity_progress_returns_latest_durable_heartbeat(self) -> None:
         empty_status, empty = self.request(
-            "/v2/activity-progress", authorization=read_authorization()
+            "/api/trading/activity-progress", authorization=read_authorization()
         )
         self.assertEqual((empty_status, empty), (200, {"activity_progress": None}))
 
@@ -251,12 +262,16 @@ class V2PersistentHttpTest(unittest.TestCase):
         }
         body = json.dumps(heartbeat, separators=(",", ":")).encode()
         self.assertEqual(
-            self.request("/v2/telemetry", body=body, authorization=activity_authorization())[0],
+            self.request("/api/trading-events", body=body, authorization=activity_authorization())[
+                0
+            ],
             202,
         )
 
-        self.assertEqual(self.request("/v2/activity-progress")[0], 401)
-        status, result = self.request("/v2/activity-progress", authorization=read_authorization())
+        self.assertEqual(self.request("/api/trading/activity-progress")[0], 401)
+        status, result = self.request(
+            "/api/trading/activity-progress", authorization=read_authorization()
+        )
         self.assertEqual(status, 200)
         progress = result["activity_progress"]
         self.assertEqual(progress["account_id"], "account-demo")
@@ -264,20 +279,22 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertEqual(progress["status"], "ok")
         self.assertEqual(progress["values"]["latest_position_id"], "600000000000000001")
         self.assertEqual(
-            self.request("/v2/activity-progress?x=1", authorization=read_authorization())[0],
+            self.request("/api/trading/activity-progress?x=1", authorization=read_authorization())[
+                0
+            ],
             400,
         )
 
     def test_position_cycles_require_read_auth_and_preserve_eligibility(self) -> None:
         self.assertEqual(
             self.request(
-                "/v2/telemetry",
+                "/api/trading-events",
                 body=self.encoded("activity-position-reconcile"),
                 authorization=activity_authorization(),
             )[0],
             202,
         )
-        route = "/v2/position-cycles?owner_magic=11122&limit=1"
+        route = "/api/trading/position-cycles?owner_magic=11122&limit=1"
         self.assertEqual(self.request(route)[0], 401)
         status, payload = self.request(route, authorization=read_authorization())
 
@@ -291,7 +308,7 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertTrue(cycle["eligible_for_autonomous_metrics"])
 
         ranged = (
-            "/v2/position-cycles?from_msc=1792656000000&to_msc=1792656060001"
+            "/api/trading/position-cycles?from_msc=1792656000000&to_msc=1792656060001"
             "&closed_only=true&limit=1"
         )
         status, ranged_payload = self.request(ranged, authorization=read_authorization())
@@ -299,14 +316,14 @@ class V2PersistentHttpTest(unittest.TestCase):
         self.assertEqual(len(ranged_payload["items"]), 1)
         self.assertEqual(
             self.request(
-                "/v2/position-cycles?from_msc=1792656000000&limit=1",
+                "/api/trading/position-cycles?from_msc=1792656000000&limit=1",
                 authorization=read_authorization(),
             )[0],
             400,
         )
         self.assertEqual(
             self.request(
-                "/v2/position-cycles?closed_only=1&limit=1",
+                "/api/trading/position-cycles?closed_only=1&limit=1",
                 authorization=read_authorization(),
             )[0],
             400,
@@ -314,7 +331,7 @@ class V2PersistentHttpTest(unittest.TestCase):
 
         self.assertEqual(
             self.request(
-                "/v2/position-cycles?limit=01",
+                "/api/trading/position-cycles?limit=01",
                 authorization=read_authorization(),
             )[0],
             400,

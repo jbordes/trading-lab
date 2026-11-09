@@ -7,17 +7,17 @@ from html import escape
 from http.server import BaseHTTPRequestHandler
 
 
-def api_catalog(version: str) -> dict[str, object]:
+def api_catalog(contract: str) -> dict[str, object]:
     """Describe implemented receiver routes, separate from the planned remote transport."""
-    if version not in {"v1", "v2"}:
-        raise ValueError("Unsupported receiver version")
+    if contract not in {"account-state", "trading-events"}:
+        raise ValueError("Unsupported receiver contract")
     common = [
         ("GET", "/health", "Sin token", "Salud del receptor; no demuestra cobertura completa."),
         ("GET", "/docs", "Sin token", "Referencia navegable, sin datos de cuenta."),
         ("GET", "/docs.json", "Sin token", "Este catálogo JSON; no es OpenAPI."),
         (
             "POST",
-            f"/{version}/telemetry",
+            f"/api/{contract}",
             "Bearer del productor",
             "JSON UTF-8, Content-Length único, máximo 256 KiB (o límite configurado menor). "
             "202: aceptado; 200: duplicado idéntico. No cambiar identidad al reintentar.",
@@ -25,27 +25,49 @@ def api_catalog(version: str) -> dict[str, object]:
     ]
     routes = (
         [
-            ("GET", "/v1/snapshot", "Bearer v1", "source_id obligatorio. Última muestra viva."),
             (
                 "GET",
-                "/v1/deals",
-                "Bearer v1",
+                "/api/accounts/snapshot",
+                "Bearer de cuenta",
+                "source_id obligatorio. Última muestra viva.",
+            ),
+            (
+                "GET",
+                "/api/accounts/deals",
+                "Bearer de cuenta",
                 "source_id, from_msc, to_msc obligatorios; "
                 "magic_number, limit (1..100), cursor opcionales. Requiere persistencia.",
             ),
             (
                 "GET",
-                "/v1/account-history",
-                "Bearer v1",
+                "/api/accounts/history",
+                "Bearer de cuenta",
                 "source_id, from_msc, to_msc "
                 "obligatorios. Hasta 366 días y 480 puntos; requiere persistencia.",
             ),
+            (
+                "GET",
+                "/api/accounts/evolution",
+                "Bearer de cuenta",
+                "source_id, from_msc, to_msc obligatorios (UTC). Hasta 366 días y 480 puntos. "
+                "Combina cierres diarios y último día observado sin escribir. "
+                "unconsolidated_history indica días antiguos pendientes de consolidar.",
+            ),
+            (
+                "GET",
+                "/api/accounts/progression",
+                "Bearer de cuenta",
+                "source_id, from_server_msc y to_server_msc obligatorios; "
+                "reloj del broker, hasta 366 días y 480 puntos. PnL realizado y balance "
+                "reconstruido con referencia válida; no reconstruye equity. "
+                "status, balance_status y pnl_from_server_msc informan cobertura.",
+            ),
         ]
-        if version == "v1"
+        if contract == "account-state"
         else [
             (
                 "GET",
-                "/v2/activity",
+                "/api/trading/activity",
                 "Bearer de lectura",
                 "entity=deal|order, from_msc, "
                 "to_msc obligatorios; magic_number, limit (1..100), cursor opcionales. "
@@ -53,14 +75,14 @@ def api_catalog(version: str) -> dict[str, object]:
             ),
             (
                 "GET",
-                "/v2/activity-progress",
+                "/api/trading/activity-progress",
                 "Bearer de lectura",
                 "Sin parámetros. "
                 "activity_progress puede ser null; progreso no equivale a cobertura.",
             ),
             (
                 "GET",
-                "/v2/position-cycles",
+                "/api/trading/position-cycles",
                 "Bearer de lectura",
                 "Opcionales: owner_magic "
                 "o owner_magics (CSV hasta 12), from_msc y to_msc juntos, closed_only=true|false, "
@@ -70,27 +92,27 @@ def api_catalog(version: str) -> dict[str, object]:
             ),
             (
                 "GET",
-                "/v2/position-cycle-magics",
+                "/api/trading/position-cycle-magics",
                 "Bearer de lectura",
                 "Sin parámetros. Respuesta: magics, hasta 100 identificadores.",
             ),
         ]
     )
     query = (
-        "/v1/snapshot?source_id=demo-terminal-01"
-        if version == "v1"
-        else "/v2/activity?entity=deal&from_msc=1792886400000&to_msc=1792972800000&limit=50"
+        "/api/accounts/snapshot?source_id=demo-terminal-01"
+        if contract == "account-state"
+        else "/api/trading/activity?entity=deal&from_msc=1792886400000&to_msc=1792972800000&limit=50"
     )
-    port = 8776 if version == "v1" else 8777
+    port = 8776 if contract == "account-state" else 8777
     return {
-        "title": f"TradingLab — receptor {version}",
-        "scope": "API local implementada. El transporte central remoto todavía está pendiente.",
-        "authentication": "Bearer en Authorization, nunca en la URL. En v2 la credencial de "
+        "title": f"TradingLab — receptor {contract}",
+        "scope": "Adaptador HTTP de pruebas; la API central describe el contrato completo mediante OpenAPI.",
+        "authentication": "Bearer en Authorization, nunca en la URL. En trading-events la credencial de "
         "lectura es distinta de las credenciales live/activity. Provisionar fuentes antes de enviar.",
         "conventions": "Consultas temporales [from_msc, to_msc); conservar la escala MT5. "
         "Reutilizar next_cursor sin modificarlo ni cambiar filtros. Tickets y Magic son texto. "
         "captured_at es UTC; los tiempos históricos MT5 no deben convertirse suponiendo un offset.",
-        "durability": "V2 confirma después del commit SQLite. V1 solo garantiza persistencia "
+        "durability": "Trading-events confirma después del commit SQLite. Account-state solo garantiza persistencia "
         "en modo SQLite, no en modo memoria. Un ACK local no implica un ACK central remoto.",
         "errors": "400: solicitud inválida; 401: credencial inválida; 403: fuente no autorizada; "
         "409: conflicto de identidad/secuencia (requiere revisión); 413: cuerpo excesivo; "
@@ -102,12 +124,12 @@ def api_catalog(version: str) -> dict[str, object]:
         ],
         "examples": [
             f'curl "http://127.0.0.1:{port}{query}" -H "Authorization: Bearer <TOKEN_LECTURA>"',
-            f'curl "http://127.0.0.1:{port}/{version}/telemetry" '
+            f'curl "http://127.0.0.1:{port}/api/{contract}" '
             '-H "Authorization: Bearer <TOKEN_PRODUCTOR>" '
             '-H "Content-Type: application/json" --data-binary @mensaje.json',
         ],
-        "message_help": "mensaje.json debe contener un mensaje del collector de la misma "
-        "versión. V2 exige schema_version, collector_version, source_id, session_id, sequence, "
+        "message_help": "mensaje.json debe contener un mensaje del collector de la mismo "
+        "contrato. Trading-events exige schema_version, collector_version, source_id, session_id, sequence, "
         "event_id=session_id:sequence, captured_at, kind y payload. "
         "El payload depende del tipo: live_snapshot, activity_batch o heartbeat. "
         "position_reconcile es un reason de activity_batch, no un kind independiente. "
@@ -150,11 +172,11 @@ def render_api_docs(catalog: dict[str, object]) -> bytes:
     ).encode()
 
 
-def serve_api_docs(handler: BaseHTTPRequestHandler, path: str, version: str) -> bool:
+def serve_api_docs(handler: BaseHTTPRequestHandler, path: str, contract: str) -> bool:
     """Serve exact static routes; no query strings or backend access."""
     if path not in {"/docs", "/docs.json"}:
         return False
-    catalog = api_catalog(version)
+    catalog = api_catalog(contract)
     html = path == "/docs"
     data = (
         render_api_docs(catalog)

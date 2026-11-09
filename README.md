@@ -4,12 +4,14 @@ Laboratorio para investigar, preparar, validar e incubar estrategias de trading 
 
 ## Estado
 
-El piloto local MT5 está operativo en demo con Telemetry `0.2.1` y Activity
-`activity-0.7.1`, relay durable, API central y dashboard. No está desplegado en la
-Mac ni en producción, no usa enlace privado remoto y no habilita cuentas reales.
-La implementación local requiere revisión humana y el gate de CI antes de
-considerarse integrada. La dirección de arquitectura vigente es 2.4; el entorno
-de desarrollo sigue el Harness 0.2.
+El piloto local MT5 está operativo en demo con Telemetry `0.3.1` y Activity
+`activity-0.8.0`, relay durable, API central y dashboard sobre SQLite esquema 8.
+La rama de histórico diario conserva cambios pendientes de integración, revisión
+y aprobación. La programación del mantenimiento está desarrollada, no instalada.
+No está desplegado
+en la Mac ni en producción, no usa enlace privado remoto y no habilita cuentas
+reales. La dirección de arquitectura vigente es 2.4; el entorno de desarrollo
+sigue el Harness 0.2.
 
 ## Documentación vigente
 
@@ -21,8 +23,12 @@ de desarrollo sigue el Harness 0.2.
 - [Referencia unificada de APIs](docs/development/api-reference.md)
 - [Manual de instalación y operación de los collectors MT5](docs/development/mt5-collector-operations.md)
 - [Preparación de un host remoto para la API central](docs/development/remote-host-setup.md)
+- [Mantenimiento diario automático en Windows, Linux y macOS](docs/development/automatic-maintenance.md)
 - [Arranque conjunto de API, relay y dashboard](docs/development/central-api-dashboard.md)
 - [Operación de la API central](docs/development/central-api-operation.md)
+- [Cutover al contrato descriptivo de la API central](docs/development/descriptive-api-cutover.md)
+- [Base SQLite central](docs/development/central-sqlite.md)
+- [Progresión histórica de cuenta: balance, PnL y equity observada](docs/development/account-progression-history.md)
 - [Relay con outbox durable](docs/development/durable-telemetry-relay.md)
 
 ## Planes y definiciones pendientes
@@ -59,10 +65,11 @@ fuente de verdad.
 
 ## Próximo hito
 
-Completar las validaciones operativas pendientes de 401/403, desconexión del broker
-y carga, y preparar el piloto remoto en la Mac con conectividad privada y gestión
-de credenciales. Las fórmulas financieras existentes siguen sujetas a revisión
-con el socio; las métricas de riesgo y ejecución aún requieren definición.
+Completar las pruebas nuevas de la feature; preparar un
+importador verificado y el cutover coordinado, y después el piloto Mac/Tailscale.
+La prueba de desconexión del broker sigue pendiente. Las fórmulas financieras
+existentes siguen sujetas a revisión con el socio; las métricas de riesgo y
+ejecución aún requieren definición.
 
 ## Dashboard local
 
@@ -72,18 +79,29 @@ Probar la interfaz sin conectar un terminal:
 uv run python scripts/live_dashboard.py --demo
 ```
 
-El comando solicita de forma oculta un token humano local para el dashboard. Se
-ingresa ese mismo token en `/login`; no se escribe en argumentos ni en Git. El
-modo de fuente siempre es explícito: se debe indicar `--demo`, `--telemetry` o la
-configuración central con `--central-api-port`, y la aplicación no descubre terminales MT5.
-El modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
-descrito debajo utiliza el puerto `8775`.
-
-El flujo MT5 central del piloto utiliza collectors de solo lectura en cuentas
-demo aprobadas:
+Para conectar el dashboard al backend central, use únicamente el modo central:
 
 ```text
-EAs -> relay local 8776/8777 -> FastAPI 8781 -> SQLite v1 + v2 (schema 5)
+uv run python scripts/live_dashboard.py --central-api-port 8781 --snapshot-source ID_SNAPSHOT --activity-source ID_ACTIVITY --secrets-file .env.central --dashboard-secrets-file .env.dashboard --port 8775
+```
+
+Opcionalmente ajuste frescura con `--capture-interval` y
+`--snapshot-max-age`. El dashboard no descubre terminales MT5 ni lee
+receptores independientes.
+
+El comando solicita de forma oculta un token humano local para el dashboard. Se
+ingresa ese mismo token en `/login`; no se escribe en argumentos ni en Git. El
+modo demo usa por defecto `http://127.0.0.1:8765/dashboard`; el piloto central
+descrito debajo utiliza el puerto `8775`.
+
+La arquitectura del piloto MT5 utiliza collectors de solo lectura en cuentas
+demo aprobadas. El piloto local ya pasó por el corte supervisado al contrato
+descriptivo y esquema 8, con histórico diario observado. No implica que se haya
+integrado en la rama estable ni desplegado en otro host. Ninguna instalación
+existente se migra automáticamente:
+
+```text
+EAs -> relay local 8776/8777 -> FastAPI 8781 -> central.sqlite3 (schema 8)
                                             -> dashboard local 8775
 ```
 
@@ -91,6 +109,9 @@ El dashboard consulta FastAPI, no accede a SQLite por red. Los cuatro puertos
 permanecen en loopback. El token humano del dashboard es distinto de los tokens
 de lectura de la API, de ingesta central y de los dos tokens locales de los EAs.
 No incluyas valores de tokens en comandos, documentación ni Git.
+
+La migración explícita 7 → 8 y el estado de la consolidación se describen en
+[histórico diario de cuenta](docs/development/daily-account-history-storage.md).
 
 La vista `Trading` permite consultar la actividad en curso. `Performance financiera`
 reúne operaciones cerradas, métricas y comparaciones de EAs; `Performance de ejecución`

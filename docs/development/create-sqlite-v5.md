@@ -1,5 +1,13 @@
 # Crear una base SQLite v5 vacía
 
+> Este procedimiento crea una base v2 independiente para el piloto anterior.
+> No la utilice para el host remoto ni para la FastAPI central, que usan un solo
+> archivo `central.sqlite3` con esquema global 6. Este procedimiento es histórico;
+> sus comandos de creación, provisión y migración se retiraron y no deben ejecutarse.
+> consulte el [bootstrap remoto vigente](remote-host-setup.md) para esquema 7 y
+> la [guía de cutover](descriptive-api-cutover.md). Consulte
+> [el manual del host remoto](remote-host-setup.md).
+
 El comando portable `scripts/create_telemetry_v2_db.py` crea una base nueva con
 el esquema actual (5), una cuenta interna y sus fuentes live/activity, sin
 historial ni mensajes. No requiere tokens ni una conexión a MT5.
@@ -46,7 +54,8 @@ Se crean las tablas e índices actuales sin pasar por migraciones de esquemas vi
 
 No se arranca ningún servicio. El receptor se configura después para usar esta
 ruta, la cuenta y las fuentes. El comando anterior
-`provision_telemetry_v2_db.py` sigue disponible con los mismos argumentos.
+La alternativa `provision_telemetry_v2_db.py` pertenecía a este flujo histórico
+y también fue retirada; no es una CLI disponible.
 
 ## Creación, migración y traslado
 
@@ -57,7 +66,6 @@ ruta, la cuenta y las fuentes. El comando anterior
 - **Mover datos entre servidores:** futura exportación/importación consistente;
   no forma parte de este comando ni del incremento actual.
 
-La base v1 del estado vivo continúa siendo independiente. Esta creación no la
-reemplaza ni modifica. Para operar el dashboard completo fuera de la VPS habrá
-que resolver también su persistencia y transporte conforme al
-[contrato central](../architecture/central-ingestion-api-contract.md).
+La base v1 del estado vivo no se reemplaza con este procedimiento aislado. La
+topología central nueva integra ambos flujos en un solo archivo, según el
+[ADR-0020](../adr/0020-single-central-sqlite-database.md).

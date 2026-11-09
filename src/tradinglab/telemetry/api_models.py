@@ -33,7 +33,7 @@ class Account(WireModel):
     margin_level: float
 
 
-class V1Account(Account, Identity):
+class SnapshotAccount(Account, Identity):
     pass
 
 
@@ -100,7 +100,7 @@ class HistoryOrder(WireModel):
     comment: Annotated[str, Field(max_length=256)]
 
 
-class V1History(WireModel):
+class SnapshotDealHistory(WireModel):
     status: Literal["complete", "truncated", "error"]
     from_server_seconds: DecimalText
     to_server_seconds: DecimalText
@@ -108,14 +108,15 @@ class V1History(WireModel):
     deals: Annotated[list[Deal], Field(max_length=200)]
 
 
-class V1SnapshotPayload(WireModel):
+class AccountStateSnapshotPayload(WireModel):
+    server_time_msc: DecimalText | SkipJsonSchema[None] = None
     reason: Literal["startup", "timer", "trade_activity"]
-    account: V1Account
+    account: SnapshotAccount
     positions_total: Counter
     orders_total: Counter
     positions: Annotated[list[Position], Field(max_length=1000)]
     orders: Annotated[list[LiveOrder], Field(max_length=1000)]
-    history: V1History | SkipJsonSchema[None] = None
+    history: SnapshotDealHistory | SkipJsonSchema[None] = None
 
 
 class Envelope(WireModel):
@@ -127,20 +128,20 @@ class Envelope(WireModel):
     captured_at: Stamp
 
 
-class V1HeartbeatPayload(WireModel):
+class AccountHeartbeatPayload(WireModel):
     status: Literal["ok"]
 
 
-class V1Heartbeat(Envelope):
-    schema_version: Literal["mt5-telemetry-v1"]
+class AccountHeartbeat(Envelope):
+    schema_version: Literal["mt5-account-state-v1"]
     kind: Literal["heartbeat"]
-    payload: V1HeartbeatPayload
+    payload: AccountHeartbeatPayload
 
 
-class V1Snapshot(Envelope):
-    schema_version: Literal["mt5-telemetry-v1"]
+class AccountStateSnapshot(Envelope):
+    schema_version: Literal["mt5-account-state-v1"]
     kind: Literal["account_snapshot"]
-    payload: V1SnapshotPayload
+    payload: AccountStateSnapshotPayload
 
 
 class LivePayload(WireModel):
@@ -209,29 +210,35 @@ class HeartbeatPayload(WireModel):
     activity_progress: ActivityProgress | SkipJsonSchema[None] = None
 
 
-class V2Live(Envelope):
-    schema_version: Literal["mt5-telemetry-v2"]
+class TradingLiveSnapshot(Envelope):
+    schema_version: Literal["mt5-trading-events-v1"]
     kind: Literal["live_snapshot"]
     payload: LivePayload
 
 
-class V2Activity(Envelope):
-    schema_version: Literal["mt5-telemetry-v2"]
+class TradingActivityBatch(Envelope):
+    schema_version: Literal["mt5-trading-events-v1"]
     kind: Literal["activity_batch"]
     payload: ActivityPayload
 
 
-class V2Heartbeat(Envelope):
-    schema_version: Literal["mt5-telemetry-v2"]
+class TradingHeartbeat(Envelope):
+    schema_version: Literal["mt5-trading-events-v1"]
     kind: Literal["heartbeat"]
     payload: HeartbeatPayload
 
 
-V1_REQUEST = TypeAdapter(Annotated[V1Heartbeat | V1Snapshot, Field(discriminator="kind")])
-V2_REQUEST = TypeAdapter(Annotated[V2Live | V2Activity | V2Heartbeat, Field(discriminator="kind")])
+ACCOUNT_STATE_REQUEST = TypeAdapter(
+    Annotated[AccountHeartbeat | AccountStateSnapshot, Field(discriminator="kind")]
+)
+TRADING_EVENTS_REQUEST = TypeAdapter(
+    Annotated[
+        TradingLiveSnapshot | TradingActivityBatch | TradingHeartbeat, Field(discriminator="kind")
+    ]
+)
 
-EXAMPLE_V1 = {
-    "schema_version": "mt5-telemetry-v1",
+EXAMPLE_ACCOUNT_STATE = {
+    "schema_version": "mt5-account-state-v1",
     "collector_version": "example-1",
     "source_id": "example-live",
     "session_id": "example-session",
@@ -241,9 +248,9 @@ EXAMPLE_V1 = {
     "kind": "heartbeat",
     "payload": {"status": "ok"},
 }
-EXAMPLE_V2 = {
-    **EXAMPLE_V1,
-    "schema_version": "mt5-telemetry-v2",
+EXAMPLE_TRADING_EVENTS = {
+    **EXAMPLE_ACCOUNT_STATE,
+    "schema_version": "mt5-trading-events-v1",
     "source_id": "example-activity",
     "payload": {
         "status": "ok",
@@ -254,12 +261,12 @@ EXAMPLE_V2 = {
 }
 
 
-class AckV1(WireModel):
+class AccountStateAck(WireModel):
     status: Literal["accepted", "duplicate"]
     sequence_gap: Counter
 
 
-class AckV2(AckV1):
+class TradingEventsAck(AccountStateAck):
     out_of_order: bool
 
 
@@ -273,7 +280,7 @@ class Health(WireModel):
     services: dict[str, str]
 
 
-class V1Health(WireModel):
+class AccountStateHealth(WireModel):
     status: Literal["ready"]
     storage: Literal["sqlite"]
     accepted: Counter
@@ -293,7 +300,7 @@ class HistoricalDeal(DealValues):
     time_msc: int
 
 
-class V1DealPage(WireModel):
+class DealPage(WireModel):
     account_id: str
     source_id: str
     from_msc: int
@@ -319,6 +326,26 @@ class AccountHistory(WireModel):
     points: list[AccountPoint]
 
 
+class EvolutionPoint(AccountPoint):
+    resolution: Literal["daily", "recent"]
+    broker_day: str | None
+    broker_time: str | None
+
+
+class AccountEvolution(WireModel):
+    account_id: str
+    source_id: str
+    from_msc: int
+    to_msc: int
+    sampling: Literal["daily_close_and_recent"]
+    time_basis: Literal["utc"]
+    bucket_msc: int
+    recent_basis: Literal["none", "broker_day", "last_24h_unassigned"]
+    recent_from_msc: int | None
+    unconsolidated_history: bool
+    points: list[EvolutionPoint] = Field(max_length=480)
+
+
 class ActivityItem(WireModel):
     message_id: int
     ticket: str
@@ -339,6 +366,29 @@ class CoverageRange(WireModel):
 class Coverage(WireModel):
     complete_ranges: list[CoverageRange]
     incomplete_batches: int
+
+
+class AccountProgressionPoint(WireModel):
+    time_msc: DecimalText
+    balance: float | None
+    realized_pnl: float | None
+    net_cash_flow: float | None
+    adjustments: float | None
+
+
+class AccountProgression(WireModel):
+    calculation_version: Literal["account-ledger-v1"]
+    account_id: str
+    source_id: str
+    from_server_msc: int
+    to_server_msc: int
+    time_basis: Literal["broker_wall_clock"]
+    bucket_msc: int
+    status: Literal["complete", "partial"]
+    balance_status: Literal["available", "missing_anchor", "ambiguous_anchor", "incomplete_ledger"]
+    pnl_from_server_msc: DecimalText | None
+    anchor_server_msc: DecimalText | None
+    points: Annotated[list[AccountProgressionPoint], Field(max_length=480)]
 
 
 class ActivityPage(WireModel):

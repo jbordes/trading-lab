@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from tradinglab.telemetry.account_evolution import read_account_evolution
 from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope
 from tradinglab.telemetry.ingest import IngestOutcome
 from tradinglab.telemetry.persisted_view import PersistedSnapshotView
@@ -57,11 +58,14 @@ class PersistentTelemetryReceiver:
         self._closed = False
 
     def accept(self, envelope: TelemetryEnvelope) -> IngestOutcome:
+        """Persist an envelope parsed and validated by the API boundary."""
+        if not isinstance(envelope, TelemetryEnvelope):
+            raise ValueError("Se requiere un envelope de telemetría validado")
         if envelope.source_id != self._source_id:
             raise MessageAdmissionError("Fuente no autorizada por este receptor")
         with self._lock:
             self._require_open()
-            result = self._view.store_message(envelope.canonical_bytes(), received_at=self._clock())
+            result = self._view._store_validated_envelope(envelope, received_at=self._clock())
             if result.duplicate:
                 self._duplicates += 1
             else:
@@ -93,6 +97,20 @@ class PersistentTelemetryReceiver:
                 source_id,
                 from_msc=from_msc,
                 to_msc=to_msc,
+            )
+        finally:
+            self._history_admission.release()
+
+    def account_evolution(self, source_id: str, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        if source_id != self._source_id:
+            raise MessageAdmissionError("Fuente no autorizada por este receptor")
+        with self._lock:
+            self._require_open()
+        if not self._history_admission.acquire(blocking=False):
+            raise TelemetryStorageError("Hay demasiadas consultas históricas simultáneas")
+        try:
+            return read_account_evolution(
+                self._database, source_id, from_msc=from_msc, to_msc=to_msc
             )
         finally:
             self._history_admission.release()

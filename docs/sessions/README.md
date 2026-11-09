@@ -35,13 +35,37 @@ La bitácora es la única excepción autorizada al flujo por pull request. Un co
 - puede contener una o varias bitácoras fechadas hoy bajo `docs/sessions/`;
 - no puede contener ningún otro archivo, ni siquiera documentación auxiliar;
 - no puede crear, modificar, renombrar o borrar entradas de otra fecha;
-- debe pasar el guard antes del commit y del push.
+- debe pasar la guarda de preparación antes del commit y la de publicación antes
+  del push. Son fases distintas: aprobar archivos pendientes no autoriza publicar
+  commits anteriores.
 
 ```text
 uv run python scripts/session.py today --activity "Actividad inicial"
 uv run python scripts/session.py check docs/sessions/2026-10-12.md
+uv run python scripts/session.py guard-publish --phase commit
+```
+
+Después de crear el commit exclusivo de bitácora, actualizar las referencias de
+seguimiento y comprobar todo el rango que se publicaría:
+
+```text
+git fetch origin
 uv run python scripts/session.py guard-publish
 ```
+
+`guard-publish` usa la fase `push` por defecto. Exige árbol limpio, estar en la
+rama estable vigente y un upstream exactamente igual a `origin/<rama-estable>`.
+La referencia remota debe existir y ser ancestro de HEAD. Revisa **cada commit**
+saliente y el contenido de cada versión de la bitácora: solo permite altas o
+modificaciones de archivos regulares no ejecutables del día actual en Madrid.
+Bloquea merges, renombres, borrados, entradas antiguas y cambios ajenos aunque
+después hayan sido revertidos. Sin commits salientes tampoco autoriza publicar.
+
+La guarda solo inspecciona Git local: no hace fetch, commit ni push, y no sustituye
+las protecciones remotas. Después de pasarla, publicar exclusivamente
+`HEAD:refs/heads/<rama-estable>` en `origin`, sin `--force`, `--all` ni tags.
+Si cambian HEAD, archivos, referencia remota o fecha, repetir la validación.
+No usar la fase `commit` como sustituto de la guarda previa al push.
 
 Cuando exista una razón concreta para separar una entrada excepcional, se puede indicar `--topic <tema>`.
 

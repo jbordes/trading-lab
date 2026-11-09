@@ -1,12 +1,12 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.000"
+#property version   "1.101"
 #property strict
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
-input string IngestUrl = "http://127.0.0.1:8766/v1/telemetry";
+input string IngestUrl = "http://127.0.0.1:8776/api/account-state";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string SourceId = "demo-terminal-01";
 input int IntervalSeconds = 5;
@@ -19,8 +19,8 @@ input int MaxDealsPerSnapshot = 200;
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
-const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.2.1";
+const string SCHEMA_VERSION = "mt5-account-state-v1";
+const string COLLECTOR_VERSION = "0.3.1";
 const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
@@ -44,7 +44,7 @@ CollectorCaptureState capture_state = CAPTURE_READY;
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/v1/telemetry");
+   return IsLoopbackCollectorUrl(url, "/api/account-state");
 }
 
 
@@ -311,8 +311,18 @@ int SendMessage(const string body)
 #endif
 
 
+bool IsStableAnchorClock(const long quote_start, const long estimated_start,
+                         const long quote_end, const long estimated_end)
+{
+   return quote_start > 0 && quote_start == estimated_start &&
+          quote_start == quote_end && quote_start == estimated_end;
+}
+
 string BuildSnapshot(const string reason, const ulong sequence)
 {
+   // Bind the balance observation to the broker clock, not a guessed UTC offset.
+   long server_seconds = (long)TimeCurrent();
+   long estimated_server_start = (long)TimeTradeServer();
    bool valid = true;
    string event_id = session_id + ":" + IntegerToString((long)sequence);
    string payload = "{";
@@ -323,6 +333,10 @@ string BuildSnapshot(const string reason, const ulong sequence)
    payload += "\"positions\":" + BuildPositions(valid) + ",";
    payload += "\"orders\":" + BuildOrders(valid) + ",";
    payload += "\"history\":" + BuildHistorySample();
+   // A stale quote clock or a sample crossing seconds is not a safe balance anchor.
+   if(IsStableAnchorClock(server_seconds, estimated_server_start,
+                          (long)TimeCurrent(), (long)TimeTradeServer()))
+      payload += ",\"server_time_msc\":\"" + IntegerToString(server_seconds * 1000) + "\"";
    payload += "}";
 
    string body = "{";

@@ -1,24 +1,29 @@
 # Contrato de la API central de ingesta
 
-Estado: contrato objetivo aprobado para el programa remoto; transporte y
-despliegue pendientes. Las rutas y mensajes locales ya existen.
+Estado: contrato descriptivo en la rama actual, pendiente de integración. El despliegue conectado
+a la Mac y la migración de datos siguen pendientes.
 
 ## Fronteras y compatibilidad
 
-Los EAs publican por loopback en la VPS. Un relay persistirá mensajes pendientes
-y los enviará por HTTPS a la API central. API y SQLite viven en el mismo host.
-Se mantienen `POST /v1/telemetry` y `POST /v2/telemetry` con sus sobres actuales;
-la versión HTTP no equivale a la versión 5 del esquema SQLite.
+Los EAs publican por loopback en la VPS. Un relay persiste mensajes pendientes
+y los envía a la API central. API y SQLite viven en el mismo host. Los contratos
+descriptivos usan `POST /api/account-state` y `POST /api/trading-events` con
+formatos `mt5-account-state-v1` y `mt5-trading-events-v1`; la API usa esquema
+SQLite global 7.
 
-V1 continúa aportando estado vivo y v2 actividad y ciclos. No se fusionan bases
-ni se fuerza una conversión v1/v2 en este incremento. El despliegue deberá
-resolver ambos receptores y sus lecturas para mantener completo el dashboard.
+El contrato de estado de cuenta aporta el snapshot y el contrato de eventos de
+trading aporta live, actividad y ciclos. Ambos se persisten en un único archivo
+SQLite central con fuentes separadas por rol bajo esquema global 7. La API
+descriptiva no versiona la base. No hay aliases HTTP para las rutas anteriores,
+ni runtimes desplegables de los receptores aislados
+([ADR-0021](../adr/0021-descriptive-central-api-contract.md)).
 
 ## Identidad y permisos
 
 La asociación credencial → productor → fuente → cuenta se provisiona fuera de
-la ingesta. Ningún mensaje registra una cuenta automáticamente. En v2 los roles
-live/activity restringen tipos de mensaje; lectura usa credencial independiente.
+la ingesta. Ningún mensaje registra una cuenta automáticamente. Los roles
+`snapshot`, `live` y `activity` restringen tipos de mensaje; lectura usa
+credencial independiente.
 El relay tendrá credenciales centrales distintas de las locales de los EAs.
 Las credenciales se envían solo en Authorization, nunca en URL ni ejemplos reales.
 
@@ -63,6 +68,16 @@ productor y permisos de red. No se cambia la escucha loopback en este paso.
 Registrar profundidad/bytes de cola, último ACK central, edad del pendiente más
 antiguo y causa de bloqueo; no confundir heartbeat, conectividad y cobertura.
 
+Las rutas de lectura descriptivas son `/api/accounts/health`, `/api/accounts/snapshot`,
+`/api/accounts/deals`, `/api/accounts/history`, `/api/trading/activity`,
+`/api/trading/activity-progress`, `/api/trading/position-cycle-magics` y
+`/api/trading/position-cycles`. `/health`, `/docs` y `/openapi.json` no cambian.
+La credencial se separa en `CENTRAL_SNAPSHOT_INGEST`, `CENTRAL_ACCOUNT_READ`,
+`CENTRAL_LIVE_INGEST`, `CENTRAL_ACTIVITY_INGEST` y `CENTRAL_TRADING_READ`.
+Las claves de host son `snapshot_source_id`, `live_source_id` y
+`activity_source_id`. Para el procedimiento de transición, consulte la
+[guía de cutover](../development/descriptive-api-cutover.md).
+
 Las lecturas conservan paginación y filtros del [catálogo vigente](../development/api-reference.md).
 No inferir ausencia de operaciones por fallos de red ni cobertura completa por
 conteos iguales. Conservar tiempos originales MT5 y captura UTC por separado.
@@ -76,10 +91,11 @@ Se sirve sin JavaScript/CDN, sin guardar credenciales ni ejecutar escrituras.
 
 ## Entregables y cierre de este paso
 
-Este contrato formaliza las fronteras y la referencia HTTP navegable. La creación
-v5, el relay durable y las credenciales separadas v1 están preparados en entregas
-sucesivas. Permanecen pendientes traslado entre hosts, HTTPS, servicio macOS y
-pruebas de cortes entre máquinas. No constituye aprobación de despliegue remoto.
+Este contrato formaliza las fronteras y la referencia HTTP navegable. El bootstrap
+de la base central con esquema 7, el relay durable y las credenciales separadas
+están descritos en sus guías operativas. Permanecen pendientes el traslado entre
+hosts, HTTPS, el servicio macOS y las pruebas de cortes entre máquinas. No
+constituye aprobación de despliegue remoto.
 
 Evolución: el [relay optativo](../development/durable-telemetry-relay.md) implementa
 outbox, reintentos y ACK local/central con tests SQLite. La activación remota y

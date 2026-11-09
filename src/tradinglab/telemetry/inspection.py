@@ -7,12 +7,15 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from tradinglab.telemetry.central_schema import (
+    CENTRAL_SCHEMA_VERSION,
+    DATABASE_NAME,
+    validate_central_schema,
+)
 from tradinglab.telemetry.contract import (
     DEFAULT_CAPTURE_FUTURE_TOLERANCE_SECONDS,
     parse_envelope,
 )
-from tradinglab.telemetry.provisioning import DATABASE_NAME
-from tradinglab.telemetry.sqlite_store import SCHEMA_VERSION
 
 
 class TelemetryInspectionError(RuntimeError):
@@ -36,6 +39,12 @@ class TelemetrySummary:
     latest_history_status: str | None
     unique_historical_deals: int
     magic_numbers: tuple[str, ...]
+    account_state_message_count: int
+    trading_events_message_count: int
+    live_snapshot_count: int
+    activity_batch_count: int
+    trading_heartbeat_count: int
+    unique_historical_orders: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +77,9 @@ class InspectionPlan:
                 connection.execute("PRAGMA query_only = ON")
                 connection.execute("BEGIN")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version != SCHEMA_VERSION:
+                if version != CENTRAL_SCHEMA_VERSION:
                     raise TelemetryInspectionError("Versión SQLite de TradingLab no admitida")
+                validate_central_schema(connection)
                 if verify:
                     if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                         raise TelemetryInspectionError("La base no pasó la comprobación SQLite")
@@ -87,14 +97,28 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
         row[0] for row in connection.execute("SELECT source_id FROM sources ORDER BY source_id")
     )
     session_count = connection.execute(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT source_id, session_id FROM telemetry_messages)"
+        """SELECT COUNT(*) FROM (
+             SELECT source_id, session_id FROM telemetry_messages
+             UNION SELECT source_id, session_id FROM telemetry_v2_messages
+           )"""
     ).fetchone()[0]
     counts = connection.execute(
-        """SELECT COUNT(*),
-                  SUM(json_extract(payload_json, '$.kind') = 'account_snapshot'),
-                  SUM(json_extract(payload_json, '$.kind') = 'heartbeat'),
-                  MIN(captured_at_utc), MAX(captured_at_utc)
-           FROM telemetry_messages"""
+        """WITH messages AS (
+             SELECT CASE WHEN compacted_broker_day IS NOT NULL THEN 'account_snapshot'
+                         ELSE json_extract(payload_json, '$.kind') END AS kind, captured_at_utc,
+                    'account-state' AS channel FROM telemetry_messages
+             UNION ALL
+             SELECT kind, captured_at_utc, 'trading-events' FROM telemetry_v2_messages
+           ) SELECT COUNT(*),
+                  COALESCE(SUM(kind = 'account_snapshot'), 0),
+                  COALESCE(SUM(channel = 'account-state' AND kind = 'heartbeat'), 0),
+                  MIN(captured_at_utc), MAX(captured_at_utc),
+                  COALESCE(SUM(channel = 'account-state'), 0),
+                  COALESCE(SUM(channel = 'trading-events'), 0),
+                  COALESCE(SUM(kind = 'live_snapshot'), 0),
+                  COALESCE(SUM(kind = 'activity_batch'), 0),
+                  COALESCE(SUM(channel = 'trading-events' AND kind = 'heartbeat'), 0)
+           FROM messages"""
     ).fetchone()
     latest = connection.execute(
         """SELECT payload_json FROM (
@@ -128,6 +152,13 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
              JOIN sources AS source ON source.source_id = message.source_id
              JOIN json_each(message.payload_json, '$.payload.history.deals') AS deal
              WHERE json_extract(message.payload_json, '$.kind') = 'account_snapshot'
+             UNION
+             SELECT account_id, ticket FROM activity_observations WHERE entity_type = 'deal'
+           )"""
+    ).fetchone()[0]
+    unique_orders = connection.execute(
+        """SELECT COUNT(*) FROM (
+             SELECT DISTINCT account_id, ticket FROM activity_observations WHERE entity_type = 'order'
            )"""
     ).fetchone()[0]
     magic_rows = connection.execute(
@@ -143,6 +174,18 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
              SELECT json_extract(row.value, '$.magic_number')
              FROM telemetry_messages AS message,
                   json_each(message.payload_json, '$.payload.history.deals') AS row
+             UNION
+             SELECT magic_number FROM activity_observations
+             UNION
+             SELECT json_extract(row.value, '$.magic_number')
+             FROM telemetry_v2_messages AS message,
+                  json_each(message.payload_json, '$.payload.positions') AS row
+             WHERE message.kind = 'live_snapshot'
+             UNION
+             SELECT json_extract(row.value, '$.magic_number')
+             FROM telemetry_v2_messages AS message,
+                  json_each(message.payload_json, '$.payload.orders') AS row
+             WHERE message.kind = 'live_snapshot'
            ) SELECT value FROM magic WHERE value IS NOT NULL"""
     ).fetchall()
     magic_numbers = tuple(sorted((row[0] for row in magic_rows), key=int))
@@ -162,4 +205,10 @@ def _summarize(connection: sqlite3.Connection, database: Path, version: int) -> 
         latest_history_status=history_status,
         unique_historical_deals=unique_deals,
         magic_numbers=magic_numbers,
+        account_state_message_count=counts[5],
+        trading_events_message_count=counts[6],
+        live_snapshot_count=counts[7],
+        activity_batch_count=counts[8],
+        trading_heartbeat_count=counts[9],
+        unique_historical_orders=unique_orders,
     )

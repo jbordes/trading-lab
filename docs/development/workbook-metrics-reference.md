@@ -52,6 +52,34 @@ por Stop Loss o Take Profit propias de la operación no son intervenciones por s
 mismas. En cuentas netting no se repartirá de forma sintética el resultado de una
 posición compartida entre EAs.
 
+### Capturas contradictorias de un ciclo
+
+La lectura resuelve las revisiones por cuenta y posición antes de filtrar por EA.
+Si hay distintas versiones del ciclo capturadas en el mismo instante, conserva
+la última captura anterior no ambigua para consulta y añade la exclusión
+`conflicting_evidence`. Su PnL observado no es definitivo ni participa en las
+métricas conjuntas o por EA. Una captura posterior no ambigua resuelve esa
+exclusión; una copia idéntica en el mismo instante no crea conflicto.
+
+Si nunca hubo una captura no ambigua, no se selecciona arbitrariamente una de
+las versiones: el ciclo espera evidencia posterior consistente. Los mensajes
+originales permanecen en el registro persistido en ambos casos. Esta calificación
+se calcula al leer, sin reescribir evidencia ni migrar el esquema SQLite. La API
+y el dashboard deben usar código que reconozca esta nueva razón de exclusión.
+
+### Límite de la consulta interactiva
+
+El cálculo de métricas por ciclos tiene un presupuesto monotónico inicial de
+4 segundos para cobertura, lecturas paginadas y cálculo completo. Si se agota
+o una página repite/retrocede ciclos, devuelve un error explícito: nunca publica
+un agregado parcial como resultado completo. El avance compara fecha y número
+de posición en orden numérico, no el texto del cursor.
+
+El presupuesto es configurable en `V2HistoryProvider`; su ajuste operativo con
+la API remota sigue pendiente. Se propaga a los timeouts de lectura, pero no es
+una cancelación forzada de I/O ya bloqueado. No limita la retención de datos ni
+borra registros de la base.
+
 ## Fuente y alcance
 
 Archivo local `orders-scalping_1 (2).csv.xlsx`, en el Escritorio. Se inspeccionaron

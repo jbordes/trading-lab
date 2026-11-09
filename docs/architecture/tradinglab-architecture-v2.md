@@ -6,11 +6,17 @@ Programa remoto: el [contrato de API central](central-ingestion-api-contract.md)
 formaliza transporte, identidad y confirmaciones. En el piloto local validado
 el 5 de noviembre de 2026, los dos collectors publican al
 [relay durable](../development/durable-telemetry-relay.md), que reenvía a la
-[API central FastAPI](../development/central-api-operation.md) y sus bases SQLite.
+[API central FastAPI](../development/central-api-operation.md), sobre el
+almacenamiento previo del piloto.
 El dashboard consulta la API con credenciales de lectura separadas. FastAPI ofrece
 OpenAPI y `/docs` en el puerto 8781, según [ADR-0018](../adr/0018-fastapi-central-api.md).
-Los catálogos `/docs.json` de los receptores independientes se conservan para
-compatibilidad, no describen los listeners actuales del relay.
+Los listeners desplegables independientes fueron retirados. Los catálogos
+internos `/docs.json` de adaptadores HTTP se conservan como apoyo de pruebas,
+no como servicios ejecutables; las recetas históricas no describen el runtime
+actual.
+Ese piloto anterior usó dos archivos SQLite; el estado objetivo de la rama
+actual es una sola `central.sqlite3` con esquema 8 (histórico diario observado), pendiente de integración y
+cutover supervisado.
 El despliegue en la Mac y la conectividad privada siguen pendientes.
 La preparación se documenta en el [manual del host remoto](../development/remote-host-setup.md)
 y el [ADR-0019](../adr/0019-private-remote-host-bootstrap.md): API en loopback,
@@ -116,15 +122,19 @@ Las decisiones y el diseño se detallan en
 [ADR-0014](../adr/0014-unified-trading-activity-and-position-cycle-metrics.md),
 [ADR-0015](../adr/0015-closed-operations-and-mt5-registry.md) y
 [Dashboard local de riesgo](live-risk-dashboard.md). MT5 utiliza dos collectors
-MQL5 con fuentes distintas por rol como entrada operativa; la API Python queda limitada a
-diagnóstico o reconciliación aislada con identidad explícita. El acceso humano
+MQL5 con fuentes separadas por rol como entrada operativa; FastAPI y SQLite
+central son el camino vigente de persistencia y consulta, no un receptor
+aislado. El acceso humano
 al dashboard usa una credencial distinta del token de telemetría; ninguna llega
 al navegador salvo el token humano durante el login local.
 
 La [separación de collectors](collector-responsibilities.md) distingue estado vivo
 y actividad histórica sobre la terminal actual, sin requerir una terminal
-observadora adicional. Telemetry v1 y Activity v2, la admisión por rol, las bases
-separadas y los ciclos durables ya están implementados en el piloto. La
+observadora adicional. Telemetry v1 y Activity v2 mantienen contratos de captura
+distintos: estado de cuenta (`mt5-account-state-v1`) y eventos de trading
+(`mt5-trading-events-v1`). El contrato descriptivo prepara una SQLite central
+compartida con esquema global 7; su corte sigue pendiente. La separación de
+collectors no implica separar archivos de base. La
 [guía vigente](../development/mt5-collector-operations.md) documenta instalación,
 recuperación y logs de las versiones validadas.
 
@@ -135,10 +145,13 @@ API y relay ya funcionan separados del dashboard en la VPS; mover API y SQLite
 juntas a la Mac requiere conectividad privada y aprobación. No se abrirá SQLite
 por red. PostgreSQL y el catálogo productivo siguen fuera del piloto actual.
 
-La persistencia v1 conserva las observaciones de cuenta; v2/esquema 5 conserva
-actividad, cobertura y ciclos reconstruidos, consultables por período y Magic.
-Las proyecciones históricas son durables. Las evoluciones usan migraciones
-explícitas; una caché futura será acotada, descartable y reconstruible desde SQLite.
+La persistencia conserva las observaciones v1 y la actividad, cobertura y ciclos
+v2, consultables por período y Magic, en un único archivo `central.sqlite3`.
+`PRAGMA user_version = 8` identifica el esquema central objetivo; las rutas
+descriptivas y los formatos wire de los collectors son independientes de esa
+versión. Las proyecciones
+históricas son durables. Las evoluciones usan migraciones explícitas; una caché
+futura será acotada, descartable y reconstruible desde SQLite.
 
 La navegación separa `Trading` (actividad en curso), `Performance financiera`
 (operaciones cerradas y métricas) y `Performance de ejecución` (Registro MT5),
@@ -958,6 +971,49 @@ La arquitectura se considerará validada cuando un caso real permita:
 22. Criterios y responsable para promover configuraciones, componentes, conocimiento y estrategias fuera de un proyecto.
 23. Frecuencia de evidencia incremental y condición de cierre de una incubación.
 24. Política de archivo, licencia y acceso para cursos, documentación oficial y fuentes aportadas.
+
+## 19.1. Progresión histórica de cuenta
+
+La dirección vigente es la [ADR-0023](../adr/0023-daily-observed-account-history.md):
+una evolución única de balance/equity observados con histórico diario por cuenta
+y día del broker, más muestras recientes. La consolidación y retención pertenecen
+al backend central, sin otro collector ni base. La reconstrucción de períodos
+anteriores al inicio del seguimiento queda diferida. La persistencia diaria,
+limpieza protegida y adaptación del gráfico se implementarán por pasos.
+La tabla diaria, consolidación y compactación transaccionales están implementadas
+con migración explícita 7 → 8. Se retienen siete fechas recientes, los cierres
+originales y las identidades/hashes de muestras compactadas. No se aplicó la
+migración o compactación a bases operativas ni se activaron nuevos jobs.
+Detalle: [almacenamiento diario](../development/daily-account-history-storage.md).
+
+La consulta de lectura `/api/accounts/evolution` y el gráfico unificado están
+implementados en rama. Combinan cierres diarios y el último día observado,
+mantienen la escala UTC real con referencia de hora del broker y señalan días
+pendientes de consolidar. No ejecutan reconstrucciones ni escrituras al leer.
+La activación operativa y revisión visual continúan pendientes.
+
+El mantenimiento diario se integra de forma opt-in al job de backup existente.
+Usa únicamente la SQLite central local, con copia verificada previa, bloqueo
+contra solapamientos, descubrimiento indexado de días y revisión de capturas
+tardías. Tiene límites y estados explícitos de trabajo parcial/diferido; no
+requiere dashboard ni API activos y no infiere la fecha del broker desde el
+calendario del host. La programación sigue pendiente de instalación autorizada.
+
+La implementación previa, conservada temporalmente durante esta transición,
+se describe a continuación; no representa ya la prioridad del gráfico principal.
+
+El Resumen distingue muestras observadas de balance/equity y reconstrucción
+financiera del ledger. La [ADR-0022](../adr/0022-account-ledger-progression.md)
+define una proyección de lectura sobre la misma SQLite central: PnL realizado,
+flujos de capital, correcciones y balance reconstruido con referencia verificable.
+Es de cuenta, no sustituye métricas de EAs sobre ciclos cerrados elegibles.
+
+La recuperación de deals no implica recuperar equity histórica. Los huecos y la
+falta de referencia de saldo se representan explícitamente, sin inventar ceros ni
+aplicar offsets horarios actuales a todo el pasado. La ingesta incorpora una
+referencia opcional de tiempo del broker; no requiere otra base, migración de
+esquema ni caché permanente. La instalación de collectors y la importación de
+capturas anteriores siguen siendo operaciones separadas y supervisadas.
 
 ## 20. Conclusión
 

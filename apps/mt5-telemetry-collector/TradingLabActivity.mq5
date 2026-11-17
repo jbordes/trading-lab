@@ -1,6 +1,7 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.000"
+#property version   "1.001"
 #property strict
+#include "TradingLabAccountGuard.mqh"
 
 // Read-only v2 activity collector. It never sends or modifies trading orders.
 
@@ -18,12 +19,13 @@ input int RecentLookbackSeconds = 3600;
 input int RecentCadenceSeconds = 60;
 input int HeartbeatSeconds = 60;
 input bool EnableDeepRecovery = true;
-// Operator-approved demo identity; never commit real account configuration.
+// Operator-approved identity; demo by default, real requires explicit opt-in.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
+input bool AllowRealAccount = false; // true selects REAL only; never sends trading commands
 
 const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.6.0";
+const string COLLECTOR_VERSION = "activity-0.6.1";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 
@@ -735,10 +737,10 @@ bool CheckPilotSafety()
    long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
-   if(GetLastError() == 0 && IsApprovedDemo(connected, mode, login, server,
-                                          ExpectedDemoLogin, ExpectedDemoServer))
+   if(GetLastError() == 0 && IsApprovedAccount(connected, mode, login, server,
+                                          ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount))
       return true;
-   Print("TradingLab activity: pilot guard stopped capture; review demo identity and reattach EA");
+   Print("TradingLab activity: pilot guard stopped capture; review account identity and mode, then reattach EA");
    StopForSafety();
    return false;
 }

@@ -1,6 +1,7 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.101"
+#property version   "1.102"
 #property strict
+#include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
 
@@ -15,12 +16,13 @@ input int MaxItemsPerSnapshot = 200;
 input int HistoryLookbackSeconds = 3600;
 input int HistoryIntervalSeconds = 60;
 input int MaxDealsPerSnapshot = 200;
-// Operator-approved demo identity; never commit real account configuration.
+// Operator-approved identity; demo by default, real requires explicit opt-in.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
+input bool AllowRealAccount = false; // true selects REAL only; never sends trading commands
 
 const string SCHEMA_VERSION = "mt5-account-state-v1";
-const string COLLECTOR_VERSION = "0.3.1";
+const string COLLECTOR_VERSION = "0.3.2";
 const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
@@ -151,7 +153,7 @@ bool CheckPilotSafety()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
    CollectorCaptureState observed = EvaluateCaptureState(connected, GetLastError() == 0,
-      mode, login, server, ExpectedDemoLogin, ExpectedDemoServer);
+      mode, login, server, ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount);
    if(observed == CAPTURE_WAIT_BROKER)
    {
       if(capture_state != CAPTURE_WAIT_BROKER)
@@ -170,7 +172,7 @@ bool CheckPilotSafety()
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("pilot_guard");
-   logger.Error("identity_guard_stopped", "TradingLab telemetry: pilot guard stopped capture; review demo identity and reattach EA");
+   logger.Error("identity_guard_stopped", "TradingLab telemetry: pilot guard stopped capture; review account identity and mode, then reattach EA");
    return false;
 }
 #endif

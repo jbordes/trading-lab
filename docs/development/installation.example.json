@@ -1,0 +1,16 @@
+{
+  "account_id": "account-example",
+  "label": "Cuenta de pruebas",
+  "login_masked": "****1234",
+  "server": "BROKER-SERVER",
+  "currency": "USD",
+  "snapshot_source_id": "terminal-state",
+  "live_source_id": "terminal-live",
+  "activity_source_id": "terminal-activity",
+  "account_mode": "demo",
+  "snapshot_port": 8776,
+  "activity_port": 8777,
+  "dashboard_port": 8775,
+  "central_port": 8782,
+  "broker_utc_offset_minutes": 120
+}

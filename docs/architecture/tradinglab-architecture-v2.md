@@ -1022,3 +1022,5 @@ TradingLab 2.0 debe construirse como un sistema de evidencia experimental, no co
 El contraste con TradingLab 1.0 confirma que la estructura 2.3 cubre tanto la automatización futura como el trabajo humano actual. No se replica la mezcla histórica de archivos: se preservan su expediente, sus controles y su trazabilidad mediante registros, sets, etapas, assessments, aliases y lineage explícitos.
 
 El repositorio Git ya fue inicializado y conectado con GitHub. La siguiente acción, una vez aprobada esta propuesta, será ejecutar la Fase 1 y elegir el recorte del proyecto piloto sin anticipar componentes que todavía no hayan sido validados por el flujo real.
+
+La instalación piloto y la guarda de identidad de cuenta se describen en la [ADR-0024](../adr/0024-dual-installation-account-guard.md) y en la [guía de instalación remote](../development/installation.md).

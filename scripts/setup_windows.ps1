@@ -30,9 +30,18 @@ $intro.Text = 'Configure su cuenta. El asistente prepara Python, bases y accesos
 $intro.SetBounds(20, 15, 620, 55)
 $form.Controls.Add($intro)
 $isCentral = Test-Path -LiteralPath (Join-Path $repoRoot 'src\tradinglab\installation_runtime.py')
-$script:baseConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'docs\development\installation.example.json') -Raw | ConvertFrom-Json
-$script:baseConfig.login_id = ''
-$script:baseConfig.account_mode = 'real'
+$script:baseConfig = [pscustomobject][ordered]@{
+    login_id = ''
+    server = ''
+    currency = 'USD'
+    account_mode = 'real'
+    snapshot_port = 8876
+    activity_port = 8877
+    dashboard_port = 8875
+    central_port = 8882
+    broker_utc_offset_minutes = 120
+    history_date = (Get-Date).ToString('yyyy.MM.dd') + ' 00:00:00'
+}
 $script:hasLoadedConfig = $false
 $fields = [ordered]@{
     preset_login = @('MT5 Account Nr.', '')

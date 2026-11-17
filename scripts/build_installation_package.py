@@ -95,6 +95,7 @@ def main() -> int:
                 "pyproject.toml",
                 "uv.lock",
                 ".python-version",
+                "docs/development/installation.example.json",
             )
             or path.parts[0] in ("src", "scripts", "apps")
             or (path.parts[0] == "docs" and path.suffix == ".md")
@@ -129,6 +130,11 @@ def main() -> int:
         "Iniciar-TradingLab.cmd",
         "scripts/setup_windows.ps1",
         "scripts/start_windows.ps1",
+        "scripts/bootstrap_installation.py",
+        "scripts/install_tradinglab.py",
+        "scripts/run_tradinglab.py",
+        "scripts/create_collector_presets.py",
+        "docs/development/installation.example.json",
         "src/tradinglab/installation.py",
         "uv.lock",
     )

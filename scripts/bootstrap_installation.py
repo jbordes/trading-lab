@@ -19,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-real-account", action="store_true")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument(
+        "--resume", action="store_true", help="Validar instalacion existente sin recrear datos"
+    )
+    parser.add_argument(
         "--start", action="store_true", help="Iniciar al terminar; requiere --apply"
     )
     args = parser.parse_args(argv)
@@ -50,7 +53,22 @@ def main(argv: list[str] | None = None) -> int:
     command.append("--apply")
     try:
         subprocess.run([uv, "sync", "--locked", "--no-dev"], cwd=ROOT, check=True, timeout=600)
-        subprocess.run(command, cwd=ROOT, check=True, timeout=120)
+        if args.resume:
+            resume_command = [
+                uv,
+                "run",
+                "--no-sync",
+                "python",
+                str(ROOT / "scripts/run_tradinglab.py"),
+                "--data-dir",
+                str(args.data_dir),
+                "--dry-run",
+                "--expected-config",
+                str(args.config.resolve()),
+            ]
+            subprocess.run(resume_command, cwd=ROOT, check=True, timeout=120)
+        else:
+            subprocess.run(command, cwd=ROOT, check=True, timeout=120)
         if args.start:
             return subprocess.call(
                 [

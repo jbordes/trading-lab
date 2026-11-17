@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import sqlite3
 import subprocess
 from contextlib import closing
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
 from tradinglab.telemetry.admission_v2 import ProducerIdentity
@@ -92,8 +94,47 @@ def read_json(path: Path) -> dict:
 
 
 def read_config(path: Path) -> InstallationConfig:
+    return public_config(read_json(path))
+
+
+def public_config(data: dict) -> InstallationConfig:
+    """Expand editable account settings into the private runtime registration."""
+    expected = {
+        "login_id",
+        "server",
+        "currency",
+        "account_mode",
+        "snapshot_port",
+        "activity_port",
+        "dashboard_port",
+        "central_port",
+        "broker_utc_offset_minutes",
+        "history_date",
+    }
+    if set(data) != expected:
+        raise ValueError("Campos de configuracion invalidos")
+    login = data["login_id"]
+    if not isinstance(login, str) or not re.fullmatch(r"[0-9]{4,18}", login):
+        raise ValueError("MT5 Account Nr. invalido")
+    if not isinstance(data["server"], str) or not isinstance(data["history_date"], str):
+        raise ValueError("Servidor o fecha invalida")
+    datetime.strptime(data["history_date"], "%Y.%m.%d %H:%M:%S")
+    if data["history_date"] < "1970.01.02 00:00:00":
+        raise ValueError("Fecha inicial invalida")
+    suffix = hashlib.sha256(data["server"].encode("utf-8")).hexdigest()[:8]
+    identity = f"mt5-{login}-{suffix}"
     try:
-        return InstallationConfig(**read_json(path))
+        return InstallationConfig(
+            account_id=identity,
+            label=login,
+            login_masked="****" + login[-4:],
+            snapshot_source_id=identity + "-state",
+            live_source_id=identity + "-live",
+            activity_source_id=identity + "-activity",
+            **{
+                key: value for key, value in data.items() if key not in ("login_id", "history_date")
+            },
+        )
     except TypeError as exc:
         raise ValueError("Campos de configuración inválidos") from exc
 

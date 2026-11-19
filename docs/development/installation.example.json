@@ -1,0 +1,12 @@
+{
+  "login_id": "12345678",
+  "server": "BROKER-SERVER",
+  "currency": "USD",
+  "account_mode": "demo",
+  "snapshot_port": 8776,
+  "activity_port": 8777,
+  "dashboard_port": 8775,
+  "central_port": 8782,
+  "broker_utc_offset_minutes": 120,
+  "history_date": "2026.11.01 00:00:00"
+}

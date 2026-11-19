@@ -205,7 +205,9 @@ def run_v2_receivers(
         )
         children.append(v2_receiver)
         _wait_for_receiver("v2", v2_receiver, config.v2_port, ready, clock, sleep)
-        report("Receptores v1/v2 listos; el dashboard puede iniciarse o detenerse aparte.")
+        report(
+            "Receptores de estado y actividad listos; el dashboard puede iniciarse o detenerse aparte."
+        )
         while True:
             for name, child in (("receptor v1", v1_receiver), ("receptor v2", v2_receiver)):
                 if child.poll() is not None:
@@ -313,7 +315,9 @@ def run_v2_pilot(
             shell=False,
         )
         children.append(dashboard)
-        report("Receptores v1/v2 listos. Esperando telemetría de Juampi.")
+        report(
+            "Receptores de estado y actividad listos. Esperando datos de la cuenta configurada en MT5."
+        )
         report(f"Dashboard: http://127.0.0.1:{config.dashboard_port}/dashboard")
         report("Mantenga esta consola abierta. Ctrl+C detiene los tres procesos.")
         while True:

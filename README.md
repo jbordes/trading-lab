@@ -17,6 +17,7 @@ El proyecto se encuentra en fase de fundación y validación de arquitectura. La
 - [Análisis y diseño del Harness 0.2](docs/architecture/development-harness-0.2.md)
 - [Dashboard local de riesgo](docs/architecture/live-risk-dashboard.md)
 - [Entorno de desarrollo](docs/development/environment.md)
+- [Instalación piloto local (stable)](docs/development/installation.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
 - [Referencia unificada de APIs](docs/development/api-reference.md)
 - [Roadmap del dashboard local de riesgo](docs/development/live-risk-dashboard-roadmap.md)

@@ -1,6 +1,7 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.000"
+#property version   "1.001"
 #property strict
+#include "TradingLabAccountGuard.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
@@ -12,12 +13,13 @@ input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
 input int HistoryLookbackSeconds = 3600;
 input int MaxDealsPerSnapshot = 200;
-// Operator-approved demo identity; never commit real account configuration.
+// Operator-approved identity; demo by default, real requires explicit opt-in.
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
+input bool AllowRealAccount = false; // true selects REAL only; never sends trading commands
 
 const string SCHEMA_VERSION = "mt5-telemetry-v1";
-const string COLLECTOR_VERSION = "0.1.1";
+const string COLLECTOR_VERSION = "0.1.2";
 
 string session_id = "";
 // Bounded, volatile FIFO: preserve retry identity, prefer fresh samples on overflow.
@@ -167,14 +169,14 @@ bool CheckPilotSafety()
    long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
-   if(GetLastError() == 0 && IsApprovedDemo(connected, mode, login, server,
-                                          ExpectedDemoLogin, ExpectedDemoServer))
+   if(GetLastError() == 0 && IsApprovedAccount(connected, mode, login, server,
+                                          ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount))
       return true;
    safety_stopped = true;
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("pilot_guard");
-   Print("TradingLab telemetry: pilot guard stopped capture; review demo identity and reattach EA");
+   Print("TradingLab telemetry: pilot guard stopped capture; review account identity and mode, then reattach EA");
    return false;
 }
 #endif

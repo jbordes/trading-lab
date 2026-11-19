@@ -111,7 +111,9 @@ def public_config(data: dict) -> InstallationConfig:
         "broker_utc_offset_minutes",
         "history_date",
     }
-    if set(data) != expected:
+    if not isinstance(data.get("mt5_data_dir", ""), str):
+        raise ValueError("Carpeta MT5 invalida")
+    if set(data) - {"mt5_data_dir"} != expected:
         raise ValueError("Campos de configuracion invalidos")
     login = data["login_id"]
     if not isinstance(login, str) or not re.fullmatch(r"[0-9]{4,18}", login):
@@ -132,7 +134,9 @@ def public_config(data: dict) -> InstallationConfig:
             live_source_id=identity + "-live",
             activity_source_id=identity + "-activity",
             **{
-                key: value for key, value in data.items() if key not in ("login_id", "history_date")
+                key: value
+                for key, value in data.items()
+                if key not in ("login_id", "history_date", "mt5_data_dir")
             },
         )
     except TypeError as exc:

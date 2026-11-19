@@ -4,12 +4,35 @@ from __future__ import annotations
 
 import calendar
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from tradinglab.installation import private_directory, read_installation
 from tradinglab.installation_backend import LAYOUT
 from tradinglab.telemetry.local_secrets import load_local_secrets
+
+
+class PresetConflict(ValueError):
+    """Safe diagnostic containing only installer-owned names."""
+
+
+def replace_preset(path: Path, encoded: bytes) -> None:
+    """Publish the complete generated preset inside its private directory."""
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        temp = Path(stream.name)
+        try:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        except OSError:
+            stream.close()
+            temp.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def create_presets(
@@ -67,7 +90,7 @@ def create_presets(
                 raise ValueError("Valor no representable en un preset MT5")
     destination = directory / "collector-presets"
     if resume and destination.exists():
-        if destination.is_symlink() or not destination.is_dir():
+        if destination.is_symlink() or destination.is_junction() or not destination.is_dir():
             raise ValueError("Destino de presets invalido")
     else:
         private_directory(destination)
@@ -76,9 +99,12 @@ def create_presets(
         body += "".join(f"{key}={value}\r\n" for key, value in preset.items())
         path = destination / f"{name}.set"
         encoded = body.encode("utf-16")
-        if resume and path.exists():
-            if path.is_symlink() or path.read_bytes() != encoded:
-                raise ValueError("El preset existente difiere; no se sobrescribe")
+        if resume and (path.exists() or path.is_symlink()):
+            if path.is_symlink():
+                raise PresetConflict(f"{path.name} es un enlace. Revise el destino de presets.")
+            existing = path.read_bytes()
+            if existing != encoded:
+                replace_preset(path, encoded)
             continue
         descriptor = os.open(
             destination / f"{name}.set", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600

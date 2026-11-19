@@ -1,5 +1,5 @@
-[CmdletBinding()]
-param([switch]$CheckOnly, [string]$ConfigPath)
+﻿[CmdletBinding()]
+param([switch]$CheckOnly)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ($CheckOnly) { Write-Output 'TradingLab setup entry point OK'; return }
@@ -18,19 +18,49 @@ function Find-Uv {
     return $null
 }
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'TradingLab - Instalacion'
+$form.Text = 'TradingLab · Instalación'
+$form.Icon = [Drawing.Icon]::new((Join-Path $repoRoot 'src\tradinglab\dashboard\static\favicon-black.ico'))
+$form.BackColor = [Drawing.Color]::White
+$form.AutoScaleMode = 'Dpi'
 $form.Size = New-Object System.Drawing.Size(710, 750)
 $form.AutoScroll = $true
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-$intro = New-Object System.Windows.Forms.Label
-$intro.Text = 'Configure su cuenta. El asistente prepara Python, bases y accesos. No necesita la contrase' + [char]0x00F1 + 'a del broker. MT5 se conecta al finalizar.'
-$intro.SetBounds(20, 15, 620, 55)
+$brand = New-Object Windows.Forms.PictureBox
+$brand.Image = [Drawing.Image]::FromFile((Join-Path $repoRoot 'src\tradinglab\dashboard\static\logo_black.png'))
+$brand.SizeMode = 'Zoom'
+$brand.SetBounds(20, 16, 48, 48)
+$form.Controls.Add($brand)
+$title = New-Object Windows.Forms.Label
+$title.Text = 'Instalar TradingLab'
+$title.Font = New-Object Drawing.Font('Segoe UI Semibold', 16)
+$title.SetBounds(82, 12, 500, 34)
+$form.Controls.Add($title)
+$intro = New-Object Windows.Forms.Label
+$intro.Text = 'Configure la cuenta y la captura. No se pide la contraseña del broker.'
+$intro.SetBounds(84, 47, 555, 25)
 $form.Controls.Add($intro)
+$tips = New-Object Windows.Forms.ToolTip
+$tips.AutoPopDelay = 16000
+$tips.InitialDelay = 250
+$tips.ReshowDelay = 100
+function Add-HoverHelp([int]$top, [string]$name, [string]$message) {
+    $hint = New-Object Windows.Forms.Button
+    $hint.Text = '?'
+    $hint.AccessibleName = "Ayuda de $name"
+    $hint.AccessibleDescription = $message
+    $hint.FlatStyle = 'Flat'
+    $hint.FlatAppearance.BorderSize = 0
+    $hint.ForeColor = [Drawing.Color]::SteelBlue
+    $hint.SetBounds(632, $top, 28, 26)
+    $tips.SetToolTip($hint, $message)
+    $form.Controls.Add($hint)
+}
 $isCentral = Test-Path -LiteralPath (Join-Path $repoRoot 'src\tradinglab\installation_runtime.py')
 $script:baseConfig = [pscustomobject][ordered]@{
+    mt5_data_dir = ''
     login_id = ''
     server = ''
     currency = 'USD'
@@ -42,7 +72,6 @@ $script:baseConfig = [pscustomobject][ordered]@{
     broker_utc_offset_minutes = 120
     history_date = (Get-Date).ToString('yyyy.MM.dd') + ' 00:00:00'
 }
-$script:hasLoadedConfig = $false
 $fields = [ordered]@{
     preset_login = @('MT5 Account Nr.', '')
     server = @('Servidor exacto de MT5', '')
@@ -53,51 +82,75 @@ $fields = [ordered]@{
     dashboard_port = @('Dashboard Port', '8875')
     central_port = @('API Port', '8882')
     destination = @('TradingLab Data File (carpeta)', (Join-Path $env:LOCALAPPDATA 'TradingLab\installation'))
+    terminal = @('Carpeta de datos de MT5', '')
     preset_history = @('History Date From (hora broker)', ((Get-Date).ToString('yyyy.MM.dd') + ' 00:00:00'))
 }
 $controls = @{}
-$pathLabel = New-Object System.Windows.Forms.Label
-$pathLabel.SetBounds(20, 72, 620, 35)
-$pathLabel.Text = 'Nueva configuracion (sin guardar)'
-$form.Controls.Add($pathLabel)
+$hints = @{
+    preset_login = 'Número de cuenta. Figura en el Navegador de MT5, dentro de Cuentas.'
+    server = 'Nombre exacto del servidor que aparece junto a la cuenta conectada en MT5.'
+    currency = 'Moneda de depósito de la cuenta, por ejemplo USD. Consúltela en el informe de cuenta del broker.'
+    broker_utc_offset_minutes = 'Diferencia entre la hora del servidor y UTC, en minutos. UTC+2 equivale a 120. Confirme el huso vigente con el broker.'
+    snapshot_port = 'Puerto local para recibir el estado de la cuenta. Puede conservar el sugerido si está libre.'
+    activity_port = 'Puerto local para recibir órdenes y ejecuciones. Debe estar libre y ser distinto al de estado.'
+    dashboard_port = 'Puerto local donde abrirá el dashboard en el navegador.'
+    central_port = 'Puerto local del servicio API.'
+    destination = 'Carpeta privada para las bases y los accesos de TradingLab. Elija una ubicación fuera del proyecto.'
+    terminal = 'En la terminal correcta, abra Archivo → Abrir carpeta de datos. Seleccione esa carpeta, que contiene MQL5.'
+    preset_history = 'Primera fecha a recuperar, expresada en hora del broker. Formato AAAA.MM.DD HH:MM:SS.'
+}
 $loadButton = New-Object System.Windows.Forms.Button
 $loadButton.Text = 'Abrir JSON'
-$loadButton.SetBounds(20, 110, 150, 30)
+$loadButton.SetBounds(20, 82, 150, 30)
 $form.Controls.Add($loadButton)
 $saveButton = New-Object System.Windows.Forms.Button
 $saveButton.Text = 'Guardar JSON'
-$saveButton.SetBounds(180, 110, 150, 30)
+$saveButton.SetBounds(180, 82, 150, 30)
 $form.Controls.Add($saveButton)
-$y = 150
+$y = 130
 foreach ($key in $fields.Keys) {
     $label = New-Object System.Windows.Forms.Label
     $label.Text = $fields[$key][0]
-    $label.SetBounds(20, $y, 320, 25)
+    $label.SetBounds(20, ($y + 3), 280, 26)
     $box = New-Object System.Windows.Forms.TextBox
     $box.Text = $fields[$key][1]
-    $box.SetBounds(345, $y, 290, 25)
+    $box.SetBounds(300, $y, 328, 25)
     $controls[$key] = $box
     if ($key -ne 'central_port' -or $isCentral) {
         $form.Controls.AddRange(@($label, $box))
-        $y += 38
+        if ($key -eq 'terminal') {
+            $box.Width = 288
+            $browse = New-Object Windows.Forms.Button
+            $browse.Text = '…'
+            $browse.AccessibleName = 'Elegir carpeta de datos de MT5'
+            $browse.SetBounds(592, $y, 36, 26)
+            $browse.Add_Click({
+                $picker = New-Object Windows.Forms.FolderBrowserDialog
+                $picker.Description = $hints.terminal
+                $picker.ShowNewFolderButton = $false
+                try { if ($picker.ShowDialog($form) -eq 'OK') { $controls.terminal.Text = $picker.SelectedPath } }
+                finally { $picker.Dispose() }
+            })
+            $form.Controls.Add($browse)
+        }
+        Add-HoverHelp $y $label.Text $hints[$key]
+        $y += 36
     }
 }
 $real = New-Object System.Windows.Forms.CheckBox
 $real.Text = 'Es Cuenta Demo'
 $real.SetBounds(20, $y, 600, 28)
 $form.Controls.Add($real)
-$help = New-Object System.Windows.Forms.Button
-$help.Text = '?'
-$help.SetBounds(600, ($y + 42), 35, 38)
-$help.Add_Click({
-    [void][System.Windows.Forms.MessageBox]::Show('Dependencias: uv, Python 3.14 y paquetes del proyecto fijados en uv.lock. Se descargan los que falten. UTC del broker: diferencia entre su hora y UTC, en minutos; permite mostrar correctamente hora broker y local. TradingLab Data File es una carpeta con bases y tokens. Los identificadores de cuenta y captura se generan automaticamente.', 'Ayuda de instalacion')
-})
-$form.Controls.Add($help)
+Add-HoverHelp $y $real.Text 'Marque esta opción para una cuenta de demostración. Verifique el tipo en la cuenta de MT5.'
+Add-HoverHelp ($y + 45) 'instalación' "uv`nPython 3.14`ntzdata 2026.5"
 $button = New-Object System.Windows.Forms.Button
 $button.Text = 'Instalar'
-$button.SetBounds(380, ($y + 42), 210, 38)
+$button.SetBounds(478, ($y + 40), 150, 36)
+$button.FlatStyle = 'Flat'
+$button.BackColor = [Drawing.Color]::FromArgb(36, 65, 83)
+$button.ForeColor = [Drawing.Color]::White
 $form.Controls.Add($button)
-$form.ClientSize = New-Object System.Drawing.Size(660, ($y + 100))
+$form.ClientSize = New-Object System.Drawing.Size(686, ($y + 96))
 $script:setupConfig = $null
 $script:setupDestination = $null
 $script:configFile = $null
@@ -118,6 +171,7 @@ function Load-SetupConfig([string]$path) {
         if ($controls.preset_login.Text -and ('****' + $controls.preset_login.Text.Substring([Math]::Max(0, $controls.preset_login.Text.Length - 4))) -ne $stored.login_masked) { throw 'MT5 Account Nr. no coincide con la instalacion existente.' }
         $loaded.login_id = $controls.preset_login.Text
         $loaded.history_date = $controls.preset_history.Text
+        $loaded.mt5_data_dir = $controls.terminal.Text
     }
     $known = @($script:baseConfig.PSObject.Properties.Name)
     foreach ($property in $loaded.PSObject.Properties) {
@@ -127,17 +181,15 @@ function Load-SetupConfig([string]$path) {
     foreach ($key in $known) {
         if ($loaded.PSObject.Properties.Name -contains $key) {
             $script:baseConfig.$key = $loaded.$key
-            $controlKey = switch ($key) { 'login_id' { 'preset_login' }; 'history_date' { 'preset_history' }; default { $key } }
+            $controlKey = switch ($key) { 'mt5_data_dir' { 'terminal' }; 'login_id' { 'preset_login' }; 'history_date' { 'preset_history' }; default { $key } }
             if (-not $controls.ContainsKey($controlKey)) { continue }
             $value = [string]$loaded.$key
             $controls[$controlKey].Text = $value
         }
     }
     $real.Checked = $script:baseConfig.account_mode -eq 'demo'
-    $script:hasLoadedConfig = $true
     if (-not $internalManifest) {
         $script:configFile = [IO.Path]::GetFullPath($path)
-        $pathLabel.Text = $script:configFile
     }
 }
 $loadButton.Add_Click({
@@ -160,14 +212,14 @@ $submit = {
             if ($choice -eq 'No') {
                 $controls.destination.Text = $target + '-nueva-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
                 $script:resumeDirectory = $null
-                [void][System.Windows.Forms.MessageBox]::Show('Se propuso una carpeta nueva. Revise los datos y pulse Revisar e instalar.')
+                [void][System.Windows.Forms.MessageBox]::Show('Se propuso una carpeta nueva. Revise los datos y pulse Instalar.')
                 return
             }
             $manifest = Join-Path $target 'installation.json'
             if (-not (Test-Path -LiteralPath $manifest)) { throw 'Instalacion incompleta sin registro final. Conserve sus archivos. Seleccione No para crear otra instalacion; no se reparan bases parciales automaticamente.' }
             Load-SetupConfig $manifest
             $script:resumeDirectory = $target
-            [void][System.Windows.Forms.MessageBox]::Show('Se cargaron los datos existentes. Revise login completo y fecha de historial y pulse Revisar e instalar. Las bases y los tokens se conservaran.')
+            [void][System.Windows.Forms.MessageBox]::Show('Se cargaron los datos existentes. Revise login completo y fecha de historial y pulse Instalar. Las bases y los tokens se conservaran.')
             return
         }
         if ($target.StartsWith($repoRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Elija una carpeta fuera del repositorio.' }
@@ -198,6 +250,7 @@ $submit = {
         $offset = 0
         if (-not [int]::TryParse($controls.broker_utc_offset_minutes.Text, [ref]$offset) -or [math]::Abs($offset) -gt 840) { throw 'Revise la diferencia UTC del broker.' }
         $config.broker_utc_offset_minutes = $offset
+        $config.mt5_data_dir = $controls.terminal.Text.Trim()
         $config.history_date = $controls.preset_history.Text
         $date = [datetime]::MinValue
         if (-not [datetime]::TryParseExact($controls.preset_history.Text, 'yyyy.MM.dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$date) -or $date -gt [datetime]::UtcNow.AddMinutes($offset)) { throw 'Revise la fecha inicial del historial (hora del broker), no puede ser futura.' }
@@ -212,13 +265,21 @@ $submit = {
                     if ([IO.Path]::GetFileName($dialog.FileName) -ne ($login + '.json')) { throw 'El archivo debe llamarse ' + $login + '.json' }
                     [IO.File]::WriteAllText($dialog.FileName, ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
                     $script:configFile = $dialog.FileName
-                    $pathLabel.Text = $dialog.FileName
                 }
             } finally { $dialog.Dispose() }
             return
         }
-        $summary = "Cuenta: $($config.login_id). Servidor: $($config.server). Modo: $($config.account_mode). Destino: $target. Continuar?"
+        $terminal = $controls.terminal.Text.Trim()
+        $packaged = Test-Path -LiteralPath (Join-Path $repoRoot 'collectors') -PathType Container
+        if ($terminal -or $packaged) {
+            if (-not [IO.Path]::IsPathRooted($terminal) -or -not (Test-Path -LiteralPath (Join-Path $terminal 'MQL5\Experts') -PathType Container)) { throw $hints.terminal }
+            foreach ($name in @('TradingLabActivity', 'TradingLabTelemetry', 'TradingLabAttachCollectors')) {
+                if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "collectors\$name.ex5") -PathType Leaf)) { throw 'Para preparar MT5, use el paquete estable extraído que incluye los tres compilados en collectors.' }
+            }
+        }
+        $summary = "Cuenta: $($config.login_id). Servidor: $($config.server). Modo: $($config.account_mode). Datos: $target. Terminal MT5: $terminal. ¿Continuar?"
         if ([System.Windows.Forms.MessageBox]::Show($summary, 'Confirmar instalacion', 'YesNo', 'Question') -ne 'Yes') { return }
+        $script:terminalDirectory = $terminal
         $script:setupConfig = $config
         $script:setupDestination = $target
         $form.Close()
@@ -229,24 +290,14 @@ $submit = {
 }
 $button.Add_Click($submit)
 $saveButton.Add_Click({ $script:saveOnly = $true; & $submit })
-if (-not $ConfigPath) {
-    foreach ($base in @($repoRoot, (Split-Path -Parent $repoRoot))) {
-        $directory = Join-Path $base '_storage\installation'
-        if (Test-Path -LiteralPath $directory) {
-            $candidates = @(Get-ChildItem -LiteralPath $directory -Filter '*.json' -File | Where-Object { $_.BaseName -match '^[0-9]+$' })
-            if ($candidates.Count -eq 1) { $ConfigPath = $candidates[0].FullName; break }
-        }
-    }
-}
-if ($ConfigPath) {
-    try { Load-SetupConfig $ConfigPath }
-    catch { [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'No se pudo cargar el JSON') }
-}
 [void]$form.ShowDialog()
+$tips.Dispose()
+$brand.Image.Dispose()
 $form.Dispose()
 if ($null -eq $script:setupConfig) { return }
 try {
     Set-Location -LiteralPath $repoRoot
+    [Environment]::SetEnvironmentVariable('VIRTUAL_ENV', $null, 'Process')
     $uv = Find-Uv
     if (-not $uv) {
         Write-Host 'Preparando uv con el instalador oficial de Astral...'
@@ -275,12 +326,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La instalacion no finalizo. Revise esta consola; conserve los archivos para diagnostico.' }
     Write-Host "Instalacion lista: $script:setupDestination"
     $presetArguments = @('run','--no-sync','python', (Join-Path $repoRoot 'scripts\create_collector_presets.py'), '--data-dir', $script:setupDestination)
+    if ($script:terminalDirectory) { $presetArguments += @('--mt5-data-dir', $script:terminalDirectory) }
     if ($script:resumeDirectory -eq $script:setupDestination) { $presetArguments += '--resume' }
     $script:presetIdentity | ConvertTo-Json -Compress | & $uv @presetArguments
-    if ($LASTEXITCODE -ne 0) { throw 'Las bases estan creadas, pero los presets no se completaron. Conserve la instalacion.' }
-    Write-Host "Cargue los archivos .set de $script:setupDestination\collector-presets en las propiedades de cada collector."
-    Write-Host "Manual para conectar MT5: $repoRoot\docs\development\installation.md"
-    $message = "Instalacion lista. Tokens y configuracion en $script:setupDestination. Iniciar TradingLab ahora? Mantenga esta consola abierta."
+    if ($LASTEXITCODE -ne 0) { throw 'Las bases están listas. Revise el error anterior y elija Continuar al reintentar.' }
+    $instructions = "En MT5, permita WebRequest para http://127.0.0.1:$($script:setupConfig.snapshot_port) y http://127.0.0.1:$($script:setupConfig.activity_port).`nEn Navegador → Scripts, actualice la lista y ejecute TradingLabAttachCollectors en un gráfico."
+    if (-not $script:terminalDirectory) { $instructions = "Compile ambos collectors, adjunte cada uno a un gráfico y cargue su archivo .set desde $script:setupDestination\collector-presets. Autorice ambos puertos en WebRequest." }
+    Write-Host $instructions
+    $message = "Instalación preparada.`n`n$instructions`n`n¿Iniciar TradingLab ahora?"
     if ([System.Windows.Forms.MessageBox]::Show($message, 'TradingLab', 'YesNo', 'Information') -eq 'Yes') {
         & $uv run --no-sync python (Join-Path $repoRoot 'scripts\run_tradinglab.py') --data-dir $script:setupDestination
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo iniciar TradingLab. Revise esta consola.' }

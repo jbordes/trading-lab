@@ -19,21 +19,16 @@ GUIDE = """# TradingLab: prueba de instalacion estable en Windows
 
 1. Extraer TODO el ZIP en una carpeta local, no ejecutar desde el ZIP.
 2. Abrir Instalar-TradingLab.cmd con doble clic. Requiere Internet para descargar dependencias.
-3. El ejemplo de la cuenta demo esta en _storage/installation/68324616.json.
+3. Para usar el ejemplo demo, seleccionarlo con Abrir JSON desde _storage/installation/.
    Es SOLO referencia. Para otra cuenta cambiar MT5 Account Nr., servidor,
    moneda, fecha de historial (hora broker), UTC offset y puertos segun corresponda.
    Para una cuenta real dejar Es Cuenta Demo DESMARCADO; revisar el resumen.
    Guardar JSON genera un archivo con el numero de la cuenta.
-4. Elegir una carpeta de datos nueva fuera de esta carpeta de codigo. Completar instalacion e iniciar.
-5. En la terminal MT5 elegida: Archivo > Abrir carpeta de datos.
-   Copiar los dos archivos de collectors/ a MQL5/Experts/TradingLab.
-   En Navegador > Asesores Expertos, hacer Refrescar.
-6. Opciones > Asesores Expertos: permitir WebRequest a los origenes locales
-   de los puertos elegidos, por ejemplo http://127.0.0.1:8776 y http://127.0.0.1:8777.
-7. Colocar TradingLabTelemetry y TradingLabActivity en graficos distintos.
-   En Parametros de entrada > Cargar elegir el .set de igual nombre de
-   <carpeta de datos>/collector-presets. Confirmar y aceptar.
-   Son collectors de solo lectura; no colocar ni modificar EAs de trading como parte de este procedimiento.
+4. Elegir la carpeta privada de TradingLab fuera de la carpeta de codigo.
+5. En MT5 elija Archivo > Abrir carpeta de datos y seleccione esa carpeta en el asistente. Pulsar Instalar e iniciar los servicios.
+6. En Opciones > Asesores Expertos permita WebRequest a los dos origenes que indica el asistente.
+7. En Navegador > Scripts, actualice y ejecute TradingLab/TradingLabAttachCollectors
+   una vez en un grafico. Verifique la recepcion de estado y actividad en TradingLab.
 8. Abrir http://127.0.0.1:<Dashboard Port>/dashboard e ingresar con
    TRADINGLAB_DASHBOARD_TOKEN de .env.local en la carpeta privada de datos.
    No compartir tokens, presets ni esa carpeta de datos.
@@ -108,10 +103,12 @@ def main() -> int:
         if source.is_symlink() or not source.is_file():
             raise ValueError("Fuente ausente o enlazado")
         files[name.replace("\\", "/")] = source.read_bytes()
-    for name in ("TradingLabTelemetry", "TradingLabActivity"):
+    for name in ("TradingLabTelemetry", "TradingLabActivity", "TradingLabAttachCollectors"):
         source = ROOT / "apps/mt5-telemetry-collector" / (name + ".mq5")
         compiled_source = args.compiled_dir / (name + ".mq5")
-        if source.read_text() != compiled_source.read_text():
+        if source.read_text(encoding="utf-8-sig") != compiled_source.read_text(
+            encoding="utf-8-sig"
+        ):
             raise ValueError("El compilado no corresponde al fuente actual")
         for header in source.parent.glob("*.mqh"):
             if header.read_text() != (args.compiled_dir / header.name).read_text():

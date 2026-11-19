@@ -56,8 +56,11 @@ class CollectorPresetsTest(unittest.TestCase):
                 create_presets(directory, "1234", "2026.01.01 00:00:00", resume=True)
                 self.assertTrue((result / "TradingLabActivity.set").exists())
                 self.assertEqual(telemetry, (result / "TradingLabTelemetry.set").read_bytes())
-                with self.assertRaises(ValueError):
-                    create_presets(directory, "1234", "2026.01.02 00:00:00", resume=True)
+                old = result / "TradingLabActivity.set"
+                old.write_bytes(b"invalid previous preset")
+                create_presets(directory, "1234", "2026.01.02 00:00:00", resume=True)
+                self.assertIn("HistoryStartServerTime=1767312000", old.read_text(encoding="utf-16"))
+                self.assertEqual(telemetry, (result / "TradingLabTelemetry.set").read_bytes())
 
 
 if __name__ == "__main__":

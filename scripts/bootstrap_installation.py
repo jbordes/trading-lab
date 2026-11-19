@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -51,8 +52,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Destino:", args.data_dir)
         return 0
     command.append("--apply")
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
     try:
-        subprocess.run([uv, "sync", "--locked", "--no-dev"], cwd=ROOT, check=True, timeout=600)
+        subprocess.run(
+            [uv, "sync", "--locked", "--no-dev"], cwd=ROOT, env=env, check=True, timeout=600
+        )
         if args.resume:
             resume_command = [
                 uv,
@@ -66,9 +71,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--expected-config",
                 str(args.config.resolve()),
             ]
-            subprocess.run(resume_command, cwd=ROOT, check=True, timeout=120)
+            subprocess.run(resume_command, cwd=ROOT, env=env, check=True, timeout=120)
         else:
-            subprocess.run(command, cwd=ROOT, check=True, timeout=120)
+            subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=120)
         if args.start:
             return subprocess.call(
                 [
@@ -81,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                     str(args.data_dir),
                 ],
                 cwd=ROOT,
+                env=env,
             )
     except KeyboardInterrupt:
         return 130

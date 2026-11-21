@@ -117,18 +117,35 @@ convierte en fuente de verdad.
 
 ## Inspección segura de la base
 
-El inventario de cobertura es de solo lectura y no imprime cuentas, tickets,
-comentarios ni payloads. Resume fuentes, sesiones, tipos de mensaje, periodo,
-estado del último snapshot, deals históricos únicos y Magic Numbers observados:
+El inventario es de solo lectura y no imprime cuentas, tickets, comentarios ni
+payloads. Resume la base central completa: account-state y trading-events,
+fuentes registradas, sesiones por fuente, tipos de mensaje, rango de capturas,
+estado del último snapshot account-state, entidades históricas únicas y Magic
+Numbers observados:
 
 ```powershell
 uv run python scripts/inspect_telemetry_db.py --filename piloto.sqlite3
 ```
 
-Los deals históricos se deduplican por identidad interna de cuenta y ticket. Si
+Los mensajes y el rango de capturas incluyen ambos contratos; los contadores
+desglosan snapshots/heartbeats de account-state y live snapshots/activity batches/
+heartbeats de trading-events. Una sesión se identifica por fuente y session_id,
+no solo por session_id. Las fuentes pueden estar registradas sin haber enviado
+mensajes todavía. El rango de capturas no certifica cobertura completa del historial.
+
+Los deals históricos se deduplican entre ambos canales por cuenta y ticket. Si
 una cuenta cambia de terminal o collector, releer el mismo ticket desde la nueva
 fuente no lo cuenta dos veces; el mismo ticket en cuentas diferentes permanece
 separado.
+
+Las órdenes históricas corresponden a Activity y también se deduplican por
+cuenta/ticket: una cancelada cuenta como orden observada, no como deal o trade
+ejecutado. Los Magic Numbers abarcan account-state, Live y Activity, incluidas
+revisiones observadas; su presencia no certifica elegibilidad para métricas.
+Los últimos conteos de posiciones/órdenes y el estado del historial permanecen
+limitados a snapshots account-state por fuente, y la salida lo indica para no
+sumar dos veces el mismo estado mediante Live. No se reconstruyen métricas ni
+se cambia la calificación de conflictos durante esta inspección.
 
 La base debe existir bajo `_storage/`. El comando abre SQLite en modo `ro`, activa
 `query_only`, valida la versión y calcula todas las cifras dentro de una única

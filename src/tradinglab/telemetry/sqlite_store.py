@@ -262,6 +262,12 @@ class TelemetryRegistry:
         if not isinstance(body, bytes):
             raise ValueError("El mensaje debe ser bytes")
         envelope = parse_envelope(body)
+        return self._store_validated_envelope(envelope, received_at=received_at)
+
+    def _store_validated_envelope(
+        self, envelope: TelemetryEnvelope, *, received_at: datetime
+    ) -> StoredMessage:
+        """Persist an envelope already validated at the transport boundary."""
         received = _timestamp(received_at)
         canonical = envelope.canonical_bytes().decode("utf-8")
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()

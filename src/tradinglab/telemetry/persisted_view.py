@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 
-from tradinglab.telemetry.contract import IDENTIFIER, parse_envelope
+from tradinglab.telemetry.contract import IDENTIFIER, TelemetryEnvelope, parse_envelope
 from tradinglab.telemetry.sqlite_store import (
     MessageAdmissionError,
     RestoredSnapshot,
@@ -47,9 +47,15 @@ class PersistedSnapshotView:
         Authentication is still the responsibility of the future HTTP boundary.
         """
         envelope = parse_envelope(body)
+        return self._store_validated_envelope(envelope, received_at=received_at)
+
+    def _store_validated_envelope(
+        self, envelope: TelemetryEnvelope, *, received_at: datetime
+    ) -> StoredMessage:
+        """Store an envelope validated by the caller, then refresh from committed SQLite."""
         if envelope.source_id != self._source_id:
             raise MessageAdmissionError("El mensaje pertenece a otra fuente")
-        result = self._registry.store_message(body, received_at=received_at)
+        result = self._registry._store_validated_envelope(envelope, received_at=received_at)
         self.refresh()
         return result
 

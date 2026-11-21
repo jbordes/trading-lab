@@ -78,8 +78,10 @@ Un ACK central válido es HTTP 200 (duplicado) o 202 (aceptado), con JSON
 `status`, `sequence_gap` entero no negativo y, para v2, `out_of_order` booleano.
 El commit local posterior cambia a `acked`, borra el cuerpo y el error, registra
 `confirmed_at` y resta el tamaño del cuerpo a `pending_bytes`; `records` no
-cambia. Fallos de red, timeout, 5xx, 408 o 429 dejan el mensaje `pending` con
-error y reintento programado. Redirecciones y otros 4xx lo dejan `rejected`,
+cambia porque cuenta las filas retenidas para deduplicación. Al confirmar, el
+mensaje deja de ocupar la cuota `max_records`. Fallos de red, timeout, 5xx,
+408 o 429 dejan el mensaje `pending` con error y reintento programado.
+Redirecciones y otros 4xx lo dejan `rejected`,
 conservando cuerpo y bloqueando ese stream. `--retry-stream` primero muestra
 una vista previa; con `--apply` cambia los rechazados del stream a `pending`,
 pone `due=0` y limpia `error`, sin modificar identidad, cuerpo ni intentos.
@@ -189,7 +191,8 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 
 El listener queda en `127.0.0.1:8780` y admite ambas rutas POST, `/v1/telemetry`
 y `/v2/telemetry`. `GET /health` incluye `diagnostics_version` (actualmente 2),
-`states`, `pending_bytes`, `oldest_pending_seconds`, `max_records`, `max_bytes`,
+`states`, `active_records`, `retained_records`, `pending_bytes`,
+`oldest_pending_seconds`, `max_records`, `max_bytes`,
 `last_central_ack_at`, `errors` e `ingress_rejections`; no expone cuerpos ni
 tokens. `last_central_ack_at` es Unix UTC en segundos o null. Los motivos fijos
 de `ingress_rejections` incluyen errores de Host/Origin, autenticación,
@@ -243,14 +246,18 @@ desde Python. El archivo lock puede permanecer al cerrar, sin retener el bloqueo
   HTTP se permite solo con `127.0.0.1` para pruebas.
 - Un 200/202 sin el cuerpo JSON esperado conserva el pendiente. Un ACK local
   describe admisión local; nunca implica cobertura ni persistencia central.
-- Por defecto: 64 MiB de cuerpos pendientes y 100.000 registros totales, incluyendo
-  huellas ya confirmadas. Al alcanzar un límite, rechaza mensajes nuevos con 503;
-  los duplicados siguen siendo reconocibles. `--max-mib` y `--max-records` ajustan
-  límites. Son límites lógicos; el archivo incluye índices, páginas libres y
-  metadatos adicionales. No constituye una cuota rígida del filesystem.
-- La compactación/retención de huellas requiere otra política. Esta entrega no
-  borra huellas automáticamente; al agotar el total hay que revisar capacidad
-  antes de extender límites. No borrar la outbox para desbloquear una captura real.
+- Por defecto: 64 MiB de cuerpos pendientes/rechazados y 100.000 mensajes no
+  confirmados (`pending` o `rejected`). Al alcanzar un límite, rechaza mensajes
+  nuevos con 503; los duplicados ya reconocidos siguen resolviéndose antes de la
+  cuota. `--max-mib` y `--max-records` ajustan esos límites. Son límites lógicos;
+  el archivo incluye índices, páginas libres y metadatos adicionales. No es una
+  cuota rígida del filesystem.
+- Las filas `acked` conservan identidad y hash para reconocer duplicados tras
+  reinicios y ya no consumen `max_records` ni `max-mib`. No se borran
+  automáticamente: el ledger local continúa creciendo. Definir compactación,
+  retención o rotación requiere una política aparte que preserve el contrato de
+  idempotencia; revisar crecimiento antes de producción y no borrar la outbox
+  para desbloquear una captura real.
 
 La combinación cuenta/rol/identidad/target queda vinculada al stream en la cola.
 Se pueden rotar tokens manteniendo esa vinculación; cambiar el host exige un

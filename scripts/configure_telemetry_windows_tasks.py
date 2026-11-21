@@ -19,11 +19,17 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradinglab.telemetry.remote_host import tailscale_hostname
     from tradinglab.telemetry.windows_tasks import task_plan
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--tailscale-host",
+        type=tailscale_hostname,
+        help="FQDN público exacto de Tailscale; opcional",
+    )
     args = parser.parse_args(argv)
     try:
         storage = args.data_dir.resolve(strict=True)
@@ -35,11 +41,19 @@ def main(argv: list[str] | None = None) -> int:
             or not python.is_file()
         ):
             raise ValueError("Falta preparar el host central o el Python de .venv")
-        tasks = task_plan(ROOT, storage, start_date=date.today())
+        tasks = task_plan(
+            ROOT, storage, start_date=date.today(), tailscale_host=args.tailscale_host
+        )
         if not args.apply:
             print("Vista previa; no se modificó Task Scheduler:")
             for task in tasks:
                 print(f"- {task.name}: {task.description}")
+            if args.tailscale_host:
+                print(
+                    f"Host público: {args.tailscale_host}; origen HTTPS: https://{args.tailscale_host}"
+                )
+            else:
+                print("Sin host público adicional: acceso solo por loopback.")
             print("Use --apply únicamente en una ventana operativa autorizada.")
             return 0
         if sys.platform != "win32":

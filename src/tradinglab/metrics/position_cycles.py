@@ -51,6 +51,7 @@ class CycleExclusion(StrEnum):
     """Reasons why a cycle cannot represent autonomous EA performance."""
 
     INCOMPLETE_EVIDENCE = "incomplete_evidence"
+    CONFLICTING_EVIDENCE = "conflicting_evidence"
     OPEN_POSITION = "open_position"
     INCONSISTENT_LIFECYCLE = "inconsistent_lifecycle"
     UNATTRIBUTED_OWNER = "unattributed_owner"

@@ -388,6 +388,34 @@ class RelayTest(unittest.TestCase):
             self.enqueue(2)
         self.assertEqual(self.queue.status(now=20)["states"], {"pending": 1})
 
+    def test_record_limit_counts_only_unconfirmed_messages(self) -> None:
+        self.queue.close()
+        self.queue = RelayQueue(self.path, max_records=1)
+        self.ingress = RelayIngress(self.queue, (self.producer,))
+
+        for sequence in (1, 2):
+            self.assertTrue(self.enqueue(sequence)[0])
+            pending = self.queue.next(self.producer.stream, now=10)
+            if pending is None:
+                self.fail("El mensaje recién admitido debería estar disponible")
+            self.queue.finish(pending, acked=True, now=11)
+
+        self.assertTrue(self.enqueue(3)[0])
+        self.assertFalse(self.enqueue(1)[0])
+        with self.assertRaises(RelayStorageError):
+            self.enqueue(4)
+        status = self.queue.status(now=20)
+        self.assertEqual(status["states"], {"acked": 2, "pending": 1})
+        self.assertEqual(status["active_records"], 1)
+        self.assertEqual(status["retained_records"], 3)
+
+        self.queue.close()
+        self.queue = RelayQueue(self.path, max_records=1)
+        self.ingress = RelayIngress(self.queue, (self.producer,))
+        self.assertFalse(self.enqueue(1)[0])
+        with self.assertRaises(RelayStorageError):
+            self.enqueue(4)
+
     def test_network_outage_retries_same_bytes_after_restart(self) -> None:
         self.enqueue()
         forwarder = RelayForwarder(self.queue, self.ingress.producers, transport=self.transport)

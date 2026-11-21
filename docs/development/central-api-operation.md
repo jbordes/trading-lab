@@ -15,6 +15,25 @@ El comando `scripts/central_api.py` sirve ingesta y lecturas descriptivas en un
 único puerto. El contrato nuevo usa `central.sqlite3`, esquema global 7 y no
 crea ni migra la base durante el arranque.
 
+Al iniciar, la API valida esquema, identidad y fuentes sin reconstruir el
+historial completo de actividad. Esto no equivale a una auditoría completa de
+payloads: la comprobación explícita `account_evidence` conserva la verificación
+de hashes y sus validaciones, y puede leer la evidencia histórica. El snapshot
+actual sí puede leerse en el arranque. No cambian el esquema 7 ni la regla de no
+migrar automáticamente.
+
+Las consultas de actividad usan lectores SQLite independientes en modo de solo
+lectura. Las lecturas admitidas comparten una transacción consistente entre
+página y coverage dentro de cada solicitud, no entre páginas. Se admiten hasta
+dos a la vez sin esperar en cola; el límite cooperativo es de 2 s, con progreso
+SQL cada 1000 operaciones y espera de locks SQLite de hasta 0.1 s. No es una
+interrupción instantánea ni elimina toda contención SQLite. Si se satura o vence
+el presupuesto, la API devuelve el error existente `503 storage_unavailable`,
+nunca datos parciales. El lector cierra su conexión y libera cupo incluso ante
+fallos; durante el cierre del receptor las consultas ya admitidas pueden
+terminar y las nuevas se rechazan. El ingreso mantiene escritura atómica y ACK
+posterior al commit.
+
 - `http://127.0.0.1:8781/openapi.json`: especificación OpenAPI real.
 - `http://127.0.0.1:8781/docs`: Swagger UI con modelos, autorización y ejemplos.
 - `http://127.0.0.1:8781/redoc`: referencia alternativa.
@@ -67,9 +86,21 @@ uv run python scripts/central_api.py --db "C:\TradingLabData\central.sqlite3" --
 ```
 
 En macOS utilizar rutas absolutas `/Users/tu_usuario/TradingLabData/...`. El
-comando se limita a loopback, un worker y concurrencia acotada. No acepta headers
-proxy de clientes. El servicio privado HTTPS/Tailscale y sus reglas de Host/Origin
-se resolverán antes del despliegue remoto; no basta con cambiar el bind a público.
+comando se limita a loopback, un worker y concurrencia acotada. No confía en
+headers proxy de clientes. Para HTTPS terminado en un proxy privado, añadir
+`--allowed-host mac.nombre-tailnet.ts.net --public-origin https://mac.nombre-tailnet.ts.net`.
+Son dos permisos diferentes: el Host destino y el Origin público del navegador.
+El origen debe ser HTTPS, pertenecer a un host permitido y especificar el puerto
+si no es 443. Sin comodines, rutas ni barra final. Ambos argumentos son repetibles.
+`run_remote_host.py --tailscale-host <FQDN>` configura los dos para HTTPS/443.
+
+Loopback admite el mismo esquema, host y puerto de la petición; los orígenes
+públicos requieren configuración explícita incluso si coinciden con el Host.
+El relay sigue funcionando sin Origin y todas las rutas protegidas mantienen
+Bearer. No se habilita CORS entre sitios ni confianza en `X-Forwarded-*`.
+La conectividad y TLS reales siguen sujetos a la
+[preparación del host](remote-host-setup.md#9-conectividad-privada-con-tailscale);
+no basta con cambiar el bind a público.
 
 Un lock asociado a la base evita otra instancia de esta CLI sobre el mismo
 archivo. Detener con Ctrl+C para cerrar recursos mediante lifespan.

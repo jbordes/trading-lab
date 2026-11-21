@@ -29,22 +29,34 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Base: {summary.database}")
     print(f"Tamaño: {summary.size_bytes} bytes; esquema: {summary.schema_version}")
-    print(f"Fuentes: {', '.join(summary.source_ids) or 'ninguna'}")
+    print(f"Fuentes registradas: {', '.join(summary.source_ids) or 'ninguna'}")
     print(
-        "Mensajes: "
-        f"{summary.message_count} ({summary.snapshot_count} snapshots, "
-        f"{summary.heartbeat_count} heartbeats); sesiones: {summary.session_count}"
+        f"Mensajes: {summary.message_count} en total; sesiones por fuente: {summary.session_count}"
     )
     print(
-        f"Cobertura: {summary.first_captured_at or 'sin datos'} -> "
+        f"Account-state: {summary.account_state_message_count} mensajes "
+        f"({summary.snapshot_count} snapshots, {summary.heartbeat_count} heartbeats)"
+    )
+    print(
+        f"Trading-events: {summary.trading_events_message_count} mensajes "
+        f"({summary.live_snapshot_count} live snapshots, {summary.activity_batch_count} activity batches, "
+        f"{summary.trading_heartbeat_count} heartbeats)"
+    )
+    print(
+        f"Capturas registradas (ambos contratos): {summary.first_captured_at or 'sin datos'} -> "
         f"{summary.last_captured_at or 'sin datos'}"
     )
     print(
-        "Últimos snapshots por fuente: "
+        "Últimos snapshots account-state por fuente: "
         f"{summary.latest_positions} posiciones, {summary.latest_orders} órdenes, "
         f"historial={summary.latest_history_status or 'no informado'}"
     )
-    print(f"Deals históricos únicos: {summary.unique_historical_deals}")
+    print(
+        f"Deals históricos únicos (cuenta/ticket, ambos contratos): {summary.unique_historical_deals}"
+    )
+    print(
+        f"Órdenes históricas únicas (cuenta/ticket, Activity): {summary.unique_historical_orders}"
+    )
     print(f"Magic Numbers observados: {', '.join(summary.magic_numbers) or 'ninguno'}")
     return 0
 

@@ -81,8 +81,13 @@ uv run python scripts/session.py today --activity "Actividad inicial"
 El nombre normal es `YYYY-MM-DD.md` y reúne todos los temas mediante bloques horarios o subtítulos. `--topic <tema>` solo se utiliza excepcionalmente cuando una jornada deba dividirse de forma deliberada; no representa una feature.
 
 Las entradas fechadas no se mezclan con ramas cortas. En el flujo normal, la
-entrada de hoy se publica en `main` en un commit exclusivo después de ejecutar
-`uv run python scripts/session.py guard-publish`; las entradas de días anteriores
+entrada de hoy se prepara con `uv run python scripts/session.py guard-publish --phase commit`
+y se confirma en un commit exclusivo. Después de actualizar referencias con
+`git fetch origin`, ejecutar `uv run python scripts/session.py guard-publish`
+para validar cada commit saliente antes del push explícito de la rama estable.
+La primera fase no autoriza el push; ver el
+[proceso de bitácoras](../sessions/README.md#flujo-excepcional-sobre-main).
+Las entradas de días anteriores
 son inmutables. Durante el programa remoto se aplica la excepción de rama y
 bitácora descrita arriba y en `AGENTS.md`.
 

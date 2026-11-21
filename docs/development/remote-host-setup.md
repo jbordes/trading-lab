@@ -272,11 +272,89 @@ uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\Tradin
 uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --apply
 ```
 
+Si el arranque debe aceptar el host HTTPS de Tailscale, use el mismo FQDN del
+arranque manual **en ambos comandos**, primero para revisar y luego para instalar:
+
+```powershell
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --tailscale-host mac.nombre-tailnet.ts.net
+uv run python scripts/configure_telemetry_windows_tasks.py --data-dir "C:\TradingLabData\central-host-01" --tailscale-host mac.nombre-tailnet.ts.net --apply
+```
+
+Reemplace el FQDN por el real. La vista previa muestra el host y su origen HTTPS;
+no ejecuta Task Scheduler. El argumento se conserva en la tarea de API, pasa a
+`run_central_api_job.py` y luego a `run_remote_host.py`, que configura Host y
+Origin HTTPS/443 según PY14. No se agrega al mantenimiento. No incluye tokens
+ni cambia el bind `127.0.0.1`. Sin el flag se conserva el modo local anterior.
+
 El modo predeterminado no instala tareas. La aplicación crea `TradingLab Central
 API` y la tarea de mantenimiento de `central.sqlite3`; el ejecutor de la API es
 `scripts/run_central_api_job.py --data-dir <HOSTDIR>`. No instale ni modifique
 tareas existentes automáticamente. Las tareas antiguas de receptores deben
 revisarse y deshabilitarse manualmente durante el cutover aprobado.
+Una tarea ya instalada no recibe este argumento por actualizar el checkout:
+revise su acción y acuerde su actualización en una ventana autorizada; el
+instalador sigue rechazando sobrescribir tareas existentes.
+
+### Logs del ejecutor supervisado
+
+`run_central_api_job.py` guarda stdout y stderr juntos en
+`<HOSTDIR>/operations/central-api.log`. El supervisor drena la salida en bloques
+de hasta 64 KiB y rota durante la misma ejecución, sin esperar un reinicio:
+archivo activo de hasta 5 MiB más tres copias (`.1` es la más reciente).
+Los archivos nuevos quedan acotados a 20 MiB en conjunto. No carga la salida
+completa en memoria ni necesita que el proceso escriba saltos de línea.
+
+Solo el propietario del lock del job escribe este log; los archivos se cierran
+antes de rotarlos, también en Windows. Si falla el destino de escritura, el
+supervisor detiene su hijo en lugar de dejarlo bloqueado en una tubería llena.
+La rotación es por bytes: una línea o carácter UTF-8 puede quedar dividido entre
+archivos. Los archivos sobredimensionados heredados se conservan como copias y
+van saliendo con la rotación normal; no se truncan para corregir su tamaño.
+
+Esta política corresponde al ejecutor supervisado, no a una API iniciada a mano
+ni a los logs de MT5. No agrega salida de tokens, configuración o argumentos;
+el proceso hijo sigue siendo responsable de no registrar credenciales. No es
+una redacción automática de secretos que el hijo hubiera impreso.
+
+### Estado del mantenimiento y ejecuciones simultáneas
+
+`run_telemetry_maintenance.py` actualiza `operations/maintenance-status.json`
+únicamente mientras posee `operations/maintenance.lock`, tanto para `running`
+como para `succeeded` o `failed`. Un intento simultáneo no cambia ese archivo
+ni su temporal, y no inicia otra copia de seguridad.
+
+Sus códigos de salida son: `0` para vista previa o trabajo terminado, `1` para
+error real y `2` para intento omitido porque otro mantenimiento sigue activo.
+El código `2` se explica en stderr; no representa un fallo del propietario.
+Errores previos a obtener el lock (configuración, ruta o permisos) también se
+informan por stderr sin sustituir el estado de otra ejecución. Si falla guardar
+el estado de error, se conserva el error original del trabajo en la salida.
+
+### Publicación de las copias SQLite
+
+Cada backup se prepara en `backups/.tmp-telemetry-*`: base SQLite comprobada,
+hash SHA-256, tamaño y `manifest.json` leído de nuevo para verificar su contenido.
+Se sincronizan ambos archivos antes de publicar. La publicación mueve la carpeta
+completa a su nombre definitivo con un único renombrado dentro de `backups/`.
+El lock `operations/backup-publication.lock` serializa a los publicadores de
+TradingLab; cualquier destino existente, incluso vacío, bloquea la publicación.
+El directorio operativo debe seguir bajo control del usuario del servicio: esta
+guarda no protege frente a otro programa que modifique rutas sin respetar el lock.
+
+Un fallo previo al renombrado deja únicamente el paquete nuevo temporal; las
+copias anteriores permanecen intactas. No se borran esos temporales ni se reintenta
+su publicación automáticamente. Si hay contención en el lock de publicación,
+se informa como fallo del trabajo que ya había comenzado, no como una omisión
+por mantenimiento simultáneo.
+
+En macOS/Linux también se sincronizan las entradas de directorio antes y después
+de publicar. Windows no ofrece aquí una sincronización portable del directorio;
+se sincronizan los archivos, sin prometer supervivencia ante todo corte eléctrico.
+Si falla la sincronización **después** del renombrado, el paquete ya publicado
+queda completo, pero el job informa error porque no pudo confirmar durabilidad.
+Revise ese paquete antes de reintentar: no se borra ni se considera parcial por
+el solo hecho de que el job haya fallado. Una copia verificada no sustituye una
+prueba de restauración, que continúa aplazada.
 
 ## 7. Manejo de credenciales
 
@@ -311,8 +389,9 @@ uv run --locked --no-sync python scripts/run_remote_host.py \
 ```
 
 En Windows reemplace la ruta por la ruta aprobada en ese host. La API escucha
-solo en `127.0.0.1:8781`. `--tailscale-host` agrega únicamente el FQDN exacto a
-`allowed_hosts`; no cambia el bind ni acepta comodines. Revise las salidas no
+solo en `127.0.0.1:8781`. `--tailscale-host` agrega el FQDN exacto a
+`allowed_hosts` y su origen `https://<FQDN>` (puerto 443) a `public_origins`;
+no cambia el bind ni acepta comodines. Revise las salidas no
 secretas del proceso.
 Use el nombre real obtenido en el paso de Tailscale, no el placeholder del ejemplo.
 También puede omitir `--tailscale-host` inicialmente para probar solo localhost.
@@ -449,10 +528,22 @@ curl.exe --fail --max-time 10 https://mac.nombre-tailnet.ts.net/health
 La respuesta `/health` es pública y mínima. Los proxies de confianza siguen
 desactivados; el API acepta el FQDN exacto, no un wildcard. Una falla TLS o Host
 se investiga en DNS, Serve y `allowed_hosts`; no se debe relajar la validación.
-Los POST desde navegador a través de TLS terminado en Serve pueden rechazarse
-por Origin: este incremento no habilita confianza en `X-Forwarded-*`. Use los
-clientes de servicio sin Origin para ingesta y conserve las protecciones; no
-dé por validado Swagger Try it out remoto como parte de esta preparación.
+El arranque manual con `--tailscale-host` permite ese origen HTTPS aunque Serve
+entregue HTTP al backend. La configuración es explícita: no se deduce de
+`X-Forwarded-*` ni `Forwarded`. Un origen identifica esquema, host y puerto,
+como explica la [referencia de FastAPI](https://fastapi.tiangolo.com/tutorial/cors/#origin).
+El puerto HTTPS 443 explícito u omitido representa el mismo origen; otros puertos
+requieren autorización exacta mediante `--public-origin` en la CLI central.
+No se permiten HTTP público, orígenes ajenos, listas, duplicados, `null`, rutas,
+credenciales ni valores ambiguos. Loopback sigue admitiendo únicamente su mismo
+esquema/host/puerto. Las peticiones sin Origin (relay) no cambian y la autenticación
+Bearer sigue siendo obligatoria en rutas protegidas. Esto no habilita CORS entre sitios.
+
+La política se probó con ASGI local; Swagger Try it out y el recorrido HTTPS real
+con Serve siguen pendientes de validación manual. Para arranque programado,
+indique `--tailscale-host` al preparar la tarea como se explica en la sección 6:
+no hereda los flags de otra ejecución manual ni actualiza tareas ya instaladas.
+No relaje Host/Origin para compensar una tarea con argumentos antiguos.
 
 ### Verificar dirección de acceso
 

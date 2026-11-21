@@ -106,14 +106,19 @@ def render_daily_log(moment: datetime, first_activity: str) -> str:
 
 
 def validate_session(path: Path, require_closed: bool = False) -> list[str]:
-    errors: list[str] = []
-    file_date = session_date_from_name(path.name)
-    if file_date is None:
-        return [f"Nombre de bitácora inválido: {path.name}"]
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
         return [f"Bitácora inválida {path.name}: {error}"]
+    return validate_session_text(path, text, require_closed)
+
+
+def validate_session_text(path: Path, text: str, require_closed: bool = False) -> list[str]:
+    """Validate working-tree text or an immutable Git blob with the same rules."""
+    errors: list[str] = []
+    file_date = session_date_from_name(path.name)
+    if file_date is None:
+        return [f"Nombre de bitácora inválido: {path.name}"]
 
     if not text.startswith("# "):
         errors.append(f"La bitácora {path.name} no comienza con un título H1")
@@ -215,14 +220,32 @@ def configured_stable_branch(root: Path) -> str:
     return branch
 
 
-def guard_direct_session_publish(root: Path, current_date: date | None = None) -> list[str]:
+def _today_session_path(relative: Path, today: date) -> bool:
+    return (
+        len(relative.parts) == 3
+        and relative.parts[:2] == ("docs", "sessions")
+        and session_date_from_name(relative.name) == today
+    )
+
+
+def guard_session_commit(root: Path, current_date: date | None = None) -> list[str]:
+    """Check pending edits only; this does not authorize a direct push."""
     today = current_date or madrid_now().date()
     errors: list[str] = []
     try:
         stable_branch = configured_stable_branch(root)
         branch = git_output(root, "branch", "--show-current").strip()
         status = git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-        changed = {Path(item[3:]) for item in status.split("\0") if item}
+        changed: dict[Path, str] = {}
+        entries = iter(status.split("\0"))
+        for item in entries:
+            if not item:
+                continue
+            code, relative = item[:2], Path(item[3:])
+            changed[relative] = code
+            if "R" in code or "C" in code:
+                # Porcelain -z carries a second path for renames/copies.
+                changed[Path(next(entries))] = code
     except (RuntimeError, OSError, tomllib.TOMLDecodeError, ValueError) as error:
         return [str(error)]
     if branch != stable_branch:
@@ -233,12 +256,12 @@ def guard_direct_session_publish(root: Path, current_date: date | None = None) -
         errors.append("No hay cambios de bitácora para publicar")
     authorized: list[Path] = []
     unexpected: list[Path] = []
-    for relative in changed:
-        is_session_path = len(relative.parts) == 3 and relative.parts[:2] == ("docs", "sessions")
+    for relative, code in changed.items():
         if (
-            is_session_path
-            and session_date_from_name(relative.name) == today
+            _today_session_path(relative, today)
+            and (code == "??" or set(code) <= {" ", "A", "M"})
             and (root / relative).is_file()
+            and not (root / relative).is_symlink()
         ):
             authorized.append(relative)
         else:
@@ -251,6 +274,74 @@ def guard_direct_session_publish(root: Path, current_date: date | None = None) -
     for relative in authorized:
         errors.extend(validate_session(root / relative))
     return errors
+
+
+def guard_direct_session_publish(root: Path, current_date: date | None = None) -> list[str]:
+    """Fail closed unless every outgoing commit contains only today's log edits."""
+    today = current_date or madrid_now().date()
+    try:
+        stable = configured_stable_branch(root)
+        if git_output(root, "branch", "--show-current").strip() != stable:
+            return [f"La publicación directa de la bitácora solo puede ejecutarse desde {stable}"]
+        if git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
+            return ["Antes del push la bitácora debe estar commiteada y el árbol limpio"]
+        remote_ref = f"refs/remotes/origin/{stable}"
+        upstream = git_output(root, "rev-parse", "--symbolic-full-name", "@{upstream}").strip()
+        if upstream != remote_ref:
+            return [f"El upstream debe ser exactamente {remote_ref}"]
+        remote = git_output(root, "rev-parse", "--verify", f"{remote_ref}^{{commit}}").strip()
+        head = git_output(root, "rev-parse", "--verify", "HEAD^{commit}").strip()
+        if git_output(root, "merge-base", remote, head).strip() != remote:
+            return ["La rama remota no es ancestro de HEAD; actualizar sin force-push"]
+        commits = git_output(root, "rev-list", "--reverse", f"{remote}..{head}").splitlines()
+        if not commits:
+            return ["No hay commits de bitácora para publicar"]
+        errors: list[str] = []
+        for commit in commits:
+            parents = git_output(root, "rev-list", "--parents", "-n", "1", commit).split()
+            if len(parents) != 2:
+                errors.append(f"Commit {commit}: no se admiten merges ni commits raíz")
+                continue
+            raw = git_output(
+                root,
+                "diff-tree",
+                "--raw",
+                "-z",
+                "--no-abbrev",
+                "--no-renames",
+                "--no-commit-id",
+                "-r",
+                commit,
+            )
+            entries = raw.split("\0")
+            if not raw:
+                errors.append(f"Commit {commit}: no contiene cambios de bitácora")
+            for index in range(0, len(entries) - 1, 2):
+                metadata, name = entries[index : index + 2]
+                old_mode, new_mode, _, _, change = metadata.split()
+                path = Path(name)
+                if (
+                    change not in {"A", "M"}
+                    or old_mode not in {":000000", ":100644"}
+                    or new_mode != "100644"
+                    or not _today_session_path(path, today)
+                ):
+                    errors.append(f"Commit {commit}: cambio no autorizado ({change}) en {name}")
+                    continue
+                text = git_output(root, "show", f"{commit}:{name}")
+                errors.extend(
+                    f"Commit {commit}: {error}" for error in validate_session_text(path, text)
+                )
+        # Do not approve a snapshot that changed while it was being inspected.
+        if (
+            git_output(root, "rev-parse", "HEAD").strip() != head
+            or git_output(root, "rev-parse", remote_ref).strip() != remote
+            or git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+        ):
+            errors.append("Git cambió durante la validación; repetir la guarda")
+        return errors
+    except (RuntimeError, OSError, UnicodeError, tomllib.TOMLDecodeError, ValueError) as error:
+        return [f"No se pudo verificar el rango de publicación: {error}"]
 
 
 def guard_direct_main_publish(root: Path, current_date: date | None = None) -> list[str]:
@@ -270,8 +361,14 @@ def parse_args() -> argparse.Namespace:
     check_parser = subparsers.add_parser("check", help="validar bitácoras")
     check_parser.add_argument("paths", nargs="*", type=Path)
     check_parser.add_argument("--closed", action="store_true")
-    subparsers.add_parser(
+    guard_parser = subparsers.add_parser(
         "guard-publish", help="verificar la excepción de push directo a la rama estable"
+    )
+    guard_parser.add_argument(
+        "--phase",
+        choices=("commit", "push"),
+        default="push",
+        help="commit revisa ediciones; push (por defecto) revisa todos los commits salientes",
     )
     return parser.parse_args()
 
@@ -289,7 +386,8 @@ def main() -> int:
         print(f"[OK] Bitácora {action}: {target.relative_to(root).as_posix()}")
         return 0
     if args.command == "guard-publish":
-        errors = guard_direct_session_publish(root)
+        guard = guard_session_commit if args.phase == "commit" else guard_direct_session_publish
+        errors = guard(root)
     else:
         paths = [path if path.is_absolute() else root / path for path in args.paths] or None
         errors = validate_sessions(root, require_closed=args.closed, paths=paths)

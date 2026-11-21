@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 from contextlib import closing
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, DATABASE_NAME
+from tradinglab.telemetry.operational_job import JobAlreadyRunningError, exclusive_job_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,7 @@ class BackupPlan:
         if not backups.resolve().is_relative_to(self.storage):
             raise ValueError("El directorio de copias sale de _storage")
         backups.mkdir(exist_ok=True)
+        _sync_directory(backups.parent)
         temporary = Path(tempfile.mkdtemp(prefix=".tmp-telemetry-", dir=backups))
         copied = temporary / "data.sqlite3"
         with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
@@ -88,9 +91,10 @@ class BackupPlan:
                 if writer.execute("PRAGMA foreign_key_check").fetchone() is not None:
                     raise ValueError("La copia contiene relaciones inválidas")
         digest = hashlib.sha256()
-        with copied.open("rb") as stream:
+        with copied.open("r+b") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
+            os.fsync(stream.fileno())
         size = copied.stat().st_size
         manifest = {
             "format": "tradinglab-sqlite-backup-v1",
@@ -100,12 +104,35 @@ class BackupPlan:
             "size_bytes": size,
             "sha256": digest.hexdigest(),
         }
-        (temporary / "manifest.json").write_text(
-            json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-        )
+        manifest_path = temporary / "manifest.json"
+        with manifest_path.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(manifest, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest:
+            raise ValueError("El manifest escrito no coincide con la copia verificada")
+        _sync_directory(temporary)
         destination = backups / f"{source.stem}-{stamp_utc}-{digest.hexdigest()[:12]}"
-        destination.mkdir()
-        copied.rename(destination / "data.sqlite3")
-        (temporary / "manifest.json").rename(destination / "manifest.json")
-        temporary.rmdir()
+        # Serialize cooperating publishers: POSIX rename could replace an empty directory.
+        try:
+            with exclusive_job_lock(self.storage / "operations" / "backup-publication.lock"):
+                if destination.exists() or destination.is_symlink():
+                    raise FileExistsError("Ya existe un destino para esta copia; no se sobrescribe")
+                temporary.rename(destination)
+                _sync_directory(backups)
+        except JobAlreadyRunningError as exc:
+            # The maintenance job may already own its lock and must report this as its failure.
+            raise RuntimeError("Otra copia está publicándose; el paquete queda temporal") from exc
         return BackupResult(destination, digest.hexdigest(), size)
+
+
+def _sync_directory(path: Path) -> None:
+    """Persist directory entries where supported; Windows has no portable equivalent."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

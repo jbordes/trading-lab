@@ -47,9 +47,9 @@ class MultiRelay(RelayIngress):
         )
 
     def terminal_token(self, authorization: str, contract: str) -> str:
-        token = authorization.removeprefix("Bearer ")
+        scheme, _, token = authorization.partition(" ")
         if (
-            token == authorization
+            scheme != "Bearer"
             or not token.isascii()
             or not valid_credential(token, self.keys["terminal_master"], contract)
         ):
@@ -95,7 +95,7 @@ class MultiRelay(RelayIngress):
     def accept(
         self, contract: str, body: bytes, authorization: str, *, now: float
     ) -> tuple[bool, int, bool]:
-        token = self.terminal_token(authorization, contract)
+        terminal_credential = self.terminal_token(authorization, contract)
         try:
             source = json.loads(body)["source_id"]
             if not isinstance(source, str):
@@ -107,7 +107,11 @@ class MultiRelay(RelayIngress):
         if producer is None:
             raise RelayStorageError("La fuente necesita resolución")
         return self.store(
-            replace(producer, local_token=token), contract, body, authorization, now=now
+            replace(producer, local_token=terminal_credential),
+            contract,
+            body,
+            authorization,
+            now=now,
         )
 
     def forward(self, stop: threading.Event) -> None:

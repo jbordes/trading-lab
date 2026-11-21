@@ -67,3 +67,5 @@ La versión multicuenta comienza con una base nueva, sin migración de los datos
 - Aplicar «fecha desde» al historial de cada cuenta y mantener su cursor independiente. Verificar la recuperación del historial disponible tras alternar cuentas y la ausencia de puntos de equity inventados durante la desconexión.
 
 Actualizar los hitos con evidencia al completarlos. La validación en equipos físicamente separados corresponde al hito 6.
+
+El [roadmap de captura ligera y reconstrucción central](remote-activity-roadmap.md) continúa la implementación multicuenta con un relay remoto opcional.

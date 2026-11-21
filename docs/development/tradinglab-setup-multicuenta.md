@@ -26,7 +26,24 @@ Para actualizar una instalación, extraiga el ZIP en una carpeta de código nuev
 
 Ejecute el mismo SetUp en cada equipo y seleccione los componentes locales. Prepare primero la API y el acceso HTTPS al equipo central. Los procesos escuchan en loopback. Un proxy TLS gestionado por el operador puede publicar la API y el dashboard. Configure la URL pública completa en **Equipo**. Con HTTPS, la API escucha por defecto en el puerto local 8782 y el dashboard en el 8775. Puede ajustar el puerto local para el proxy si hace falta. Si usa un prefijo en la URL de la API, el proxy debe retirarlo antes de reenviar al proceso local. Para el dashboard publique el origen con la ruta `/dashboard` y reenvíe las rutas de sesión, datos y recursos del mismo origen.
 
-El relay corre en el equipo de MT5 y puede atender varias terminales. Los collectors usan HTTP en loopback. Al preparar un relay o un dashboard en otro equipo, ingrese la URL de la API y su clave de administración (campo `admin` de `api.private.json` en la carpeta privada de la API) para autorizar la vinculación. También se usa al dar de alta una cuenta desde otro equipo. Después, cada servicio utiliza sus propias credenciales para las operaciones habituales. Las URLs y carpetas pueden diferir por host. El traslado de datos de una instalación estable y el despliegue automático de proxies quedan fuera de este paquete.
+El relay puede atender varias terminales mediante HTTP en loopback o mediante el acceso HTTPS descrito a continuación. Al preparar un relay o un dashboard en otro equipo, ingrese la URL de la API y su clave de administración (campo `admin` de `api.private.json` en la carpeta privada de la API) para autorizar la vinculación. También se usa al dar de alta una cuenta desde otro equipo. Después, cada servicio utiliza sus propias credenciales para las operaciones habituales. Las URLs y carpetas pueden diferir por host. El traslado de datos de una instalación estable y el despliegue automático de proxies quedan fuera de este paquete.
+
+### Terminal MT5 con relay remoto
+
+1. Prepare el relay y copie el ID público que muestra **Preparar equipo**. Configure un proxy con un certificado confiable para el equipo MT5. Publique las rutas POST `/account-state` y `/account-state/resolve` hacia `127.0.0.1:8776`, y `/trading-events`, `/trading-events/resolve` y `/trading-events/resolve-raw` hacia `127.0.0.1:8777`. Estos son los puertos internos usados cuando las URLs configuradas del relay son HTTPS. Conserve la ruta, Authorization, Content-Type y el cuerpo. El proxy debe enviar Content-Length y el Host del destino local con su puerto. Restrinja la publicación a estas rutas.
+2. En el host MT5 desmarque los tres componentes, indique la URL de la API y las dos URLs HTTPS completas del relay. Pulse **Preparar equipo**. En **Terminal MT5** indique el ID público del relay y la carpeta de la terminal. Ingrese la clave administrativa en **Equipo** y pulse **Preparar collectors**. La operación vincula la terminal en la API y escribe sus presets con credenciales individuales.
+3. Autorice el origen HTTPS mostrado en WebRequest, cargue los EAs desde el asistente y compruebe en el dashboard la hora de captura de la cuenta. Los listeners y la cola del relay residen en el servidor remoto.
+
+### Actualizar una base multicuenta existente
+
+Prepare el entorno del paquete. Detenga los servicios y haga una copia verificada de la base mediante el procedimiento de backup SQLite. Desde el directorio de código del paquete, indique la ruta real de la copia para el ensayo. La primera invocación comprueba el esquema sin modificarlo.
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path src).Path
+.\.venv\Scripts\python.exe -m tradinglab.telemetry.remote_activity_upgrade "C:\ruta\central.sqlite3"
+```
+
+Con aprobación del operador, repita el comando con `--apply` para actualizar la base elegida y reconstruir los ciclos. Una segunda aplicación sobre el esquema 10 es idempotente. Inicie la API y el relay actualizados antes de cargar Activity 0.9.0. Una base multicuenta nueva ya incluye el esquema 10.
 
 ## Comprobación manual de aceptación
 

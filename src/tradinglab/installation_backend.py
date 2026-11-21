@@ -36,10 +36,9 @@ def prepare_backend(directory: Path, config: InstallationConfig) -> None:
         directory / ".env.collectors", ("RELAY_LIVE_LOCAL_TOKEN", "RELAY_ACTIVITY_LOCAL_TOKEN")
     )
     # Provision matching credentials in one operation; never read existing private files.
-    relay_keys = local_keys | {
-        "RELAY_LIVE_CENTRAL_TOKEN": central_keys["CENTRAL_SNAPSHOT_INGEST"],
-        "RELAY_ACTIVITY_CENTRAL_TOKEN": central_keys["CENTRAL_ACTIVITY_INGEST"],
-    }
+    relay_keys = local_keys.copy()
+    relay_keys["RELAY_LIVE_CENTRAL_TOKEN"] = central_keys["CENTRAL_SNAPSHOT_INGEST"]
+    relay_keys["RELAY_ACTIVITY_CENTRAL_TOKEN"] = central_keys["CENTRAL_ACTIVITY_INGEST"]
     write_private(
         directory / ".env.relay", "".join(f"{key}={value}\n" for key, value in relay_keys.items())
     )

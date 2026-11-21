@@ -183,7 +183,14 @@ def create_relay_server(
             if not self._allowed_host():
                 self._json(403, {"error": "host_not_allowed"})
                 return
-            if self.path not in {"/api/account-state", "/api/trading-events"}:
+            resolve = self.path.endswith("/resolve") and hasattr(ingress, "resolve")
+            endpoint = self.path.removesuffix("/resolve") if resolve else self.path
+            if endpoint not in {
+                "/account-state",
+                "/trading-events",
+                "/api/account-state",
+                "/api/trading-events",
+            }:
                 self._json(404, {"error": "not_found"})
                 return
             if (
@@ -209,8 +216,12 @@ def create_relay_server(
                 counters.reject("incomplete_body")
                 self._json(400, {"error": "incomplete_body"})
                 return
-            contract = self.path.rsplit("/", 1)[1]
+            contract = endpoint.rsplit("/", 1)[1]
             try:
+                if resolve:
+                    status, result = ingress.resolve(contract, body, self.headers["Authorization"])
+                    self._json(status, result)
+                    return
                 new, gap, out_of_order = ingress.accept(
                     contract, body, self.headers["Authorization"], now=time.time()
                 )

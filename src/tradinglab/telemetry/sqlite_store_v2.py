@@ -17,7 +17,6 @@ from tradinglab.metrics.position_cycles import (
     CycleExclusion,
     CycleLifecycle,
     PositionCycle,
-    reconstruct_position_cycles,
 )
 from tradinglab.metrics.trade_details import trade_details
 from tradinglab.telemetry.admission_v2 import (
@@ -37,6 +36,8 @@ from tradinglab.telemetry.contract import (
 )
 from tradinglab.telemetry.contract_v2 import SCHEMA_VERSION as WIRE_SCHEMA_VERSION
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
+from tradinglab.telemetry.cycle_evidence import cycle_document, position_cycle
+from tradinglab.telemetry.remote_positions import refresh_remote_positions
 
 
 class V2StorageError(RuntimeError):
@@ -148,22 +149,6 @@ class V2PositionCyclePage:
     next_cursor: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class _PositionDeal:
-    account_id: str
-    ticket: str
-    position_id: str
-    magic_number: str
-    time_msc: int
-    deal_type: int
-    entry: int
-    volume: float
-    profit: float
-    commission: float
-    swap: float
-    fee: float
-
-
 def _identifier(value: object, label: str) -> str:
     if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
         raise ValueError(f"{label} inválido")
@@ -189,22 +174,6 @@ def _timestamp(value: datetime) -> str:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _cycle_document(cycle: PositionCycle) -> dict[str, object]:
-    return {
-        "account_id": cycle.account_id,
-        "position_id": cycle.position_id,
-        "owner_magic": cycle.owner_magic,
-        "observed_magics": cycle.observed_magics,
-        "started_at_msc": cycle.started_at_msc,
-        "last_event_at_msc": cycle.last_event_at_msc,
-        "lifecycle": cycle.lifecycle.value,
-        "remaining_signed_volume": str(cycle.remaining_signed_volume),
-        "observed_net_result": str(cycle.observed_net_result),
-        "deal_tickets": cycle.deal_tickets,
-        "exclusions": tuple(reason.value for reason in cycle.exclusions),
-    }
 
 
 def _restore_cycle(document: str) -> PositionCycle:
@@ -529,6 +498,9 @@ class V2TelemetryRegistry:
                 payload["deals"]["items"],
             )
 
+        if connection.execute("PRAGMA user_version").fetchone()[0] == 10:
+            refresh_remote_positions(connection, account_id, payload)
+
     @staticmethod
     def _has_complete_pagination_chain(
         connection: sqlite3.Connection,
@@ -598,32 +570,8 @@ class V2TelemetryRegistry:
         captured: str,
         rows: list[dict[str, object]],
     ) -> None:
-        deals = tuple(
-            _PositionDeal(
-                account_id=account_id,
-                ticket=str(row["ticket"]),
-                position_id=str(row["position_id"]),
-                magic_number=str(row["magic_number"]),
-                time_msc=int(str(row["time_msc"])),
-                deal_type=int(row["deal_type"]),
-                entry=int(row["entry"]),
-                volume=float(row["volume"]),
-                profit=float(row["profit"]),
-                commission=float(row["commission"]),
-                swap=float(row["swap"]),
-                fee=float(row["fee"]),
-            )
-            for row in rows
-        )
-        position_id = deals[0].position_id
-        selection = reconstruct_position_cycles(
-            deals,
-            coverage_confirmed={(account_id, position_id)},
-        )
-        if len(selection.cycles) != 1:
-            raise V2StorageError("La reconciliación no produjo un único ciclo de posición")
-        cycle = selection.cycles[0]
-        cycle_document = _cycle_document(cycle)
+        cycle = position_cycle(account_id, rows)
+        document = cycle_document(cycle)
         connection.execute(
             """INSERT INTO position_cycle_observations
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -641,7 +589,7 @@ class V2TelemetryRegistry:
                 _canonical_json(cycle.observed_magics),
                 _canonical_json(cycle.deal_tickets),
                 _canonical_json(tuple(reason.value for reason in cycle.exclusions)),
-                _canonical_json(cycle_document),
+                _canonical_json(document),
                 source_id,
                 captured,
             ),
@@ -932,10 +880,29 @@ class V2TelemetryRegistry:
             )
         parameters.append(limit + 1)
         direction = "ASC" if ascending else "DESC"
+        remote = self._connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        source = (
+            "SELECT p.*, NULL AS details_json FROM position_cycle_observations p WHERE account_id=?"
+        )
+        if remote:
+            # Same-capture legacy proof takes precedence. A later verified raw cycle can revise it.
+            source += """
+              AND started_at_msc >= (SELECT history_from*1000 FROM mt5_accounts WHERE account_id=p.account_id)
+              UNION ALL SELECT r.message_id,r.account_id,r.position_id,r.owner_magic,r.started_at_msc,
+                r.last_event_at_msc,json_extract(r.cycle_json,'$.lifecycle'),
+                json_extract(r.cycle_json,'$.remaining_signed_volume'),
+                json_extract(r.cycle_json,'$.observed_net_result'),
+                json_array_length(r.cycle_json,'$.exclusions')=0,
+                json_extract(r.cycle_json,'$.observed_magics'),json_extract(r.cycle_json,'$.deal_tickets'),
+                json_extract(r.cycle_json,'$.exclusions'),r.cycle_json,r.source_id,r.captured_at_utc,
+                r.details_json FROM remote_position_cycles r WHERE r.account_id=?
+                AND NOT EXISTS (SELECT 1 FROM position_cycle_observations p
+                                WHERE p.account_id=r.account_id AND p.position_id=r.position_id
+                                  AND p.captured_at_utc >= r.captured_at_utc)"""
+            parameters.insert(1, account)
         rows = self._connection.execute(
             f"""WITH filtered AS (
-                SELECT * FROM position_cycle_observations
-                WHERE account_id = ?
+                {source}
             ), capture_summary AS (
                 SELECT account_id, position_id, captured_at_utc,
                        COUNT(DISTINCT cycle_json) AS variants
@@ -957,7 +924,7 @@ class V2TelemetryRegistry:
                    observed_magics_json, deal_tickets_json, exclusions_json,
                    (SELECT MAX(c.captured_at_utc) FROM capture_summary c
                     WHERE c.position_id = e.position_id AND c.variants > 1
-                      AND c.captured_at_utc > e.captured_at_utc) AS conflict_at
+                      AND c.captured_at_utc > e.captured_at_utc) AS conflict_at, details_json
             FROM eligible e WHERE {result_filter}
             ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
                      position_id {direction}
@@ -965,7 +932,7 @@ class V2TelemetryRegistry:
             parameters,
         ).fetchall()
         items: list[V2PositionCycleItem] = []
-        message_ids = [int(row[0]) for row in rows[:limit]]
+        message_ids = [int(row[0]) for row in rows[:limit] if row[16] is None]
         evidence = {}
         if include_details and message_ids:
             placeholders = ",".join("?" for _ in message_ids)
@@ -1010,7 +977,10 @@ class V2TelemetryRegistry:
             if actual != expected:
                 raise V2StorageError("Columnas y ciclo de posición guardado no coinciden")
             details = None
-            if int(row[0]) in evidence:
+            if row[16] is not None:
+                if include_details:
+                    details = json.loads(row[16])
+            elif int(row[0]) in evidence:
                 canonical, digest = evidence[int(row[0])]
                 try:
                     body = canonical.encode("utf-8")
@@ -1051,11 +1021,19 @@ class V2TelemetryRegistry:
         account = _identifier(account_id, "account_id")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
             raise ValueError("limit debe estar entre 1 y 100")
+        query = "SELECT owner_magic FROM position_cycle_observations WHERE account_id=?"
+        params = [account]
+        if self._connection.execute("PRAGMA user_version").fetchone()[0] == 10:
+            query += """ AND started_at_msc >= (SELECT history_from*1000 FROM mt5_accounts WHERE account_id=?)
+                UNION ALL SELECT owner_magic FROM remote_position_cycles r WHERE account_id=?
+                AND NOT EXISTS (SELECT 1 FROM position_cycle_observations p
+                                WHERE p.account_id=r.account_id AND p.position_id=r.position_id
+                                  AND p.captured_at_utc >= r.captured_at_utc)"""
+            params.extend((account, account))
         rows = self._connection.execute(
-            """SELECT DISTINCT owner_magic FROM position_cycle_observations
-               WHERE account_id = ? AND owner_magic IS NOT NULL
-               ORDER BY length(owner_magic), owner_magic LIMIT ?""",
-            (account, limit + 1),
+            f"SELECT DISTINCT owner_magic FROM ({query}) WHERE owner_magic IS NOT NULL "
+            "ORDER BY length(owner_magic), owner_magic LIMIT ?",
+            (*params, limit + 1),
         ).fetchall()
         if len(rows) > limit:
             raise V2StorageError("La cuenta supera el límite seguro de Magic Numbers")

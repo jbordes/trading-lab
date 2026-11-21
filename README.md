@@ -19,6 +19,7 @@ sigue el Harness 0.2.
 - [Diseño del dashboard y captura MT5](docs/architecture/live-risk-dashboard.md)
 - [Análisis y diseño del Harness 0.2](docs/architecture/development-harness-0.2.md)
 - [Entorno de desarrollo](docs/development/environment.md)
+- [Instalación piloto local (remote)](docs/development/installation.md)
 - [Estándares de desarrollo de código](docs/development/coding-standards.md)
 - [Referencia unificada de APIs](docs/development/api-reference.md)
 - [Manual de instalación y operación de los collectors MT5](docs/development/mt5-collector-operations.md)

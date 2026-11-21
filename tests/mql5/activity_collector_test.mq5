@@ -73,6 +73,17 @@ void Check(const bool condition, const string label)
 }
 void OnStart()
 {
+   bool recent = true;
+   recent_confirmed_from_msc = 100000;
+   long last_tick = recent_confirmed_from_msc + (long)OverlapSeconds * 1000;
+   Check(SelectRecoveryLane(last_tick, recent) && !recent,
+         "restart at last tick resumes deep history while the recent cursor is caught up");
+   confirmed_from_msc = recent_confirmed_from_msc - (long)OverlapSeconds * 1000;
+   Check(!SelectRecoveryLane(last_tick, recent), "overlap alone is not recoverable work");
+   Check(SelectRecoveryLane(last_tick + 1000, recent) && recent,
+         "startup resumes recent work when broker time advances");
+   confirmed_from_msc = 0;
+   recent_confirmed_from_msc = 0;
    // Regression: the production timer checks the untouched global state first.
    // Assigning a fixture before this check hid a NULL/uninitialized body.
    Check(pending.body == "" && pending.page_snapshot_id == "", "pending strings start explicitly empty");

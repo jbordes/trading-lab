@@ -9,8 +9,8 @@ formatos wire indica la primera versión de cada contrato independiente.
 
 | EA | Versión | Responsabilidad | Rol | Ruta de ingesta | Formato wire |
 | --- | --- | --- | --- | --- | --- |
-| `TradingLabTelemetry.mq5` | `0.3.0` | Estado actual de cuenta, balance/equity, posiciones y órdenes | `snapshot` | `POST /api/account-state` | `mt5-account-state-v1` |
-| `TradingLabActivity.mq5` | `activity-0.8.0` | Deals y órdenes históricas, recuperación, progreso y reconciliación de posiciones | `activity` | `POST /api/trading-events` | `mt5-trading-events-v1` |
+| `TradingLabTelemetry.mq5` | `0.3.0` | Estado actual de cuenta, balance/equity, posiciones y órdenes | `snapshot` | `POST /account-state` | `mt5-account-state-v1` |
+| `TradingLabActivity.mq5` | `activity-0.8.0` | Deals y órdenes históricas, recuperación, progreso y reconciliación de posiciones | `activity` | `POST /trading-events` | `mt5-trading-events-v1` |
 
 La topología es EA → relay local → API central → `central.sqlite3` (esquema 7);
 el dashboard lee a través de la API. El ACK del relay confirma admisión en la

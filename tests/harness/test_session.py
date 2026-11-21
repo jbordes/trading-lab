@@ -240,8 +240,7 @@ class SessionPublishGuardTest(unittest.TestCase):
     def test_rejects_non_regular_file_mode(self) -> None:
         target = self.log()
         self.commit()
-        # The fixture changes the committed mode through the index on every OS.
-        # Keep the on-disk permissions from creating an unrelated dirty-worktree error.
+        # Change only the committed mode so the working tree stays clean on POSIX.
         self.run_git(self.root, "config", "core.filemode", "false")
         self.run_git(self.root, "update-index", "--chmod=+x", str(target))
         self.run_git(self.root, "commit", "-m", "unexpected executable mode")

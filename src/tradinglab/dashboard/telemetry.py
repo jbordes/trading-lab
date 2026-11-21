@@ -210,6 +210,7 @@ class LoopbackTelemetryClient:
         port: int = 8766,
         timeout_seconds: float = 2.0,
         central_api: bool = False,
+        base_url: str | None = None,
     ) -> None:
         if len(token) < 24 or not token.isascii() or any(not 33 <= ord(c) <= 126 for c in token):
             raise ValueError("El token de telemetría no cumple el formato requerido")
@@ -223,13 +224,14 @@ class LoopbackTelemetryClient:
             or not 0.05 <= timeout_seconds <= 30
         ):
             raise ValueError("El timeout de telemetría debe ser 0.05..30 segundos")
+        base_url = base_url or f"http://127.0.0.1:{port}"
         query = urllib.parse.urlencode({"source_id": source_id})
         self._source_id = source_id
-        self._url = f"http://127.0.0.1:{port}/api/accounts/snapshot?{query}"
+        self._url = f"{base_url}/api/accounts/snapshot?{query}"
         health_path = "/api/accounts/health" if central_api else "/health"
-        self._health_url = f"http://127.0.0.1:{port}{health_path}"
-        self._deals_url = f"http://127.0.0.1:{port}/api/accounts/deals"
-        self._account_history_url = f"http://127.0.0.1:{port}/api/accounts/history"
+        self._health_url = f"{base_url}{health_path}"
+        self._deals_url = f"{base_url}/api/accounts/deals"
+        self._account_history_url = f"{base_url}/api/accounts/history"
         self._authorization = f"Bearer {token}"
         self._timeout_seconds = float(timeout_seconds)
         self._opener = urllib.request.build_opener(

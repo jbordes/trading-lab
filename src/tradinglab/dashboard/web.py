@@ -164,6 +164,9 @@ def create_server(
     historical_order_provider: HistoricalOrderProvider | None = None,
     account_history_provider: AccountHistoryProvider | None = None,
     broker_utc_offset_minutes: int | None = None,
+    accounts=None,
+    public_authority: str | None = None,
+    secure_cookie: bool = False,
     max_connections: int = 16,
     request_timeout: float = 5.0,
 ) -> BoundedHTTPServer:
@@ -191,6 +194,15 @@ def create_server(
         raise ValueError("broker_utc_offset_minutes debe estar entre -840 y 840")
     auth = DashboardAuth(dashboard_token)
 
+    default_view = (
+        service,
+        history_provider,
+        position_cycle_provider,
+        historical_order_provider,
+        account_history_provider,
+        broker_utc_offset_minutes,
+    )
+
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "TradingLabDashboard/0.1"
         protocol_version = "HTTP/1.1"
@@ -217,6 +229,41 @@ def create_server(
                 else:
                     self._send_login()
                 return
+            (
+                service,
+                history_provider,
+                position_cycle_provider,
+                historical_order_provider,
+                account_history_provider,
+                broker_utc_offset_minutes,
+            ) = default_view
+            if session is not None and path == "/api/selectable-accounts":
+                try:
+                    self._send_json({"accounts": accounts.listing() if accounts else None})
+                except OSError, ValueError:
+                    self._send_json(
+                        {"error": "catalog_unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE
+                    )
+                return
+            if accounts is not None and session is not None and path.startswith("/api/"):
+                try:
+                    view = accounts.view(self.headers.get("X-TradingLab-Account", ""))
+                    (
+                        service,
+                        history_provider,
+                        position_cycle_provider,
+                        historical_order_provider,
+                        account_history_provider,
+                        broker_utc_offset_minutes,
+                    ) = view
+                except KeyError:
+                    self._send_json({"error": "select_account"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                except OSError, ValueError:
+                    self._send_json(
+                        {"error": "catalog_unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE
+                    )
+                    return
             if path == "/api/state":
                 if session is None:
                     self._send_json(
@@ -462,8 +509,7 @@ def create_server(
                 self._send_json(page.as_dict())
                 return
             if path == "/health":
-                state = service.state()
-                self._send_json({"status": state["status"]})
+                self._send_json({"status": service.state()["status"] if service else "ready"})
                 return
             static = STATIC_ROUTES.get(path)
             if static:
@@ -607,7 +653,7 @@ def create_server(
                 self.send_header(
                     "Set-Cookie",
                     f"{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Strict; "
-                    f"Max-Age={auth.session_seconds}",
+                    f"Max-Age={auth.session_seconds}" + ("; Secure" if secure_cookie else ""),
                 )
             elif clear_cookie:
                 self.send_header(
@@ -628,7 +674,7 @@ def create_server(
                 return False
             authority = hosts[0].strip().lower()
             port = self.server.server_port
-            return authority in {
+            return authority == public_authority or authority in {
                 "127.0.0.1",
                 "localhost",
                 f"127.0.0.1:{port}",

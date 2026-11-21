@@ -809,7 +809,7 @@ function historyParameters(query, cursor = null) {
 }
 
 async function authenticatedHistoryFetch(url, signal) {
-  const response = await fetch(url, { cache: "no-store", signal });
+  const response = await accountFetch(url, { cache: "no-store", signal });
   if (response.status === 401) {
     window.location.assign("/login");
     throw new Error("La sesión expiró.");
@@ -953,7 +953,7 @@ async function loadHistoryMetrics(query, requestNumber) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
-    const discovery = await fetch("/api/cycle-magics", {
+    const discovery = await accountFetch("/api/cycle-magics", {
       cache: "no-store", signal: controller.signal,
     });
     if (discovery.status === 401) {
@@ -965,7 +965,7 @@ async function loadHistoryMetrics(query, requestNumber) {
       if (requestNumber !== metricsRequest) return;
       if (Array.isArray(discovered.magics)) renderEaSelector(discovered.magics);
     }
-    const response = await fetch(`/api/cycle-metrics?${parameters}`, {
+    const response = await accountFetch(`/api/cycle-metrics?${parameters}`, {
       cache: "no-store", signal: controller.signal,
     });
     if (response.status === 401) {
@@ -1931,7 +1931,7 @@ async function loadAccountHistory({ background = false } = {}) {
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
     const parameters = new URLSearchParams({ from_msc: String(accountHistoryWindow.fromMsc), to_msc: String(accountHistoryWindow.toMsc) });
-    const response = await fetch(`/api/account-evolution?${parameters}`, { cache: "no-store", signal: controller.signal });
+    const response = await accountFetch(`/api/account-evolution?${parameters}`, { cache: "no-store", signal: controller.signal });
     if (response.status === 401) { window.location.assign("/login"); return; }
     if (!response.ok) throw new Error("Historial no disponible. Comprobá que el servidor y el receptor estén actualizados.");
     const payload = await response.json();
@@ -2119,7 +2119,7 @@ let retryMultiplier = 1;
 
 async function loadRuntimeConfig() {
   try {
-    const response = await fetch("/api/config", { cache: "no-store" });
+    const response = await accountFetch("/api/config", { cache: "no-store" });
     if (response.status === 401) {
       window.location.assign("/login");
       return;
@@ -2142,7 +2142,7 @@ async function performRefresh() {
   );
   try {
     const query = lastPollSince ? `?since=${encodeURIComponent(lastPollSince)}` : "";
-    const response = await fetch(`/api/state${query}`, { cache: "no-store", signal: controller.signal });
+    const response = await accountFetch(`/api/state${query}`, { cache: "no-store", signal: controller.signal });
     if (response.status === 401) {
       window.location.assign("/login");
       return;
@@ -2385,4 +2385,40 @@ function initializeDashboard() {
   activateView(viewFromRoute(location.hash.slice(1)));
   refresh().finally(scheduleRefresh);
 }
-loadRuntimeConfig().finally(initializeDashboard);
+let selectedAccount = "";
+function accountFetch(url, options = {}) {
+  const headers = new Headers(options.headers);
+  if (selectedAccount) headers.set("X-TradingLab-Account", selectedAccount);
+  return fetch(url, { ...options, headers });
+}
+
+async function startAccountView() {
+  const response = await fetch("/api/selectable-accounts", { cache: "no-store" });
+  if (response.status === 401) { location.replace("/login"); return; }
+  if (!response.ok) throw new Error("Catálogo de cuentas inaccesible");
+  const { accounts } = await response.json();
+  if (accounts !== null) {
+    const picker = document.getElementById("account-select");
+    document.getElementById("account-picker").hidden = false;
+    if (!accounts.length) {
+      document.getElementById("status").textContent = "Sin cuentas registradas";
+      document.getElementById("freshness").textContent = "Agregá una cuenta desde TradingLab SetUp";
+      setTimeout(() => location.reload(), 15000);
+      return;
+    }
+    for (const account of accounts) picker.add(new Option(account.label, account.account_id));
+    const saved = sessionStorage.getItem("tradinglab.selectedAccount");
+    selectedAccount = accounts.some(a => a.account_id === saved) ? saved : accounts[0].account_id;
+    picker.value = selectedAccount;
+    picker.addEventListener("change", () => {
+      sessionStorage.setItem("tradinglab.selectedAccount", picker.value);
+      location.reload();
+    });
+  }
+  await loadRuntimeConfig();
+  initializeDashboard();
+}
+startAccountView().catch(() => {
+  document.getElementById("status").textContent = "Esperando la API";
+  setTimeout(() => location.reload(), 5000);
+});

@@ -1,6 +1,7 @@
 #ifndef TRADINGLAB_COLLECTOR_COMMON
 #define TRADINGLAB_COLLECTOR_COMMON
 #include "TradingLabAccountGuard.mqh"
+#include "TradingLabRelayUrl.mqh"
 
 // No trading, network or disk side effects. Shared primitives and retry policy.
 enum CollectorCaptureState { CAPTURE_READY, CAPTURE_WAIT_BROKER, CAPTURE_STOPPED };
@@ -43,28 +44,6 @@ public:
       return state;
    }
 };
-
-bool IsLoopbackCollectorUrl(const string url, const string suffix)
-{
-   const string prefix = "http://127.0.0.1:";
-   if(StringFind(url, prefix) != 0)
-      return false;
-   int start = StringLen(prefix);
-   int length = StringLen(url) - start - StringLen(suffix);
-   if(length < 1 || length > 5 || StringSubstr(url, start + length) != suffix)
-      return false;
-   string port = StringSubstr(url, start, length);
-   if(StringGetCharacter(port, 0) == '0')
-      return false;
-   for(int index = 0; index < length; index++)
-   {
-      ushort character = StringGetCharacter(port, index);
-      if(character < '0' || character > '9')
-         return false;
-   }
-   long number = StringToInteger(port);
-   return number >= 1 && number <= 65535;
-}
 
 bool IsApprovedDemo(const bool connected, const long mode, const long login,
                     const string server, const long expected_login, const string expected_server)

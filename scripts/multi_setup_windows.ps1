@@ -222,8 +222,8 @@ $fields=@{}
 Label $hostPage 'Componentes de este equipo' 20 20
 $components=Checks $hostPage 16
 $fields.data_dir=Field $hostPage 'TradingLab Data File (carpeta)' 56 'Carpeta privada para las bases y las claves de este equipo. Para continuar una instalación, abra el archivo setup.json de esa carpeta con Abrir JSON.' (Join-Path $env:LOCALAPPDATA 'TradingLab-multicuenta') -Browse
-$fields.snapshot_ingest_url=Field $hostPage 'Telemetry Relay URL' 92 'Dirección donde Telemetry entrega el estado de la cuenta al relay del equipo MT5. Conserve HTTP, 127.0.0.1 y la ruta /account-state. Puede cambiar el puerto.' 'http://127.0.0.1:8776/account-state'
-$fields.activity_ingest_url=Field $hostPage 'Activity Relay URL' 128 'Dirección donde Activity entrega órdenes y ejecuciones al relay del equipo MT5. Use HTTP, 127.0.0.1 y la ruta /trading-events con un puerto distinto al de Telemetry.' 'http://127.0.0.1:8777/trading-events'
+$fields.snapshot_ingest_url=Field $hostPage 'Telemetry Relay URL' 92 'Dirección donde Telemetry entrega el estado de la cuenta al relay. En el mismo equipo use HTTP en loopback. Para un relay remoto use su URL HTTPS con la ruta /account-state.' 'http://127.0.0.1:8776/account-state'
+$fields.activity_ingest_url=Field $hostPage 'Activity Relay URL' 128 'Dirección donde Activity entrega órdenes y ejecuciones al relay. Indique la URL HTTPS publicada o la dirección HTTP local con la ruta /trading-events.' 'http://127.0.0.1:8777/trading-events'
 $fields.dashboard_url=Field $hostPage 'Dashboard URL' 164 'Dirección completa que abrirá en el navegador. Conserve /dashboard al final. Para acceso remoto, indique la dirección HTTPS publicada por el proxy.' 'http://127.0.0.1:8775/dashboard'
 $fields.api_base_url=Field $hostPage 'API URL' 200 'Dirección base que usan el relay y el dashboard para conectarse a la API. Si está en otro equipo, indique su URL HTTPS, por ejemplo https://api.tradinglab.com.' 'http://127.0.0.1:8782'
 $fields.api_listen_port=Field $hostPage 'API Port (escucha local)' 236 'Opcional. Con una URL HTTPS, el proxy reenvía las peticiones al puerto local 8782 de la API. Complete este campo si configuró otro puerto de escucha.'
@@ -286,7 +286,8 @@ Button $servicePage 'Abrir dashboard' 344 76 152 {Action {
     Start-Process -FilePath ([Uri]$cfg.dashboard_url).AbsoluteUri
 }} -Tip 'Abre la Dashboard URL configurada en el navegador.'
 $fields.mt5_data_dir=Field $mt5Page 'Carpeta de datos de MT5' 20 'En la terminal que desea preparar, abra Archivo → Abrir carpeta de datos. Seleccione esa carpeta, que contiene MQL5.' -Browse
-Button $mt5Page 'Preparar collectors' 509 76 175 {Action {Message (Invoke-SetUp 'attach')}} -Primary -Tip 'Instala Telemetry, Activity y el asistente de gráficos en esta terminal. Al terminar verá las dos direcciones que debe autorizar para WebRequest en MT5.'
+$fields.remote_relay_id=Field $mt5Page 'ID del relay remoto' 56 'Para una terminal en otro equipo, copie el ID público que muestra Preparar equipo en el servidor del relay. Al preparar los collectors se usa la clave de administración ingresada en Equipo.'
+Button $mt5Page 'Preparar collectors' 509 108 175 {Action {Message (Invoke-SetUp 'attach' @{admin=$admin.Text})}} -Primary -Tip 'Instala Telemetry, Activity y el asistente de gráficos en esta terminal. Al terminar verá las dos direcciones que debe autorizar para WebRequest en MT5.'
 $aliasBox=Field $accountPage 'Nombre en el dashboard' 20 'Nombre que verá en el selector de cuentas. Elija uno que le permita distinguir esta cuenta, por ejemplo Evaluación A.'
 $loginBox=Field $accountPage 'MT5 Account Nr.' 56 'Número completo de la cuenta. Figura en el Navegador de MT5, dentro de Cuentas.'
 $broker=Field $accountPage 'Servidor exacto de MT5' 92 'Copie el nombre del servidor que aparece junto a la cuenta en MT5. TradingLab usa el servidor y el número de cuenta para reconocer la captura.'

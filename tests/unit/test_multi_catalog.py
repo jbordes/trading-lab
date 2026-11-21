@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tradinglab.multi_catalog import central_app
+from tradinglab.multi_catalog import central_app, valid_credential
 from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.remote_host import CENTRAL_KEYS
 
@@ -24,6 +24,22 @@ class MultiCatalogTest(unittest.TestCase):
                 pair = api.post("/pair/relay/" + "a" * 32, headers=admin)
                 self.assertEqual(pair.status_code, 200)
                 activity = {"Authorization": "Bearer " + pair.json()["trading-events"]}
+                terminal = "b" * 32
+                terminal_route = "/pair/terminal/" + "a" * 32 + "/" + terminal
+                self.assertEqual(api.post(terminal_route, headers=activity).status_code, 401)
+                tokens = api.post(terminal_route, headers=admin).json()
+                self.assertTrue(
+                    valid_credential(
+                        tokens["trading-events"],
+                        pair.json()["trading-events"],
+                        "mt5/trading-events",
+                    )
+                )
+                self.assertFalse(
+                    valid_credential(
+                        tokens["account-state"], pair.json()["trading-events"], "mt5/trading-events"
+                    )
+                )
                 route = "/resolve/trading-events"
                 identity = {"server": "Broker-A", "login": "123456", "mode": "demo"}
                 missing = api.post(route, json=identity, headers=activity)
@@ -43,6 +59,9 @@ class MultiCatalogTest(unittest.TestCase):
                     self.assertEqual(resolved.json()["account_id"], account_id)
                     account_ids.append(account_id)
                 self.assertNotEqual(*account_ids)
+                raw = api.post(route + "-raw", json=identity, headers=activity)
+                self.assertEqual(raw.status_code, 200)
+                self.assertEqual(raw.json()["account_id"], account_ids[0])
                 self.assertEqual(
                     api.post(route, json=identity, headers=activity).json()["account_id"],
                     account_ids[0],

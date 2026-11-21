@@ -197,10 +197,17 @@ def central_app(database: Path, keys: dict, host: str) -> FastAPI:
 
     @app.post("/resolve/{role}")
     def resolve(role: str, identity: Observed, request: Request):
+        raw = role == "trading-events-raw"
+        if raw:
+            role = "trading-events"
         if role not in ("account-state", "trading-events") or not valid_credential(
             bearer(request), keys["pairing"], role
         ):
             raise HTTPException(401)
+        if raw:
+            with closing(sqlite3.connect(database)) as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] != 10:
+                    raise HTTPException(503, "projection_upgrade_required")
         accounts = catalog(database)
         reason = "identity_not_registered" if accounts else "empty_catalog"
         for row in accounts:
@@ -210,6 +217,21 @@ def central_app(database: Path, keys: dict, host: str) -> FastAPI:
                 reason = "mode_mismatch"
                 break
         raise HTTPException(404, "unknown_account", headers={"X-TradingLab-Reason": reason})
+
+    @app.post("/pair/terminal/{relay_id}/{terminal_id}")
+    def pair_terminal(relay_id: str, terminal_id: str, request: Request):
+        if not hmac.compare_digest(bearer(request), keys["admin"]):
+            raise HTTPException(401)
+        if not all(
+            re.fullmatch("[a-f0-9]{32}", identifier) for identifier in (relay_id, terminal_id)
+        ):
+            raise HTTPException(400)
+        return {
+            role: credential(
+                credential(keys["pairing"], relay_id, role), terminal_id, "mt5/" + role
+            )
+            for role in ("account-state", "trading-events")
+        }
 
     @app.post("/pair/{component}/{identity}")
     def pair(component: str, identity: str, request: Request):

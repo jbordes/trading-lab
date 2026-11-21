@@ -80,7 +80,7 @@ def prepare(config: Settings, admin: str, password: str) -> None:
                     os.link(staged, db)
             with closing(sqlite3.connect(db)) as connection:
                 validate_central_schema(connection)
-                if connection.execute("PRAGMA user_version").fetchone()[0] != 9:
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in (9, 10):
                     raise ValueError("La base seleccionada pertenece a otra versión")
         for role in ("relay", "dashboard"):
             if role not in config.components:
@@ -206,7 +206,7 @@ def run_service(config: Settings, role: str) -> None:
                 with closing(RelayQueue(dest / "relay.sqlite3")) as queue:
                     relay = MultiRelay(queue, config.api_base_url, keys)
                     ports = [
-                        urlsplit(url).port
+                        config.relay_port(url)
                         for url in (config.snapshot_ingest_url, config.activity_ingest_url)
                     ]
                     with relay_listeners(relay, ports):

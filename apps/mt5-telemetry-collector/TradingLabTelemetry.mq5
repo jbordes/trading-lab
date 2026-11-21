@@ -1,5 +1,5 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.103"
+#property version   "1.104"
 #property strict
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
@@ -20,7 +20,7 @@ input int MaxDealsPerSnapshot = 200;
 datetime HistoryStartServerTime = 0;
 
 const string SCHEMA_VERSION = "mt5-account-state-v1";
-const string COLLECTOR_VERSION = "0.3.3";
+const string COLLECTOR_VERSION = "0.3.4";
 const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
@@ -42,9 +42,9 @@ ulong sequence_number = 0;
 CollectorCaptureState capture_state = CAPTURE_READY;
 
 
-bool IsLoopbackIngestUrl(const string url)
+bool IsCollectorIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/account-state") || IsLoopbackCollectorUrl(url, "/api/account-state");
+   return IsRelayUrl(url, "/account-state") || IsRelayUrl(url, "/api/account-state");
 }
 
 
@@ -63,9 +63,9 @@ void ResetAccountCapture()
 int OnInit()
 {
    logger.Configure("telemetry", TerminalId, COLLECTOR_VERSION);
-   if(!IsLoopbackIngestUrl(IngestUrl))
+   if(!IsCollectorIngestUrl(IngestUrl))
    {
-      logger.Error("invalid_configuration", "TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
+      logger.Error("invalid_configuration", "TradingLab telemetry: configure a loopback HTTP or remote HTTPS relay endpoint");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsCollectorToken(Token))
@@ -251,7 +251,7 @@ void OnTradeTransaction(
 
 int SendMessage(const string body)
 {
-   if(!CheckPilotSafety() || !IsLoopbackIngestUrl(IngestUrl))
+   if(!CheckPilotSafety() || !IsCollectorIngestUrl(IngestUrl))
       return 0;
    char request_body[];
    char response_body[];

@@ -162,8 +162,8 @@ void TestHistoryRecovery()
 
 void TestPilotGuards()
 {
-   Check(IsLoopbackIngestUrl("http://127.0.0.1:8766/api/account-state"), "local endpoint allowed");
-   Check(IsLoopbackIngestUrl("http://127.0.0.1:65535/api/account-state"), "maximum port allowed");
+   Check(IsCollectorIngestUrl("http://127.0.0.1:8766/api/account-state"), "local endpoint allowed");
+   Check(IsCollectorIngestUrl("http://127.0.0.1:65535/api/account-state"), "maximum port allowed");
    string invalid[] = {
       "http://127.0.0.1:8766@external.example/api/account-state",
       "http://127.0.0.1:8766/api/account-state?url=external",
@@ -172,10 +172,10 @@ void TestPilotGuards()
       "http://127.0.0.1:65536/api/account-state", "http://127.0.0.1:08766/api/account-state",
       "http://127.0.0.1:+8766/api/account-state", "http://127.0.0.1:8766/other",
       "http://127.0.0.1:8766\\@external.example/api/account-state",
-      "http://127.0.0.1:8766/api/account-state\r\n", "https://127.0.0.1:8766/api/account-state"
+      "http://127.0.0.1:8766/api/account-state\r\n", "https://host.example:65536/api/account-state"
    };
    for(int i = 0; i < ArraySize(invalid); i++)
-      Check(!IsLoopbackIngestUrl(invalid[i]), "ambiguous or remote URL rejected");
+      Check(!IsCollectorIngestUrl(invalid[i]), "ambiguous or remote URL rejected");
    Check(IsApprovedDemo(true, ACCOUNT_TRADE_MODE_DEMO, 1234, "DEMO", 1234, "DEMO"),
          "approved connected demo allowed");
    Check(!IsApprovedDemo(true, ACCOUNT_TRADE_MODE_REAL, 1234, "DEMO", 1234, "DEMO"),

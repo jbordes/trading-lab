@@ -51,12 +51,17 @@ class MultiRelay(RelayIngress):
         if (
             scheme != "Bearer"
             or not token.isascii()
-            or not valid_credential(token, self.keys["terminal_master"], contract)
+            or not (
+                valid_credential(token, self.keys["terminal_master"], contract)
+                or valid_credential(token, self.keys[contract], "mt5/" + contract)
+            )
         ):
             raise V2AuthenticationError("Terminal sin autorización")
         return token
 
-    def resolve(self, contract: str, body: bytes, authorization: str) -> tuple[int, object]:
+    def resolve(
+        self, contract: str, body: bytes, authorization: str, *, raw: bool = False
+    ) -> tuple[int, object]:
         self.terminal_token(authorization, contract)
         try:
             identity = Observed.model_validate_json(body)
@@ -64,7 +69,9 @@ class MultiRelay(RelayIngress):
             return 400, "invalid_identity"
         try:
             account = api_request(
-                self.api + "/resolve/" + contract, self.keys[contract], identity.model_dump()
+                self.api + "/resolve/" + contract + ("-raw" if raw else ""),
+                self.keys[contract],
+                identity.model_dump(),
             )
         except HTTPError as exc:
             if exc.code == 404:

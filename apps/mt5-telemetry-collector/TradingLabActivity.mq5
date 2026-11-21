@@ -1,5 +1,5 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.104"
+#property version   "1.105"
 #property strict
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
@@ -27,7 +27,7 @@ input int MaxHistoryRowsPerCycle = 500;
 input int CycleBudgetMs = 25;
 
 const string SCHEMA_VERSION = "mt5-trading-events-v1";
-const string COLLECTOR_VERSION = "activity-0.8.4";
+const string COLLECTOR_VERSION = "activity-0.9.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 const int LOCAL_ENCODING_FAILURE = -2;
@@ -50,10 +50,6 @@ bool prefer_recent = true;
 bool recovery_initialized = false;
 bool recovery_blocked = false;
 bool recent_recovery_blocked = false;
-bool batch_waiting_for_positions = false;
-long candidate_position_ids[200];
-int candidate_position_count = 0;
-int candidate_position_index = 0;
 bool startup_pending = true;
 bool trade_activity_pending = false;
 CollectorCaptureState capture_state = CAPTURE_READY;
@@ -89,6 +85,7 @@ bool SelectRecoveryLane(const long now_msc, bool &recent)
 }
 
 #ifndef ACTIVITY_COLLECTOR_TEST
+#define REMOTE_ACTIVITY_PROJECTION
 #include "TradingLabObservedAccount.mqh"
 
 void ResetAccountCapture()
@@ -101,8 +98,6 @@ void ResetAccountCapture()
    saved_deep_page = empty_page;
    ZeroMemory(preparation);
    ZeroMemory(page_scan);
-   ResetCandidatePositions();
-   batch_waiting_for_positions=false;
    recovery_initialized=false;
    recovery_blocked=false;
    recent_recovery_blocked=false;
@@ -122,9 +117,9 @@ void ResetAccountCapture()
 int OnInit()
 {
    logger.Configure("activity", TerminalId, COLLECTOR_VERSION);
-   if(!IsLoopbackIngestUrl(IngestUrl))
+   if(!IsCollectorIngestUrl(IngestUrl))
    {
-      logger.Error("invalid_configuration", "TradingLab activity: only the loopback trading-events endpoint is accepted");
+      logger.Error("invalid_configuration", "TradingLab activity: configure a loopback HTTP or remote HTTPS trading-events endpoint");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsCollectorToken(Token))
@@ -172,7 +167,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(StringLen(pending.body) > 0 && !pending.is_heartbeat && !pending.is_position_reconcile &&
+   if(StringLen(pending.body) > 0 && !pending.is_heartbeat &&
       pending.from_msc > 0 && pending.to_msc >= pending.from_msc)
       logger.Warn("unconfirmed_range", StringFormat("TradingLab activity: unconfirmed range retained by cursor (%I64d..%I64d)",
                   pending.from_msc, pending.to_msc));
@@ -211,11 +206,6 @@ void OnTimer()
       return;
    }
    long now_msc = (long)TimeCurrent() * 1000;
-   if(batch_waiting_for_positions)
-   {
-      ContinuePositionReconciliation();
-      return;
-   }
    if(!pagination.active && !preparation.active)
    {
       if(!SelectRecoveryLane(now_msc, pending.is_recent))
@@ -427,14 +417,6 @@ bool TrySendPending(const ulong now_ms)
          ResetRetryState();
          return true;
       }
-      if(pending.is_position_reconcile)
-      {
-         pending.body = "";
-         pending.is_position_reconcile = false;
-         candidate_position_index++;
-         ResetRetryState();
-         return true;
-      }
       if(pending.blocks_recovery)
       {
          string selected_blocked_key = pending.is_recent ? recent_blocked_key : blocked_key;
@@ -457,11 +439,7 @@ bool TrySendPending(const ulong now_ms)
       else
       {
          pending.body = "";
-         batch_waiting_for_positions = true;
-         candidate_position_index = 0;
-         ResetRetryState();
-         if(candidate_position_count == 0)
-            return FinalizeConfirmedBatch();
+         return FinalizeConfirmedBatch();
       }
       return true;
    }
@@ -502,8 +480,6 @@ bool FinalizeConfirmedBatch()
       pagination.to_msc = pending.to_msc;
       pagination.after = pending.page_through;
       pagination.snapshot_id = pending.page_snapshot_id;
-      batch_waiting_for_positions = false;
-      pending.is_position_reconcile = false;
       pending.is_paged = false;
       if(pending.is_recent)
          saved_recent_page = pagination;
@@ -511,7 +487,6 @@ bool FinalizeConfirmedBatch()
          saved_deep_page = pagination;
       pagination.active = false;
       prefer_recent = !pending.is_recent;
-      ResetCandidatePositions();
       ResetRetryState();
       return true;
    }
@@ -528,14 +503,11 @@ bool FinalizeConfirmedBatch()
       recent_confirmed_from_msc = next_cursor;
    else
       confirmed_from_msc = next_cursor;
-   batch_waiting_for_positions = false;
    pending.blocks_recovery = false;
-   pending.is_position_reconcile = false;
    pending.is_paged = false;
    pagination.active = false;
    pagination.snapshot_id = "";
    prefer_recent = !pending.is_recent;
-   ResetCandidatePositions();
    if(pending.is_recent)
    {
       startup_pending = false;
@@ -543,189 +515,6 @@ bool FinalizeConfirmedBatch()
    }
    ResetRetryState();
    return true;
-}
-
-
-int BuildPositionReconcilePayload(const long position_id, string &payload)
-{
-   ResetLastError();
-   if(position_id <= 0 || !HistorySelectByPosition((ulong)position_id))
-   {
-      logger.Warn("position_history_failed", StringFormat("TradingLab activity: cannot select position %I64d history (%d)",
-                  position_id, GetLastError()));
-      return -1;
-   }
-
-   int deal_total = HistoryDealsTotal();
-   int order_total = HistoryOrdersTotal();
-   if(deal_total < 1 || order_total < 1)
-   {
-      logger.Warn("position_incomplete", StringFormat("TradingLab activity: position %I64d has incomplete history; skipped",
-                  position_id));
-      return 0;
-   }
-   if(deal_total > MaxItemsPerCollection || order_total > MaxItemsPerCollection)
-   {
-      logger.Warn("position_limit", StringFormat("TradingLab activity: position %I64d exceeds collection limit; skipped",
-                  position_id));
-      return 0;
-   }
-
-   bool valid = true;
-   bool has_event_time = false;
-   bool has_opening_order = false;
-   long from_msc = 0;
-   long to_msc = 0;
-   double signed_volume = 0.0;
-   string deals = "[";
-   for(int index = 0; index < deal_total; index++)
-   {
-      ResetLastError();
-      ulong ticket = HistoryDealGetTicket(index);
-      long row_position_id = HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
-      long time_msc = HistoryDealGetInteger(ticket, DEAL_TIME_MSC);
-      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
-      double volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
-      if(ticket == 0 || GetLastError() != 0 || row_position_id != position_id ||
-         time_msc <= 0 || !MathIsValidNumber(volume) || volume < 0.0)
-      {
-         logger.Warn("position_invalid", StringFormat("TradingLab activity: position %I64d deal history is invalid; skipped",
-                     position_id));
-         return 0;
-      }
-      if(deal_type == DEAL_TYPE_BUY)
-         signed_volume += volume;
-      else if(deal_type == DEAL_TYPE_SELL)
-         signed_volume -= volume;
-      else
-      {
-         logger.Warn("position_non_trading", StringFormat("TradingLab activity: position %I64d has a non-trading deal; skipped",
-                     position_id));
-         return 0;
-      }
-      if(!has_event_time || time_msc < from_msc)
-         from_msc = time_msc;
-      if(!has_event_time || time_msc > to_msc)
-         to_msc = time_msc;
-      has_event_time = true;
-      string row = BuildHistoricalDeal(ticket, valid);
-      if(!valid)
-         return -1;
-      if(index > 0)
-         deals += ",";
-      deals += row;
-   }
-   deals += "]";
-
-   string orders = "[";
-   for(int index = 0; index < order_total; index++)
-   {
-      ResetLastError();
-      ulong ticket = HistoryOrderGetTicket(index);
-      long order_position_id = HistoryOrderGetInteger(ticket, ORDER_POSITION_ID);
-      long position_by_id = HistoryOrderGetInteger(ticket, ORDER_POSITION_BY_ID);
-      long done_msc = HistoryOrderGetInteger(ticket, ORDER_TIME_DONE_MSC);
-      if(ticket == 0 || GetLastError() != 0 || done_msc <= 0 ||
-         (order_position_id != position_id && position_by_id != position_id))
-      {
-         logger.Warn("position_invalid", StringFormat("TradingLab activity: position %I64d order history is invalid; skipped",
-                     position_id));
-         return 0;
-      }
-      if((long)ticket == position_id)
-         has_opening_order = true;
-      if(!has_event_time || done_msc < from_msc)
-         from_msc = done_msc;
-      if(!has_event_time || done_msc > to_msc)
-         to_msc = done_msc;
-      has_event_time = true;
-      string row = BuildHistoricalOrder(ticket, valid);
-      if(!valid)
-         return -1;
-      if(index > 0)
-         orders += ",";
-      orders += row;
-   }
-   orders += "]";
-
-   if(!has_event_time || !has_opening_order || MathAbs(signed_volume) > 0.00000001)
-   {
-      logger.Warn("position_open", StringFormat("TradingLab activity: position %I64d is open or cannot be proven complete; skipped",
-                  position_id));
-      return 0;
-   }
-
-   payload = "{";
-   payload += "\"reason\":\"position_reconcile\",";
-   payload += "\"identity\":" + BuildIdentity() + ",";
-   payload += "\"window\":{\"from_server_msc\":\"" + IntegerToString(from_msc) +
-              "\",\"to_server_msc\":\"" + IntegerToString(to_msc) + "\"},";
-   payload += "\"deals\":" + CollectionJson(deal_total, deals, false) + ",";
-   payload += "\"orders\":" + CollectionJson(order_total, orders, false);
-   payload += "}";
-   return 1;
-}
-
-
-void ResetCandidatePositions()
-{
-   candidate_position_count = 0;
-   candidate_position_index = 0;
-}
-
-
-void AddCandidatePosition(const long position_id)
-{
-   for(int index = 0; index < candidate_position_count; index++)
-      if(candidate_position_ids[index] == position_id)
-         return;
-   if(candidate_position_count >= MaxItemsPerCollection || candidate_position_count >= 200)
-   {
-      logger.Error("candidate_capacity", "TradingLab activity: cannot retain position reconciliation candidate");
-      StopForSafety();
-      return;
-   }
-   candidate_position_ids[candidate_position_count] = position_id;
-   candidate_position_count++;
-}
-
-
-void ContinuePositionReconciliation()
-{
-   int processed = 0;
-   ulong started_ms = GetTickCount64();
-   while(candidate_position_index < candidate_position_count &&
-         processed++ < 2 && GetTickCount64() - started_ms < (ulong)CycleBudgetMs)
-   {
-      long position_id = candidate_position_ids[candidate_position_index];
-      string payload = "";
-      int result = BuildPositionReconcilePayload(position_id, payload);
-      if(result < 0)
-         return;
-      if(result == 0)
-      {
-         candidate_position_index++;
-         continue;
-      }
-      sequence_number++;
-      string envelope = BuildEnvelope(payload, sequence_number, "activity_batch");
-      if(!CheckPilotSafety())
-         return;
-      if(!PayloadSizeIsValid(envelope))
-      {
-         logger.Warn("position_payload_limit", StringFormat("TradingLab activity: position %I64d evidence exceeds payload limit; skipped",
-                     position_id));
-         candidate_position_index++;
-         continue;
-      }
-      pending.body = envelope;
-      pending.is_position_reconcile = true;
-      pending.is_heartbeat = false;
-      TrySendPending(GetTickCount64());
-      return;
-   }
-   if(candidate_position_index >= candidate_position_count)
-      FinalizeConfirmedBatch();
 }
 
 
@@ -751,7 +540,7 @@ void StopForSafety()
 
 int SendMessage(const string body)
 {
-   if(!CheckPilotSafety() || !IsLoopbackIngestUrl(IngestUrl))
+   if(!CheckPilotSafety() || !IsCollectorIngestUrl(IngestUrl))
       return 0;
    char request_body[];
    char response_body[];
@@ -791,7 +580,6 @@ int SendMessage(const string body)
 string BuildActivityPayload(const string reason, const long from_msc, const long to_msc,
                             bool &truncated)
 {
-   ResetCandidatePositions();
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
    ResetLastError();
@@ -845,7 +633,6 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
                                  ActivityPageKey &through, bool &has_more,
                                  string &snapshot_id)
 {
-   ResetCandidatePositions();
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
    ResetLastError();
@@ -944,13 +731,6 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
          string row = BuildHistoricalDeal(key.ticket, valid);
          if(!valid)
             return "";
-         ResetLastError();
-         long position_id = HistoryDealGetInteger(key.ticket, DEAL_POSITION_ID);
-         long entry = HistoryDealGetInteger(key.ticket, DEAL_ENTRY);
-         if(GetLastError() != 0)
-            return "";
-         if(position_id > 0 && entry != DEAL_ENTRY_IN)
-            AddCandidatePosition(position_id);
          if(emitted_deals++ > 0)
             deals += ",";
          deals += row;
@@ -1080,18 +860,9 @@ string BuildHistoricalDeals(const long from_msc, const long to_msc, int &total, 
       }
       if(time_msc < from_msc || time_msc > to_msc)
          continue;
-      long position_id = HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
-      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      if(GetLastError() != 0)
-      {
-         valid = false;
-         return "[]";
-      }
       total++;
       if(emitted >= MaxItemsPerCollection)
          continue;
-      if(position_id > 0 && entry != DEAL_ENTRY_IN)
-         AddCandidatePosition(position_id);
       string row = BuildHistoricalDeal(ticket, valid);
       if(!valid)
          return "[]";
@@ -1260,9 +1031,9 @@ int Utf8Size(const string value)
 }
 
 
-bool IsLoopbackIngestUrl(const string url)
+bool IsCollectorIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/trading-events") || IsLoopbackCollectorUrl(url, "/api/trading-events");
+   return IsRelayUrl(url, "/trading-events") || IsRelayUrl(url, "/api/trading-events");
 }
 
 

@@ -22,7 +22,6 @@ struct ActivityPendingBatch
       to_msc = 0;
       blocks_recovery = false;
       is_recent = false;
-      is_position_reconcile = false;
       is_heartbeat = false;
       is_paged = false;
       page_has_more = false;
@@ -35,7 +34,6 @@ struct ActivityPendingBatch
    long to_msc;
    bool blocks_recovery;
    bool is_recent;
-   bool is_position_reconcile;
    bool is_heartbeat;
    bool is_paged;
    bool page_has_more;

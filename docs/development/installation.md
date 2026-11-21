@@ -1,5 +1,7 @@
 # Instalación piloto local (remote)
 
+Para la versión multicuenta, abra [TradingLab SetUp para Windows](tradinglab-setup-multicuenta.md).
+
 Esta guía prepara la arquitectura `central-relay-v1`: API central, relay local con cola durable y dashboard. El terminal MT5 envía al relay local; este reenvía los eventos a la API central. Es un piloto supervisado, no una declaración de disponibilidad de producción.
 
 ## Requisitos y límites

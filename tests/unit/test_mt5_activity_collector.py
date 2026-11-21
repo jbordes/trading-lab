@@ -61,9 +61,9 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
     def test_source_is_read_only_loopback_v2(self) -> None:
         for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
             self.assertNotIn(pattern, self.normalized)
-        self.assertIn('"http://127.0.0.1:8777/api/trading-events"', self.source)
-        self.assertIn("ACCOUNT_TRADE_MODE_DEMO", self.common)
-        self.assertIn("login == expected_login && server == expected_server", self.common)
+        self.assertIn('"http://127.0.0.1:8777/trading-events"', self.source)
+        self.assertIn('IsLoopbackCollectorUrl(url, "/trading-events")', self.source)
+        self.assertIn("if(!SelectObservedAccount())", self.source)
         self.assertIn("HistorySelect(", self.source)
         self.assertIn("HistoryOrderGetTicket(", self.source)
         self.assertIn("HistoryDealGetTicket(", self.source)
@@ -125,14 +125,12 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.8.1"', self.source)
-        self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
-        self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
+        self.assertIn('cursor_prefix="TL."+SourceId', self.source)
+        for suffix in (".C", ".B", ".R", ".RB"):
+            self.assertIn(f'cursor_prefix+"{suffix}"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("bool recent_due", timer)
-        self.assertIn("bool deep_due", timer)
+        self.assertIn("SelectRecoveryLane(now_msc, pending.is_recent)", timer)
         self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
-        self.assertIn("pending.is_recent = recent_due", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "void ResetCandidatePositions", 1
         )[0]
@@ -184,9 +182,10 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("PersistValue", heartbeat_ack)
 
     def test_deep_recovery_can_pause_without_stopping_recent_capture(self) -> None:
-        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("EnableDeepRecovery && !recovery_blocked", timer)
-        recent = timer.split("bool recent_due", 1)[1].split("bool deep_due", 1)[0]
+        selector = self.source.split("bool SelectRecoveryLane", 1)[1].split("\n}", 1)[0]
+        self.assertIn("EnableDeepRecovery && !recovery_blocked", selector)
+        recent = selector.split("bool recent_due", 1)[1].split("bool deep_due", 1)[0]
+        self.assertIn("recent_gap > overlap_msc", recent)
         self.assertNotIn("EnableDeepRecovery", recent)
         self.assertIn("deep_paused", self.source)
 

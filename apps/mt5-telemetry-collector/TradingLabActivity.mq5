@@ -1,5 +1,5 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.101"
+#property version   "1.104"
 #property strict
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
@@ -8,12 +8,13 @@
 
 // Read-only trading-events collector. It never sends or modifies trading orders.
 
-input string IngestUrl = "http://127.0.0.1:8777/api/trading-events";
+input string IngestUrl = "http://127.0.0.1:8777/trading-events";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
-input string SourceId = "demo-activity-01";
+input string TerminalId = "";
+string SourceId = "";
 input int IntervalSeconds = 10;
 input int RequestTimeoutMs = 1000;
-input datetime HistoryStartServerTime = 0;
+datetime HistoryStartServerTime = 0;
 input int WindowSeconds = 21600;
 input int MinimumWindowSeconds = 60;
 input int OverlapSeconds = 5;
@@ -24,13 +25,9 @@ input int HeartbeatSeconds = 60;
 input bool EnableDeepRecovery = true;
 input int MaxHistoryRowsPerCycle = 500;
 input int CycleBudgetMs = 25;
-// Operator-approved identity; demo by default, real requires explicit opt-in.
-input long ExpectedDemoLogin = 0;
-input string ExpectedDemoServer = "";
-input bool AllowRealAccount = false; // true selects REAL only; never sends trading commands
 
 const string SCHEMA_VERSION = "mt5-trading-events-v1";
-const string COLLECTOR_VERSION = "activity-0.8.1";
+const string COLLECTOR_VERSION = "activity-0.8.4";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 const int LOCAL_ENCODING_FAILURE = -2;
@@ -76,10 +73,55 @@ ulong last_hint_order_ticket = 0;
 ulong last_hint_position_id = 0;
 
 
+bool SelectRecoveryLane(const long now_msc, bool &recent)
+{
+   const long overlap_msc = (long)OverlapSeconds * 1000;
+   long recent_gap = now_msc - recent_confirmed_from_msc;
+   // A restored cursor can be exactly one overlap behind the last broker tick.
+   // Only choose a new window when confirming it would advance its cursor.
+   bool recent_due = !recent_recovery_blocked && (saved_recent_page.active ||
+      (recent_gap > overlap_msc && (startup_pending || trade_activity_pending ||
+       recent_gap >= (long)RecentCadenceSeconds * 1000)));
+   bool deep_due = EnableDeepRecovery && !recovery_blocked && (saved_deep_page.active ||
+      recent_confirmed_from_msc - confirmed_from_msc > overlap_msc);
+   recent = recent_due && (!deep_due || prefer_recent);
+   return recent_due || deep_due;
+}
+
 #ifndef ACTIVITY_COLLECTOR_TEST
+#include "TradingLabObservedAccount.mqh"
+
+void ResetAccountCapture()
+{
+   ActivityPendingBatch empty_batch;
+   pending = empty_batch;
+   ActivityPagination empty_page;
+   pagination = empty_page;
+   saved_recent_page = empty_page;
+   saved_deep_page = empty_page;
+   ZeroMemory(preparation);
+   ZeroMemory(page_scan);
+   ResetCandidatePositions();
+   batch_waiting_for_positions=false;
+   recovery_initialized=false;
+   recovery_blocked=false;
+   recent_recovery_blocked=false;
+   transaction_hint_head=0;
+   transaction_hint_count=0;
+   transaction_hints_dropped=0;
+   last_hint_deal_ticket=0;
+   last_hint_order_ticket=0;
+   last_hint_position_id=0;
+   startup_pending=true;
+   prefer_recent=true;
+   trade_activity_pending=false;
+   sequence_number=0;
+   ResetRetryState();
+}
+
 int OnInit()
 {
-   logger.Configure("activity", SourceId, COLLECTOR_VERSION);
+   logger.Configure("activity", TerminalId, COLLECTOR_VERSION);
    if(!IsLoopbackIngestUrl(IngestUrl))
    {
       logger.Error("invalid_configuration", "TradingLab activity: only the loopback trading-events endpoint is accepted");
@@ -90,7 +132,7 @@ int OnInit()
       logger.Error("invalid_configuration", "TradingLab activity: configure a local token with at least 24 characters");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(!IsSafeIdentifier(SourceId))
+   if(!IsSafeIdentifier(TerminalId) || StringFind(Token,TerminalId+".")!=0)
    {
       logger.Error("invalid_configuration", "TradingLab activity: SourceId contains unsupported characters");
       return INIT_PARAMETERS_INCORRECT;
@@ -105,7 +147,7 @@ int OnInit()
       CycleBudgetMs < 1 || CycleBudgetMs > 100 || WindowSeconds < 60 || WindowSeconds > 86400 || MinimumWindowSeconds < 1 ||
       MinimumWindowSeconds > WindowSeconds || OverlapSeconds < 0 ||
       OverlapSeconds >= MinimumWindowSeconds || MaxItemsPerCollection < 1 ||
-      MaxItemsPerCollection > 200 || HistoryStartServerTime <= 0 ||
+      MaxItemsPerCollection > 200 ||
       RecentLookbackSeconds < RecentCadenceSeconds || RecentLookbackSeconds > 86400 ||
       RecentCadenceSeconds < IntervalSeconds || RecentCadenceSeconds > 3600 ||
       HeartbeatSeconds < IntervalSeconds || HeartbeatSeconds > 3600)
@@ -113,12 +155,6 @@ int OnInit()
       logger.Error("invalid_configuration", "TradingLab activity: review history window, overlap, limit and explicit start");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(ExpectedDemoLogin <= 0 || ExpectedDemoServer == "")
-      return INIT_PARAMETERS_INCORRECT;
-   if(!CheckPilotSafety() && capture_state == CAPTURE_STOPPED)
-      return INIT_FAILED;
-   if(capture_state == CAPTURE_READY && !InitializeRecovery() && capture_state == CAPTURE_STOPPED)
-      return INIT_FAILED;
    if(!EventSetTimer(IntervalSeconds))
    {
       logger.Error("timer_failed", StringFormat("TradingLab activity: cannot start timer (%d)", GetLastError()));
@@ -136,7 +172,8 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(pending.body != "")
+   if(StringLen(pending.body) > 0 && !pending.is_heartbeat && !pending.is_position_reconcile &&
+      pending.from_msc > 0 && pending.to_msc >= pending.from_msc)
       logger.Warn("unconfirmed_range", StringFormat("TradingLab activity: unconfirmed range retained by cursor (%I64d..%I64d)",
                   pending.from_msc, pending.to_msc));
    // Healthy lifecycle events do not emit routine log entries.
@@ -145,14 +182,14 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   if(!CheckPilotSafety())
+   if(!SelectObservedAccount())
       return;
    if(!recovery_initialized && !InitializeRecovery())
       return;
    int drained_hints = DrainTransactionHints();
    if(drained_hints > 0)
       trade_activity_pending = true;
-   if(pending.body != "")
+   if(StringLen(pending.body) > 0)
    {
       TrySendPending(GetTickCount64());
       return;
@@ -179,16 +216,10 @@ void OnTimer()
       ContinuePositionReconciliation();
       return;
    }
-   bool recent_due = !recent_recovery_blocked &&
-      (saved_recent_page.active || startup_pending || trade_activity_pending ||
-       now_msc - recent_confirmed_from_msc >= (long)RecentCadenceSeconds * 1000);
-   bool deep_due = EnableDeepRecovery && !recovery_blocked &&
-      (saved_deep_page.active || confirmed_from_msc < recent_confirmed_from_msc);
    if(!pagination.active && !preparation.active)
    {
-      if(!recent_due && !deep_due)
+      if(!SelectRecoveryLane(now_msc, pending.is_recent))
          return;
-      pending.is_recent = recent_due && (!deep_due || prefer_recent);
       if(pending.is_recent && saved_recent_page.active)
       {
          pagination = saved_recent_page;
@@ -371,7 +402,7 @@ string RecoveryReason(const long now_msc, const bool recent_lane)
 
 bool TrySendPending(const ulong now_ms)
 {
-   if(pending.body == "" || !transport.Ready(now_ms))
+   if(StringLen(pending.body) == 0 || !transport.Ready(now_ms))
       return false;
    int status = SendMessage(pending.body);
    if(capture_state != CAPTURE_READY)
@@ -716,35 +747,6 @@ void StopForSafety()
 
 
 #ifndef ACTIVITY_COLLECTOR_TEST
-bool CheckPilotSafety()
-{
-   if(capture_state == CAPTURE_STOPPED)
-      return false;
-   ResetLastError();
-   bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
-   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
-   long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   CollectorCaptureState observed = EvaluateCaptureState(connected, GetLastError() == 0,
-      mode, login, server, ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount);
-   if(observed == CAPTURE_WAIT_BROKER)
-   {
-      if(capture_state != CAPTURE_WAIT_BROKER)
-         logger.Warn("broker_unavailable", "TradingLab activity: broker unavailable; waiting without advancing capture");
-      capture_state = CAPTURE_WAIT_BROKER;
-      return false;
-   }
-   if(observed == CAPTURE_READY)
-   {
-      if(capture_state == CAPTURE_WAIT_BROKER)
-         logger.Resolve("broker_unavailable");
-      capture_state = CAPTURE_READY;
-      return true;
-   }
-   StopForSafety();
-   logger.Error("identity_guard_stopped", "TradingLab activity: pilot guard stopped capture; review account identity and mode, then reattach EA");
-   return false;
-}
 
 
 int SendMessage(const string body)
@@ -1260,7 +1262,7 @@ int Utf8Size(const string value)
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/api/trading-events");
+   return IsLoopbackCollectorUrl(url, "/trading-events") || IsLoopbackCollectorUrl(url, "/api/trading-events");
 }
 
 
@@ -1287,12 +1289,11 @@ bool InitializeRecovery()
       return false;
    }
 
-   uint source_hash = StableHash(SourceId + ":" + IntegerToString(ExpectedDemoLogin) +
-                                 ":" + ExpectedDemoServer);
-   cursor_key = StringFormat("TL2.ACT.%08X.CURSOR", source_hash);
-   blocked_key = StringFormat("TL2.ACT.%08X.BLOCK", source_hash);
-   recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT", source_hash);
-   recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK", source_hash);
+   string cursor_prefix="TL."+SourceId;
+   cursor_key=cursor_prefix+".C";
+   blocked_key=cursor_prefix+".B";
+   recent_cursor_key=cursor_prefix+".R";
+   recent_blocked_key=cursor_prefix+".RB";
    confirmed_from_msc = (long)HistoryStartServerTime * 1000;
    long recent_floor_msc = now_seconds * 1000 - (long)RecentLookbackSeconds * 1000;
    recent_confirmed_from_msc = recent_floor_msc > confirmed_from_msc ?
@@ -1330,7 +1331,7 @@ bool InitializeRecovery()
       (long)GlobalVariableGet(recent_blocked_key) == recent_confirmed_from_msc)
       recent_recovery_blocked = true;
 
-   session_id = "activity-" + CompactUtcTimestamp() + "-" +
+   session_id = TerminalId + "-" + CompactUtcTimestamp() + "-" +
                 IntegerToString((long)GetTickCount64());
    last_heartbeat_tick_ms = GetTickCount64();
    recovery_initialized = true;

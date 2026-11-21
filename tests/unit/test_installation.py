@@ -170,17 +170,21 @@ class InstallationTest(unittest.TestCase):
             with self.subTest(destination=destination), self.assertRaises(ValueError):
                 prepare_installation(self.repo, destination, config())
 
-    def test_collectors_keep_demo_default_and_wire_explicit_real_flag(self):
+    def test_collectors_resolve_the_observed_account_without_login_inputs(self):
         folder = ROOT / "apps/mt5-telemetry-collector"
         for filename in ("TradingLabTelemetry.mq5", "TradingLabActivity.mq5"):
             code = (folder / filename).read_text()
-            self.assertIn("input bool AllowRealAccount = false;", code)
-            self.assertIn("ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount", code)
+            self.assertIn('#include "TradingLabObservedAccount.mqh"', code)
+            self.assertIn("if(!SelectObservedAccount())", code)
+            self.assertNotIn("ExpectedDemoLogin", code)
+            self.assertNotIn("AllowRealAccount", code)
             self.assertNotIn("OrderSend(", code)
-        guard = (folder / "TradingLabAccountGuard.mqh").read_text()
-        self.assertIn("login == expected_login && server == expected_server", guard)
-        self.assertIn(
-            "allow_real_account ? ACCOUNT_TRADE_MODE_REAL : ACCOUNT_TRADE_MODE_DEMO", guard
+        guard = (folder / "TradingLabObservedAccount.mqh").read_text(encoding="utf-8")
+        for field in ("ACCOUNT_LOGIN", "ACCOUNT_SERVER", "ACCOUNT_TRADE_MODE"):
+            self.assertIn(field, guard)
+        self.assertIn("mode!=ACCOUNT_TRADE_MODE_DEMO && mode!=ACCOUNT_TRADE_MODE_REAL", guard)
+        self.assertLess(
+            guard.index("if(identity!=CurrentIdentity())"), guard.index("SourceId=fields[0]")
         )
 
 

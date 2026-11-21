@@ -1,5 +1,5 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.102"
+#property version   "1.103"
 #property strict
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
@@ -7,22 +7,20 @@
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
-input string IngestUrl = "http://127.0.0.1:8776/api/account-state";
+input string IngestUrl = "http://127.0.0.1:8776/account-state";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
-input string SourceId = "demo-terminal-01";
+input string TerminalId = "";
+string SourceId = "";
 input int IntervalSeconds = 5;
 input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
 input int HistoryLookbackSeconds = 3600;
 input int HistoryIntervalSeconds = 60;
 input int MaxDealsPerSnapshot = 200;
-// Operator-approved identity; demo by default, real requires explicit opt-in.
-input long ExpectedDemoLogin = 0;
-input string ExpectedDemoServer = "";
-input bool AllowRealAccount = false; // true selects REAL only; never sends trading commands
+datetime HistoryStartServerTime = 0;
 
 const string SCHEMA_VERSION = "mt5-account-state-v1";
-const string COLLECTOR_VERSION = "0.3.2";
+const string COLLECTOR_VERSION = "0.3.3";
 const int LOCAL_ENCODING_FAILURE = -2;
 
 string session_id = "";
@@ -46,14 +44,25 @@ CollectorCaptureState capture_state = CAPTURE_READY;
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/api/account-state");
+   return IsLoopbackCollectorUrl(url, "/account-state") || IsLoopbackCollectorUrl(url, "/api/account-state");
 }
 
 
 #ifndef TELEMETRY_QUEUE_TEST
+#include "TradingLabObservedAccount.mqh"
+
+void ResetAccountCapture()
+{
+   startup_pending=true;
+   trade_activity_pending=false;
+   sequence_number=0;
+   session_id=TerminalId+"-"+CompactUtcTimestamp()+"-"+IntegerToString((long)GetMicrosecondCount());
+   transport.Reset();
+}
+
 int OnInit()
 {
-   logger.Configure("telemetry", SourceId, COLLECTOR_VERSION);
+   logger.Configure("telemetry", TerminalId, COLLECTOR_VERSION);
    if(!IsLoopbackIngestUrl(IngestUrl))
    {
       logger.Error("invalid_configuration", "TradingLab telemetry: the spike only accepts a loopback HTTP endpoint");
@@ -64,7 +73,7 @@ int OnInit()
       logger.Error("invalid_configuration", "TradingLab telemetry: configure a local test token with at least 24 characters");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(!IsSafeIdentifier(SourceId))
+   if(!IsSafeIdentifier(TerminalId) || StringFind(Token,TerminalId+".")!=0)
    {
       logger.Error("invalid_configuration", "TradingLab telemetry: SourceId contains unsupported characters");
       return INIT_PARAMETERS_INCORRECT;
@@ -85,10 +94,6 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
 
-   if(ExpectedDemoLogin <= 0 || ExpectedDemoServer == "")
-      return INIT_PARAMETERS_INCORRECT;
-   if(!CheckPilotSafety() && capture_state == CAPTURE_STOPPED)
-      return INIT_FAILED;
    if(HistoryIntervalSeconds < IntervalSeconds || HistoryIntervalSeconds > 3600 ||
       HistoryLookbackSeconds < 60 || HistoryLookbackSeconds > 86400 ||
       MaxDealsPerSnapshot < 1 || MaxDealsPerSnapshot > 200)
@@ -118,7 +123,7 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   if(!CheckPilotSafety())
+   if(!SelectObservedAccount())
       return;
    string reason = "timer";
    if(startup_pending)
@@ -143,38 +148,6 @@ void OnTimer()
 }
 
 
-bool CheckPilotSafety()
-{
-   if(capture_state == CAPTURE_STOPPED)
-      return false;
-   ResetLastError();
-   bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
-   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
-   long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   CollectorCaptureState observed = EvaluateCaptureState(connected, GetLastError() == 0,
-      mode, login, server, ExpectedDemoLogin, ExpectedDemoServer, AllowRealAccount);
-   if(observed == CAPTURE_WAIT_BROKER)
-   {
-      if(capture_state != CAPTURE_WAIT_BROKER)
-         logger.Warn("broker_unavailable", "TradingLab telemetry: broker unavailable; waiting without advancing capture");
-      capture_state = CAPTURE_WAIT_BROKER;
-      return false;
-   }
-   if(observed == CAPTURE_READY)
-   {
-      if(capture_state == CAPTURE_WAIT_BROKER)
-         logger.Resolve("broker_unavailable");
-      capture_state = CAPTURE_READY;
-      return true;
-   }
-   capture_state = CAPTURE_STOPPED;
-   EventKillTimer();
-   while(outbox_count > 0)
-      DropHead("pilot_guard");
-   logger.Error("identity_guard_stopped", "TradingLab telemetry: pilot guard stopped capture; review account identity and mode, then reattach EA");
-   return false;
-}
 #endif
 
 

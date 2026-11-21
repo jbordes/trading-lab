@@ -4,14 +4,27 @@
 Este procedimiento no despliega el dashboard en Mac, no cambia MT5 y no configura
 automáticamente firewall, servicios, Tailscale ni suspensión del sistema.
 
+Después de preparar y probar los servicios, seguir el
+[manual de mantenimiento automático](automatic-maintenance.md) para programar
+copias, consolidación diaria y compactación **en el host de SQLite**. Su
+instalador independiente funciona en Windows, Linux y macOS, con vista previa
+por defecto; no configura el arranque de API/relay ni necesita tokens.
+
 ## Estado y límites
+
+**Pendiente importante para la instalación de la base de prueba:** ejecutar en
+ese mismo host el [checklist de ensayo del mantenimiento automático](automatic-maintenance.md).
+Incluye un disparo real del scheduler, backup verificado, primer cierre diario
+y revisión de reinicio/reposo y permisos. Los ensayos quedan diferidos hasta
+esa instalación; no se activan ahora en la VPS ni se exige probar otros sistemas
+operativos antes del piloto elegido.
 
 El piloto actual validado es local: los collectors envían al relay durable y este
 reenvía a FastAPI y SQLite. El setup del host remoto prepara una API central en
 loopback y una base nueva. No demuestra todavía un piloto extremo a extremo por
 Tailscale ni una migración de datos operativos.
 
-La estructura unificada y el esquema global 7 se describen en la guía de
+La estructura unificada y el esquema global 8 se describen en la guía de
 [SQLite de la API central](central-sqlite.md) y siguen el
 [ADR-0020](../adr/0020-single-central-sqlite-database.md) y su corrección
 [ADR-0021](../adr/0021-descriptive-central-api-contract.md). El contrato
@@ -59,12 +72,12 @@ uv run python scripts/create_central_db.py --config RUTA\host.json --database RU
 ```
 
 La aplicación y el bootstrap llaman al mismo primitivo
-`create_registered_database`. Esta CLI crea esquema 7 y sus identidades, pero
+`create_registered_database`. Esta CLI crea esquema 8 y sus identidades, pero
 no genera secretos, no migra ni elimina bases anteriores y no cambia cursores.
 
 El resultado previsto es:
 
-- `central.sqlite3`, esquema central global, SQLite `user_version=7`, con ambos
+- `central.sqlite3`, esquema central global, SQLite `user_version=8`, con ambos
   flujos de captura y una sola identidad compartida de cuenta/fuentes;
 - `.env.central`, con cinco credenciales de API generadas;
 - `.env.dashboard`, con un token humano generado;
@@ -74,7 +87,7 @@ Los nuevos endpoints descriptivos son `/api/account-state` y
 `/api/trading-events`, con contratos `mt5-account-state-v1` y
 `mt5-trading-events-v1`. El JSON de relay usa la clave `contract` con valores
 `account-state` con `role: snapshot` o `trading-events` con `role: live` o
-`role: activity`. Combinaciones incompatibles se rechazan. El esquema 7 del
+`role: activity`. Combinaciones incompatibles se rechazan. El esquema 8 del
 archivo no corresponde a la versión de esos contratos. El creador
 comprueba integridad y foreign keys. En POSIX crea el directorio con
 permisos `700` y los archivos privados con `600`. En Windows limita la ACL al SID
@@ -264,7 +277,12 @@ ACL creada limita acceso al SID del usuario actual y `SYSTEM`.
 Si `uv` no está en PATH, para los comandos posteriores use
 `& "$env:USERPROFILE\.local\bin\uv.exe"` en lugar de `uv`.
 
-Para programar las tareas Windows centrales, use primero la vista previa y
+Para programar **solo mantenimiento**, usar
+`scripts/configure_telemetry_maintenance.py`, según el
+[manual multiplataforma](automatic-maintenance.md). Admite otra base mediante
+`--database` y una cuenta mediante `--account-id` sin tocar el arranque de API.
+
+Para programar **ambas tareas Windows** (API y copia), use primero la vista previa y
 aplique únicamente tras revisar el destino:
 
 ```powershell
@@ -320,11 +338,15 @@ una redacción automática de secretos que el hijo hubiera impreso.
 
 `run_telemetry_maintenance.py` actualiza `operations/maintenance-status.json`
 únicamente mientras posee `operations/maintenance.lock`, tanto para `running`
-como para `succeeded` o `failed`. Un intento simultáneo no cambia ese archivo
+como para `succeeded`, `partial`, `deferred` o `failed`. Un intento simultáneo no cambia ese archivo
 ni su temporal, y no inicia otra copia de seguridad.
 
 Sus códigos de salida son: `0` para vista previa o trabajo terminado, `1` para
 error real y `2` para intento omitido porque otro mantenimiento sigue activo.
+La modalidad opt-in `--daily-account-id CUENTA` integra consolidación y retención
+después de la copia verificada. Devuelve `3` cuando queda trabajo pendiente o
+falta una referencia segura del reloj del broker; no relanza bucles de reintento.
+Véase el [mantenimiento diario](daily-account-history-storage.md).
 El código `2` se explica en stderr; no representa un fallo del propietario.
 Errores previos a obtener el lock (configuración, ruta o permisos) también se
 informan por stderr sin sustituir el estado de otra ejecución. Si falla guardar

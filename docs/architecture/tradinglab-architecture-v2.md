@@ -15,7 +15,7 @@ internos `/docs.json` de adaptadores HTTP se conservan como apoyo de pruebas,
 no como servicios ejecutables; las recetas históricas no describen el runtime
 actual.
 Ese piloto anterior usó dos archivos SQLite; el estado objetivo de la rama
-actual es una sola `central.sqlite3` con esquema 7, pendiente de integración y
+actual es una sola `central.sqlite3` con esquema 8 (histórico diario observado), pendiente de integración y
 cutover supervisado.
 El despliegue en la Mac y la conectividad privada siguen pendientes.
 La preparación se documenta en el [manual del host remoto](../development/remote-host-setup.md)
@@ -147,7 +147,7 @@ por red. PostgreSQL y el catálogo productivo siguen fuera del piloto actual.
 
 La persistencia conserva las observaciones v1 y la actividad, cobertura y ciclos
 v2, consultables por período y Magic, en un único archivo `central.sqlite3`.
-`PRAGMA user_version = 7` identifica el esquema central objetivo; las rutas
+`PRAGMA user_version = 8` identifica el esquema central objetivo; las rutas
 descriptivas y los formatos wire de los collectors son independientes de esa
 versión. Las proyecciones
 históricas son durables. Las evoluciones usan migraciones explícitas; una caché
@@ -971,6 +971,49 @@ La arquitectura se considerará validada cuando un caso real permita:
 22. Criterios y responsable para promover configuraciones, componentes, conocimiento y estrategias fuera de un proyecto.
 23. Frecuencia de evidencia incremental y condición de cierre de una incubación.
 24. Política de archivo, licencia y acceso para cursos, documentación oficial y fuentes aportadas.
+
+## 19.1. Progresión histórica de cuenta
+
+La dirección vigente es la [ADR-0023](../adr/0023-daily-observed-account-history.md):
+una evolución única de balance/equity observados con histórico diario por cuenta
+y día del broker, más muestras recientes. La consolidación y retención pertenecen
+al backend central, sin otro collector ni base. La reconstrucción de períodos
+anteriores al inicio del seguimiento queda diferida. La persistencia diaria,
+limpieza protegida y adaptación del gráfico se implementarán por pasos.
+La tabla diaria, consolidación y compactación transaccionales están implementadas
+con migración explícita 7 → 8. Se retienen siete fechas recientes, los cierres
+originales y las identidades/hashes de muestras compactadas. No se aplicó la
+migración o compactación a bases operativas ni se activaron nuevos jobs.
+Detalle: [almacenamiento diario](../development/daily-account-history-storage.md).
+
+La consulta de lectura `/api/accounts/evolution` y el gráfico unificado están
+implementados en rama. Combinan cierres diarios y el último día observado,
+mantienen la escala UTC real con referencia de hora del broker y señalan días
+pendientes de consolidar. No ejecutan reconstrucciones ni escrituras al leer.
+La activación operativa y revisión visual continúan pendientes.
+
+El mantenimiento diario se integra de forma opt-in al job de backup existente.
+Usa únicamente la SQLite central local, con copia verificada previa, bloqueo
+contra solapamientos, descubrimiento indexado de días y revisión de capturas
+tardías. Tiene límites y estados explícitos de trabajo parcial/diferido; no
+requiere dashboard ni API activos y no infiere la fecha del broker desde el
+calendario del host. La programación sigue pendiente de instalación autorizada.
+
+La implementación previa, conservada temporalmente durante esta transición,
+se describe a continuación; no representa ya la prioridad del gráfico principal.
+
+El Resumen distingue muestras observadas de balance/equity y reconstrucción
+financiera del ledger. La [ADR-0022](../adr/0022-account-ledger-progression.md)
+define una proyección de lectura sobre la misma SQLite central: PnL realizado,
+flujos de capital, correcciones y balance reconstruido con referencia verificable.
+Es de cuenta, no sustituye métricas de EAs sobre ciclos cerrados elegibles.
+
+La recuperación de deals no implica recuperar equity histórica. Los huecos y la
+falta de referencia de saldo se representan explícitamente, sin inventar ceros ni
+aplicar offsets horarios actuales a todo el pasado. La ingesta incorpora una
+referencia opcional de tiempo del broker; no requiere otra base, migración de
+esquema ni caché permanente. La instalación de collectors y la importación de
+capturas anteriores siguen siendo operaciones separadas y supervisadas.
 
 ## 20. Conclusión
 

@@ -149,6 +149,80 @@ class TelemetryMaintenanceJobTest(unittest.TestCase):
             lock.assert_not_called()
         self.assertEqual(self.status.read_bytes(), original)
 
+    def test_daily_work_runs_only_after_verified_backup(self) -> None:
+        calls = []
+        outcome = {
+            "state": "succeeded",
+            "consolidated_days": 1,
+            "compacted_messages": 2,
+            "reason": None,
+        }
+
+        def backup():
+            calls.append("backup")
+            return Mock(size_bytes=123)
+
+        def daily(*args, **kwargs):
+            calls.append("daily")
+            self.assertTrue(kwargs["apply"])
+            return outcome
+
+        with (
+            patch("tradinglab.telemetry.backup.BackupPlan.apply", side_effect=backup),
+            patch(
+                "tradinglab.telemetry.daily_account_maintenance.run_daily_account_maintenance",
+                side_effect=daily,
+            ),
+        ):
+            self.assertEqual(self.run_job("--daily-account-id", "test-account"), 0)
+        self.assertEqual(calls, ["backup", "daily"])
+
+    def test_failed_backup_prevents_any_daily_work(self) -> None:
+        with (
+            patch(
+                "tradinglab.telemetry.backup.BackupPlan.apply",
+                side_effect=RuntimeError("backup failed"),
+            ),
+            patch(
+                "tradinglab.telemetry.daily_account_maintenance.run_daily_account_maintenance"
+            ) as daily,
+        ):
+            self.assertEqual(self.run_job("--daily-account-id", "test-account"), 1)
+        daily.assert_not_called()
+
+    def test_partial_daily_job_is_visible_and_does_not_retry_automatically(self) -> None:
+        outcome = {
+            "state": "partial",
+            "consolidated_days": 1,
+            "compacted_messages": 2,
+            "reason": "work_limit",
+        }
+        with (
+            patch(
+                "tradinglab.telemetry.backup.BackupPlan.apply", return_value=Mock(size_bytes=123)
+            ),
+            patch(
+                "tradinglab.telemetry.daily_account_maintenance.run_daily_account_maintenance",
+                return_value=outcome,
+            ) as daily,
+        ):
+            self.assertEqual(self.run_job("--daily-account-id", "test-account"), 3)
+        daily.assert_called_once()
+        self.assertEqual(json.loads(self.status.read_text())["state"], "partial")
+
+    def test_daily_preview_neither_takes_lock_nor_creates_backup(self) -> None:
+        with (
+            patch("tradinglab.telemetry.backup.BackupPlan.apply") as backup,
+            patch(
+                "tradinglab.telemetry.daily_account_maintenance.run_daily_account_maintenance",
+                return_value={"state": "preview"},
+            ) as daily,
+        ):
+            self.assertEqual(self.run_job("--daily-account-id", "test-account", apply=False), 0)
+        backup.assert_not_called()
+        self.assertNotIn("apply", daily.call_args.kwargs)
+        self.assertFalse(self.status.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

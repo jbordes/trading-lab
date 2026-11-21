@@ -652,9 +652,71 @@ transversal de lecturas masivas, efectos, procesos externos y errores.
 5. Al final, retomar MQ01/MQ02, la revisión de collectors y las pruebas manuales
    MQL5 y del flujo completo. No se adelantan como parte de esta revisión Python.
 
+### Pendientes operativos acordados tras la revisión
+
+Orden de validación: compilar y ejecutar las pruebas nativas de collectors,
+probar el flujo completo en el entorno local actual y, después, validar la
+instalación real en Mac o Linux. No adelantar el traslado de datos ni la
+configuración de servicios/red como parte de la compilación.
+
+Compilación aislada del 2026-11-05: Telemetry `0.3.0`, Activity `activity-0.8.0`
+y los cuatro scripts nativos compilaron con cero errores y cero advertencias,
+usando exclusivamente MetaEditor RoboForex `5.0.0.6230`, destino `X64 Regular`.
+Código de referencia: `6c6f464`. Artefactos, logs y registro de hashes local:
+`_storage/collector-builds/20261105-223601/` en la raíz del workspace.
+No se sustituyeron los collectors existentes. El usuario confirmó la carpeta de
+Juampi `284E06169E93AFCBDA6CBFE3E3CC0639`; se copiaron solo los cuatro scripts
+en `MQL5/Scripts/TradingLabTests_20261105_223601`, verificando sus hashes.
+El usuario ejecutó las cuatro pruebas y reportó `0 failure(s)` entre 23:08 y
+23:09 del 2026-11-05 según Expertos. `encoding_failed` fue un fallo inyectado
+por la prueba Activity, no una incidencia del EA instalado. Se preservaron los
+dos collectors anteriores con hashes en `previous-installed-juampi/` dentro del
+build local, sin leer configuraciones privadas ni modificar EAs de trading.
+La instalación de los collectors nuevos y la validación del flujo local siguen
+pendientes. Sus logs JSONL se revisarán durante ese corte supervisado.
+
+- **Relay y concurrencia:** conservar por ahora el worker síncrono. Los 250 ms
+  son una pausa posterior al ciclo, no una frecuencia garantizada. Antes de
+  ampliarlo, observar backlog y retraso por fuente; evaluar drenaje acotado y
+  concurrencia entre fuentes independientes, manteniendo un envío por fuente.
+  Agrupación HTTP y prioridad de estado reciente frente a backfill requieren
+  definir ACKs parciales, idempotencia y orden; no adelantar mensajes de una
+  misma fuente a ciegas.
+- **Retención de la outbox:** PY06 ya excluye los ACKed de la cuota de 100.000
+  mensajes activos. Las huellas confirmadas siguen creciendo físicamente.
+  Antes de operación prolongada, acordar horizonte de reenvío/deduplicación,
+  conservación de controles de secuencia y tratamiento de Activity fuera de
+  orden. Separar retención lógica de compactación física. Nunca podar pendientes
+  o rechazados automáticamente ni depender solo de la deduplicación central.
+- **Bootstrap y operación persistente:** Tailscale, reglas de acceso, servicios
+  y migraciones siguen siendo acciones explícitas y supervisadas. Windows tiene
+  tareas opcionales; definir y probar persistencia en Mac/Linux después del
+  piloto. CI y wrappers portables no certifican una instalación real.
+- **Traslado o arranque vacío:** decidir por separado si se conservan datos de
+  prueba y cómo se recupera el historial. Una base nueva no obliga a los EAs a
+  reenviar todo; coordinar identidades, cursores, outbox y backfill sin borrados
+  ni cambios de destino implícitos. Probar primero captura/recuperación local,
+  luego conectividad remota y por último el arranque persistente.
+
 La garantía de retención de cada snapshot Telemetry también queda como decisión
 futura: definir primero si se requieren todas las muestras durante interrupciones;
 no se implementa una outbox durable dentro del EA en esta revisión.
+
+### Ajustes pendientes detectados en la instalación local
+
+- El puerto predeterminado de `TradingLabTelemetry.IngestUrl` se corrigió de
+  `8766` a `8776` en la rama de progresión de cuenta, Telemetry `0.3.1`. Compilado
+  sin errores/advertencias; instalación pendiente. La instancia del piloto se
+  había corregido manualmente. No se cambian instancias activas automáticamente.
+- Renombrar en una transición futura la fuente configurada
+  `juampi-demo-activity-v2` a un identificador descriptivo sin `v2`. Es un
+  `SourceId` operativo, no el default genérico del código ni una versión de API.
+  Coordinar EA, topología del relay, registro de fuentes en la base y referencias
+  de configuración/documentación vigentes. El identificador participa en el hash
+  de los cursores de MT5 y en los bindings de la outbox: no hacer reemplazo ciego,
+  no reutilizar la cola con otra identidad ni borrar cursores. Definir continuidad
+  histórica y validar deduplicación antes de aplicar el cambio. Durante la prueba
+  actual se conserva el identificador existente.
 
 Referencias oficiales MQL5:
 

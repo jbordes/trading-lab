@@ -108,8 +108,11 @@ let availableEaMagics = [];
 let financialMode = "summary";
 const MAX_COMPARISON_EAS = 5;
 let accountHistoryWindow = null;
+let accountHistoryInvalid = false;
 let accountHistoryData = null;
 let accountHistoryRequest = 0;
+let accountHistoryLoading = false;
+let accountHistoryCheckedAt = 0;
 let accountChartWindowKey = null;
 let rankingRequest = 0;
 let rankingKey = "";
@@ -396,6 +399,7 @@ function renderState(state) {
   const currencyChanged = latestCurrency !== currency;
   latestCurrency = currency;
   telemetryMode = value.source === "mt5-telemetry";
+  if (telemetryMode && activeView === "overview") loadAccountHistory({ background: true });
   if (value.observed_at === lastObservedAt) {
     if (currencyChanged && ["financial", "execution"].includes(activeView)) renderHistory();
     if (currencyChanged && activeView === "overview") renderChart(lastHistory, latestIntervalSeconds);
@@ -1877,7 +1881,15 @@ function accountChartSeries(timeline, key, gapThreshold, bucketWindow = null) {
     const missingBucket = bucketWindow && previous !== null
       && Math.floor((timestamp - bucketWindow.fromMsc) / bucketWindow.bucketMsc)
         - Math.floor((previous - bucketWindow.fromMsc) / bucketWindow.bucketMsc) > 1;
-    if (previous !== null && (missingBucket || timestamp - previous > gapThreshold)) {
+    const dailyTransition = item.resolution === "daily" || timeline[index - 1]?.resolution === "daily";
+    const priorDay = timeline[index - 1]?.broker_day;
+    const dayGap = priorDay && item.broker_day
+      ? Date.parse(`${item.broker_day}T00:00:00Z`) - Date.parse(`${priorDay}T00:00:00Z`) > 86400000
+      : previous !== null && timestamp - previous > 36 * 3600000;
+    const interrupted = dailyTransition
+      ? dayGap
+      : missingBucket || (previous !== null && timestamp - previous > gapThreshold);
+    if (previous !== null && interrupted) {
       data.push([Math.max(previous + 1, timestamp - 1), null]);
       gaps += 1;
     }
@@ -1886,51 +1898,81 @@ function accountChartSeries(timeline, key, gapThreshold, bucketWindow = null) {
   return { data, gaps };
 }
 
-async function loadAccountHistory() {
+async function loadAccountHistory({ background = false } = {}) {
+  if (background && (accountHistoryInvalid || accountHistoryLoading
+    || Date.now() - accountHistoryCheckedAt < 30000
+    || (document.getElementById("account-history-end").value && accountHistoryData))) return;
   const request = ++accountHistoryRequest;
-  const value = document.getElementById("account-history-period").value;
+  accountHistoryInvalid = false;
+  const period = document.getElementById("account-history-period");
+  const value = period.value;
   const status = document.getElementById("account-chart-status");
-  if (value === "live") {
-    accountHistoryWindow = null; accountHistoryData = null;
-    status.textContent = "Evolución reciente";
-    renderChart(lastHistory, latestIntervalSeconds);
+  try {
+    const endDate = document.getElementById("account-history-end").value;
+    accountHistoryWindow = selectedTimeWindow(Number(value), endDate);
+  } catch (error) {
+    accountHistoryInvalid = true;
+    accountHistoryData = null;
+    accountChart?.clear();
+    chartEmpty.hidden = false;
+    chartEmpty.textContent = error.message;
+    status.textContent = error.message;
     return;
   }
-  try {
-    accountHistoryWindow = selectedTimeWindow(Number(value), document.getElementById("account-history-end").value);
-  } catch (error) { status.textContent = error.message; return; }
-  accountHistoryData = null;
-  accountChart?.clear();
-  status.textContent = "Consultando historial…";
-  chartEmpty.hidden = false; chartEmpty.textContent = "Consultando historial…";
+  accountHistoryLoading = true;
+  accountHistoryCheckedAt = Date.now();
+  if (!background || !accountHistoryData) {
+    accountHistoryData = null;
+    accountChart?.clear();
+    status.textContent = "Consultando historial…";
+    chartEmpty.hidden = false; chartEmpty.textContent = "Consultando historial…";
+  }
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12000);
   try {
     const parameters = new URLSearchParams({ from_msc: String(accountHistoryWindow.fromMsc), to_msc: String(accountHistoryWindow.toMsc) });
-    const response = await fetch(`/api/account-history?${parameters}`, { cache: "no-store", signal: controller.signal });
+    const response = await fetch(`/api/account-evolution?${parameters}`, { cache: "no-store", signal: controller.signal });
     if (response.status === 401) { window.location.assign("/login"); return; }
     if (!response.ok) throw new Error("Historial no disponible. Comprobá que el servidor y el receptor estén actualizados.");
     const payload = await response.json();
     if (request !== accountHistoryRequest) return;
     if (!Array.isArray(payload.points) || !Number.isFinite(payload.bucket_msc)) throw new Error("Respuesta histórica inválida.");
     accountHistoryData = payload;
-    status.textContent = payload.points.length ? `${payload.points.length} observaciones disponibles` : "Sin observaciones guardadas para este período";
-    status.title = "Muestras históricas conservadas, agrupadas por intervalo. No reconstruye equity entre capturas ni antes de comenzar a recopilar datos.";
+    const dailyCount = payload.points.filter((point) => point.resolution === "daily").length;
+    status.textContent = payload.points.length
+      ? `${dailyCount} cierres diarios · ${payload.points.length - dailyCount} muestras recientes${payload.unconsolidated_history ? " · consolidación pendiente" : ""}`
+      : "Sin observaciones guardadas para este período";
+    status.title = "Balance y equity observados. Los puntos diarios conservan la hora real de la última captura del broker. No se inventan valores en días sin datos.";
     renderChart(lastHistory, latestIntervalSeconds);
   } catch (error) {
     if (request !== accountHistoryRequest) return;
     status.textContent = error.name === "AbortError" ? "La consulta tardó demasiado. Probá un período menor." : error.message;
-    chartEmpty.textContent = "No se pudo cargar el historial.";
-  } finally { window.clearTimeout(timeout); }
+    if (!accountHistoryData) {
+      chartEmpty.hidden = false;
+      chartEmpty.textContent = "No se pudo cargar el historial.";
+    }
+  } finally {
+    window.clearTimeout(timeout);
+    if (request === accountHistoryRequest) accountHistoryLoading = false;
+  }
 }
 document.getElementById("account-history-apply").addEventListener("click", loadAccountHistory);
 
 function renderChart(history, intervalSeconds) {
+  if (accountHistoryInvalid) return;
   if (accountHistoryWindow) {
     if (!accountHistoryData) return;
     history = accountHistoryData.points;
+    if (!document.getElementById("account-history-end").value) {
+      const last = history.length ? Date.parse(history[history.length - 1].observed_at) : accountHistoryWindow.fromMsc;
+      const now = Date.now();
+      history = [...history, ...lastHistory.filter((item) => Date.parse(item.observed_at) > last
+        && Date.parse(item.observed_at) < now).map((item) => ({ ...item, resolution: "recent" }))];
+      accountHistoryWindow.toMsc = now;
+    }
     intervalSeconds = accountHistoryData.bucket_msc / 1000;
   }
+  document.querySelector(".chart-panel .legend").hidden = false;
   const timeline = history
     .map((item) => ({ ...item, at: toDate(item.observed_at) }))
     .filter((item) => item.at && Number.isFinite(item.balance) && Number.isFinite(item.equity))
@@ -1962,7 +2004,9 @@ function renderChart(history, intervalSeconds) {
   const endAt = timeline[timeline.length - 1].at;
   const timeRange = Math.max(1, endAt.getTime() - startAt.getTime());
   const gapThreshold = intervalSeconds * 2.5 * 1000;
-  const bucketWindow = accountHistoryWindow ? { ...accountHistoryWindow, bucketMsc: accountHistoryData.bucket_msc } : null;
+  const bucketWindow = accountHistoryWindow ? { ...accountHistoryWindow,
+    fromMsc: accountHistoryData.recent_from_msc ?? accountHistoryWindow.fromMsc,
+    bucketMsc: accountHistoryData.bucket_msc } : null;
   const balance = accountChartSeries(timeline, "balance", gapThreshold, bucketWindow);
   const equity = accountChartSeries(timeline, "equity", gapThreshold, bucketWindow);
   const gaps = balance.gaps;
@@ -1978,10 +2022,12 @@ function renderChart(history, intervalSeconds) {
   );
   const { ink, grid: gridColor, axis, surface, accent } = resolvedChartTheme();
   accountChart ||= window.echarts.init(chart);
-  const windowKey = accountHistoryWindow ? JSON.stringify(accountHistoryWindow) : "live";
+  const windowKey = accountHistoryWindow
+    ? `${document.getElementById("account-history-period").value}:${document.getElementById("account-history-end").value}` : "live";
   const previousZoom = accountChartWindowKey === windowKey ? accountChart.getOption().dataZoom?.[0] : null;
   const zoom = previousZoom ? { start: previousZoom.start, end: previousZoom.end } : { start: 0, end: 100 };
   accountChartWindowKey = windowKey;
+  const pointsByTime = new Map(timeline.map((point) => [point.at.getTime(), point]));
   const seriesTooltip = {
     valueFormatter: (value) => money(Array.isArray(value) ? value[1] : value, latestCurrency),
   };
@@ -1997,6 +2043,25 @@ function renderChart(history, intervalSeconds) {
       borderColor: axis,
       textStyle: { color: ink },
       axisPointer: { type: "line", lineStyle: { color: axis, type: "dashed", width: 1 } },
+      formatter: (items) => {
+        const selected = items.filter((item) => Array.isArray(item.value) && Number.isFinite(item.value[1]));
+        if (!selected.length) return "";
+        const point = pointsByTime.get(Number(selected[0].value[0]));
+        const box = document.createElement("div");
+        const line = (text) => {
+          const element = document.createElement("div");
+          element.textContent = text;
+          box.appendChild(element);
+        };
+        line(point?.resolution === "daily" ? "Cierre diario observado" : "Observación reciente");
+        if (point?.broker_time) {
+          line(`Broker: ${new Intl.DateTimeFormat(LOCALE, { timeZone: "UTC", dateStyle: "short", timeStyle: "short" })
+            .format(new Date(`${point.broker_time}Z`))}`);
+        }
+        if (point) line(`Local: ${dateTimeFormatter.format(point.at)}`);
+        selected.forEach((item) => line(`${item.seriesName}: ${money(item.value[1], latestCurrency)}`));
+        return box;
+      },
     },
     xAxis: {
       type: "time",
@@ -2233,11 +2298,15 @@ const FILTER_STORE = "tradinglab-dashboard-filters";
 
 function loadStoredFilters(scope) {
   currentFilterScope = scope;
+  accountHistoryInvalid = false;
   accountHistoryRequest += 1;
   accountHistoryWindow = null;
   accountHistoryData = null;
   accountChartWindowKey = null;
-  document.getElementById("account-history-period").value = "live";
+  accountHistoryLoading = false;
+  accountHistoryCheckedAt = 0;
+  document.getElementById("account-history-period").value = "30";
+  document.getElementById("account-history-clock").textContent = "Hasta (UTC)";
   document.getElementById("account-chart-status").textContent = "Evolución reciente";
   expandedOperationTickets.clear();
   expandedRegistryRecords.clear();

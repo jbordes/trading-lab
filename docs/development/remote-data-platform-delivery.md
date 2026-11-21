@@ -1,5 +1,39 @@
 # Construcción de la plataforma de datos remota
 
+## Próximos pasos acordados al 2026-11-09
+
+El piloto local ya fue migrado de forma supervisada al esquema 8 y recibe
+Telemetry 0.3.1 con hora del broker. El instalador independiente de mantenimiento
+está desarrollado y documentado; no se instaló ninguna tarea. Estos avances
+actualizan el estado histórico de los apartados siguientes, sin afirmar merge
+ni despliegue remoto.
+
+1. Cerrar la entrega actual mediante revisión del diff, PR a la rama de integración,
+   CI y merge humano; no repetir por rutina todos los tests localmente.
+2. Preparar el host de prueba elegido (Mac o Linux; Windows también soportado)
+   con bootstrap y base nueva de esquema 8. La transferencia de los datos de
+   prueba anteriores no es requisito para iniciar con una base vacía.
+3. Conectar VPS → API privada con Tailscale, mantener SQLite local al host de
+   datos y verificar el circuito collectors → relay → API → base → dashboard.
+4. **Pendiente importante dentro de esa instalación:** instalar y ensayar el
+   mantenimiento en el host de la base, siguiendo el
+   [checklist operativo](automatic-maintenance.md). Verificar un disparo real,
+   copia previa, primer cierre diario y reinicio/reposo/permisos. No activar
+   ahora tareas en la VPS ni exigir ensayos en los tres sistemas a la vez.
+5. Validar interrupciones y recuperación del circuito remoto y contrastar
+   datos; completar la revisión de cierre antes del PR final hacia `main`.
+
+Las pruebas nativas nuevas del reloj de Telemetry, la desconexión del broker,
+el traslado verificable si se decide preservar datos y las garantías pendientes
+de producción conservan su estado; no se consideran resueltas por el instalador.
+
+Actualización en `feature/account-progression-history`, 2026-11-06: el código
+incorpora esquema central 8 para el histórico diario observado y una migración
+explícita 7 → 8, todavía sin aplicar al piloto. Ver
+[almacenamiento diario](daily-account-history-storage.md). Las referencias a
+esquema 7 y versiones anteriores más abajo describen hitos previos, no la
+versión creada por el bootstrap de esta rama.
+
 **Estado vigente al 2026-11-05:** piloto local operativo; contrato descriptivo y
 esquema central 7 en rama actual pendiente de integración; traslado remoto pendiente
 

@@ -165,6 +165,10 @@ class TelemetrySnapshotClient(Protocol):
 
     def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
 
+    def account_progression(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
+    def account_evolution(self, *, from_msc: int, to_msc: int) -> dict[str, object]: ...
+
     def deal_history(
         self,
         *,
@@ -290,6 +294,111 @@ class LoopbackTelemetryClient:
             raise DashboardReadError(
                 "El receptor devolvió un historial de cuenta inválido"
             ) from exc
+
+    def account_evolution(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        from tradinglab.telemetry.api_models import AccountEvolution
+
+        parameters = urllib.parse.urlencode(
+            {"source_id": self._source_id, "from_msc": from_msc, "to_msc": to_msc}
+        )
+        request = urllib.request.Request(
+            self._account_history_url.removesuffix("/history") + "/evolution?" + parameters,
+            headers={"Authorization": self._authorization, "Accept": "application/json"},
+        )
+        try:
+            with self._opener.open(request, timeout=5.0) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+            if len(body) > MAX_BODY_BYTES:
+                raise ValueError("Respuesta demasiado grande")
+            result = AccountEvolution.model_validate_json(body).model_dump()
+            if (
+                result["source_id"] != self._source_id
+                or not IDENTIFIER.fullmatch(result["account_id"])
+                or result["from_msc"] != from_msc
+                or result["to_msc"] != to_msc
+                or not 60_000 <= result["bucket_msc"] <= 366 * 86400000
+                or (
+                    result["recent_from_msc"] is not None
+                    and not from_msc <= result["recent_from_msc"] < to_msc
+                )
+            ):
+                raise ValueError("Evolución inválida")
+            previous = None
+            days: set[str] = set()
+            for point in result["points"]:
+                instant = datetime.fromisoformat(point["observed_at"])
+                if (
+                    instant.utcoffset() != timedelta(0)
+                    or not from_msc <= instant.timestamp() * 1000 < to_msc
+                    or (previous is not None and instant <= previous)
+                ):
+                    raise ValueError("Orden o período inválido")
+                previous = instant
+                broker = point["broker_time"]
+                if broker is not None:
+                    wall = datetime.fromisoformat(broker)
+                    if wall.tzinfo is not None or wall.date().isoformat() != point["broker_day"]:
+                        raise ValueError("Fecha del broker inválida")
+                elif point["broker_day"] is not None:
+                    raise ValueError("Falta hora del broker")
+                if point["resolution"] == "daily":
+                    if point["broker_day"] is None or point["broker_day"] in days:
+                        raise ValueError("Día duplicado o desconocido")
+                    days.add(point["broker_day"])
+            if any(
+                p["resolution"] == "recent" and p["broker_day"] in days for p in result["points"]
+            ):
+                raise ValueError("Muestras ya representadas por un cierre diario")
+            return result
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise DashboardReadError("La evolución de cuenta no está disponible") from exc
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            raise DashboardReadError("La evolución de cuenta no está disponible") from exc
+
+    def account_progression(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        """Read broker-clock ledger progression; never reinterpret it as observed equity."""
+        from pydantic import ValidationError
+
+        from tradinglab.telemetry.api_models import AccountProgression
+
+        parameters = urllib.parse.urlencode(
+            {"source_id": self._source_id, "from_server_msc": from_msc, "to_server_msc": to_msc}
+        )
+        url = self._account_history_url.removesuffix("/history") + "/progression"
+        request = urllib.request.Request(
+            f"{url}?{parameters}",
+            headers={"Authorization": self._authorization, "Accept": "application/json"},
+        )
+        try:
+            with self._opener.open(request, timeout=5.0) as response:
+                body = response.read(MAX_BODY_BYTES + 1)
+            if len(body) > MAX_BODY_BYTES:
+                raise ValueError("Respuesta demasiado grande")
+            result = AccountProgression.model_validate_json(body).model_dump()
+            if (
+                result["source_id"] != self._source_id
+                or result["from_server_msc"] != from_msc
+                or result["to_server_msc"] != to_msc
+                or not 1 <= result["bucket_msc"] <= 366 * 86400000
+                or len(result["points"]) > 480
+            ):
+                raise ValueError("Respuesta histórica inválida")
+            previous = from_msc - 1
+            for point in result["points"]:
+                stamp = int(point["time_msc"])
+                if not from_msc <= stamp < to_msc or stamp <= previous:
+                    raise ValueError("Orden histórico inválido")
+                previous = stamp
+                for key in ("balance", "realized_pnl", "net_cash_flow", "adjustments"):
+                    if point[key] is not None and not math.isfinite(point[key]):
+                        raise ValueError("Importe histórico inválido")
+            return result
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise DashboardReadError("La progresión de cuenta no está disponible") from exc
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError, ValidationError) as exc:
+            raise DashboardReadError("La progresión de cuenta no está disponible") from exc
 
     def latest(self) -> TelemetryEnvelope:
         request = urllib.request.Request(
@@ -676,6 +785,12 @@ class TelemetrySnapshotSource:
 
     def account_history(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
         return self._client.account_history(from_msc=from_msc, to_msc=to_msc)
+
+    def account_evolution(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        return self._client.account_evolution(from_msc=from_msc, to_msc=to_msc)
+
+    def account_progression(self, *, from_msc: int, to_msc: int) -> dict[str, object]:
+        return self._client.account_progression(from_msc=from_msc, to_msc=to_msc)
 
     def deal_history(
         self,

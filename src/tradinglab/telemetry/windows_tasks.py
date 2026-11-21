@@ -8,6 +8,8 @@ from datetime import date
 from html import escape
 from pathlib import Path
 
+from tradinglab.telemetry.central_schema import DATABASE_NAME
+from tradinglab.telemetry.contract import IDENTIFIER
 from tradinglab.telemetry.remote_host import tailscale_hostname
 
 
@@ -60,7 +62,13 @@ def task_plan(
     *,
     start_date: date,
     tailscale_host: str | None = None,
+    daily_account_id: str | None = None,
+    database: str = "central.sqlite3",
 ) -> tuple[WindowsTask, WindowsTask]:
+    if daily_account_id is not None and (
+        not isinstance(daily_account_id, str) or not IDENTIFIER.fullmatch(daily_account_id)
+    ):
+        raise ValueError("Cuenta de mantenimiento diario inválida")
     api_arguments = (
         str(root / "scripts" / "run_central_api_job.py"),
         "--data-dir",
@@ -79,21 +87,50 @@ def task_plan(
         restart_count=3,
         execution_time_limit="PT0S",
     )
-    maintenance = WindowsTask(
+    maintenance = maintenance_task(
+        root, storage, start_date=start_date, database=database, account_id=daily_account_id
+    )
+    return receivers, maintenance
+
+
+def maintenance_task(
+    root: Path,
+    storage: Path,
+    *,
+    start_date: date,
+    database: str = "central.sqlite3",
+    account_id: str | None = None,
+    hour: int = 3,
+    minute: int = 30,
+) -> WindowsTask:
+    """Build maintenance independently of API startup; paths contain no secrets."""
+    if (
+        not DATABASE_NAME.fullmatch(database)
+        or (account_id is not None and not IDENTIFIER.fullmatch(account_id))
+        or type(hour) is not int
+        or not 0 <= hour <= 23
+        or type(minute) is not int
+        or not 0 <= minute <= 59
+    ):
+        raise ValueError("Configuración de tarea de mantenimiento inválida")
+    return WindowsTask(
         name="TradingLab Telemetry Maintenance",
-        description="Copia diaria local, consistente y verificada de telemetría SQLite.",
-        command=python,
+        description="Copia diaria local, consistente y verificada de telemetría SQLite."
+        + (" Incluye consolidación y retención por cuenta." if account_id else ""),
+        command=root / ".venv" / "Scripts" / "python.exe",
         arguments=(
             str(root / "scripts" / "run_telemetry_maintenance.py"),
             "--storage-root",
             str(storage),
-            "--apply",
-        ),
+            "--database",
+            database,
+        )
+        + (("--daily-account-id", account_id) if account_id else ())
+        + ("--apply",),
         working_directory=root,
         trigger_xml=(
-            f"<CalendarTrigger><StartBoundary>{start_date.isoformat()}T03:30:00</StartBoundary>"
+            f"<CalendarTrigger><StartBoundary>{start_date.isoformat()}T{hour:02}:{minute:02}:00</StartBoundary>"
             "<Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval>"
             "</ScheduleByDay></CalendarTrigger>"
         ),
     )
-    return receivers, maintenance

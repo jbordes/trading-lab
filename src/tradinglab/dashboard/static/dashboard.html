@@ -75,7 +75,7 @@
       <section class="content-grid">
         <article class="panel chart-panel">
           <div class="panel-heading">
-            <div><h2>Balance y equity</h2><p id="account-chart-status" class="chart-context" role="status">Evolución reciente</p></div>
+            <div><h2>Evolución de cuenta</h2><p id="account-chart-status" class="chart-context" role="status">Evolución reciente</p></div>
             <div class="panel-heading-right">
               <div class="legend"><span class="balance-key">Balance</span><span class="equity-key">Equity</span></div>
               <span id="chart-span" class="chart-span"></span>
@@ -83,8 +83,8 @@
           </div>
           <div class="account-history-controls">
             <label for="account-history-period">Período</label>
-            <select id="account-history-period"><option value="live">En vivo</option><option value="7">7 días</option><option value="30">30 días</option><option value="90">3 meses</option><option value="180">6 meses</option><option value="365">12 meses</option></select>
-            <label for="account-history-end">Hasta (UTC)</label><input id="account-history-end" type="date">
+            <select id="account-history-period"><option value="1">1 día</option><option value="7">7 días</option><option value="30" selected>30 días</option><option value="90">3 meses</option><option value="180">6 meses</option><option value="365">12 meses</option></select>
+            <label id="account-history-clock" for="account-history-end">Hasta (UTC)</label><input id="account-history-end" type="date">
             <button id="account-history-apply" type="button" class="secondary-action">Ver</button>
           </div>
           <div class="chart-wrap">

@@ -4,7 +4,9 @@
 en la rama actual, pendiente de integración.
 
 La API central usa un único archivo `central.sqlite3`. Su versión global es
-`PRAGMA user_version=7` para el contrato descriptivo nuevo. Las bases previas
+`PRAGMA user_version=8`, que añade el histórico diario observado al esquema 7
+del contrato descriptivo. La migración 7 → 8 es explícita y transaccional:
+[procedimiento y alcance](daily-account-history-storage.md). Las bases previas
 de esquema 6 se preservan y no se migran implícitamente. La decisión de archivo
 único está en
 [ADR-0020](../adr/0020-single-central-sqlite-database.md). Este esquema no está
@@ -29,9 +31,18 @@ Tablas de captura:
 
 - `telemetry_messages`: mensajes del contrato de estado de cuenta;
 - `telemetry_v2_messages`: mensajes del contrato de eventos de trading;
+- `account_daily_observations`: cierre observado y extremos diarios por cuenta
+  y fecha del broker; no reemplaza el ledger ni autoriza su eliminación;
 - `activity_observations`, `activity_coverage` y
   `position_cycle_observations`: observaciones y proyecciones durables derivadas
   de v2.
+
+La retención puede compactar solo el contenido de muestras antiguas ya
+consolidadas. `telemetry_messages.compacted_broker_day` identifica esa situación;
+la identidad y el hash original se conservan. Los cierres diarios mantienen su
+mensaje íntegro. La compactación es opt-in, no está activa en el piloto, y no
+borra el ledger. Véanse las guardas en el
+[procedimiento de histórico diario](daily-account-history-storage.md).
 
 Los formatos wire actuales son `mt5-account-state-v1` y
 `mt5-trading-events-v1`; la API usa rutas descriptivas. No representan
@@ -53,8 +64,9 @@ bootstrap nuevo crea una sola base y genera credenciales locales privadas; no us
 `V2ProvisionPlan`.
 
 Las CLIs, receptores y SQL aislado anteriores se retiraron del producto. El
-código central admite únicamente esquema 7 y roles `snapshot`, `live` y
-`activity`; no acepta esquemas 1, 3, 4, 5 o 6 ni los migra. Los archivos
+código central admite únicamente esquema 8 y roles `snapshot`, `live` y
+`activity`; no acepta esquemas 1, 3, 4, 5, 6 o 7 al arrancar. Solo el comando
+específico de migración admite el esquema 7 exacto. Los archivos
 históricos no se borran, pero importarlos requiere un procedimiento separado.
 
 ## Alcance de adopción

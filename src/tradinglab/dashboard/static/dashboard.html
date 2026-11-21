@@ -25,6 +25,7 @@
             <button class="view-tab" type="button" role="tab" id="tab-execution" aria-controls="trading-view" aria-selected="false" tabindex="-1" data-view="execution"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Performance de ejecución</span></button>
             <button class="view-tab" type="button" role="tab" id="tab-activity" aria-controls="activity-view" aria-selected="false" tabindex="-1" data-view="activity"><svg class="nav-icon" aria-hidden="true"><use href="/assets/nav-icons.svg#activity"></use></svg><span class="nav-label">Actividad</span><span class="nav-count" id="activity-badge" hidden>—</span></button>
           </nav>
+          <label id="account-picker" hidden>Cuenta <select id="account-select" aria-label="Cuenta de TradingLab"></select></label>
           <form class="logout-form" action="/logout" method="post"><button class="logout-button" type="submit">Cerrar sesión</button></form>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>Tema</button>
         </div>

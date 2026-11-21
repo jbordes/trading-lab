@@ -101,6 +101,7 @@ class CentralSettings:
     trading_read: str = field(repr=False)
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
     public_origins: tuple[str, ...] = ()
+    snapshot_identity: tuple[str, str, str] | None = None
 
     def __post_init__(self) -> None:
         keys = (
@@ -356,6 +357,11 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
             m.ACCOUNT_STATE_REQUEST.validate_python(envelope.as_dict())
         except ValidationError:
             raise HTTPException(400, "invalid_message") from None
+        if settings.snapshot_identity and envelope.kind == "account_snapshot":
+            account = envelope.payload["account"]
+            identity = tuple(account[key] for key in ("login_masked", "server", "currency"))
+            if identity != settings.snapshot_identity:
+                raise HTTPException(403, "account_identity_mismatch")
         result = await anyio.to_thread.run_sync(services(request).account_state.accept, envelope)
         response.status_code = 200 if result.status == "duplicate" else 202
         return m.AccountStateAck(status=result.status, sequence_gap=result.sequence_gap)

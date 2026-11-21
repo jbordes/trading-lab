@@ -344,6 +344,7 @@ class LoopbackV2HistoryClient:
         read_authorization: str,
         activity_source_id: str,
         port: int = 8777,
+        base_url: str | None = None,
         timeout_seconds: float = 2.0,
     ) -> None:
         if (
@@ -362,9 +363,10 @@ class LoopbackV2HistoryClient:
             or not 0.05 <= timeout_seconds <= 30
         ):
             raise ValueError("Timeout v2 fuera de rango")
-        self._activity_url = f"http://127.0.0.1:{port}/api/trading/activity"
-        self._cycles_url = f"http://127.0.0.1:{port}/api/trading/position-cycles"
-        self._cycle_magics_url = f"http://127.0.0.1:{port}/api/trading/position-cycle-magics"
+        base_url = base_url or f"http://127.0.0.1:{port}"
+        self._activity_url = f"{base_url}/api/trading/activity"
+        self._cycles_url = f"{base_url}/api/trading/position-cycles"
+        self._cycle_magics_url = f"{base_url}/api/trading/position-cycle-magics"
         self._authorization = f"Bearer {read_authorization}"
         self._source_id = activity_source_id
         self._timeout = float(timeout_seconds)

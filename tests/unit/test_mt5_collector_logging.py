@@ -14,7 +14,8 @@ class CollectorLoggingSourceTest(unittest.TestCase):
                 source = (COLLECTORS / f"TradingLab{component}.mq5").read_text(encoding="utf-8")
                 self.assertIn('#include "TradingLabCollectorLog.mqh"', source)
                 self.assertIn(
-                    f'logger.Configure("{component.lower()}", SourceId, COLLECTOR_VERSION)', source
+                    f'logger.Configure("{component.lower()}", TerminalId, COLLECTOR_VERSION)',
+                    source,
                 )
                 callback = source.split("void OnTradeTransaction(", 1)[1].split("\n}\n", 1)[0]
                 for forbidden in ("logger.", "File", "WebRequest(", "Print("):

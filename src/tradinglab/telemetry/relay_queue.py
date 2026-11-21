@@ -134,6 +134,10 @@ class RelayQueue:
             ).fetchone():
                 raise RelayStorageError("La cola conserva mensajes de fuentes no configuradas")
 
+    def bindings(self) -> list[tuple[str, str]]:
+        with self._lock:
+            return self._db.execute("SELECT stream, identity FROM bindings").fetchall()
+
     def bind(self, stream: str, identity: str) -> None:
         """Prevent reassigning old pending data to a different account or endpoint."""
         with self._lock, self._db:

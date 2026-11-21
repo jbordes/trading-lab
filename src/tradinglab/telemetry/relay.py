@@ -66,8 +66,11 @@ class RelayProducer:
             or target.password is not None
             or target.query
             or target.fragment
-            or target.path != f"/api/{self.contract}"
-            or (target.scheme == "http" and target.hostname != "127.0.0.1")
+            or (
+                target.path != f"/api/{self.contract}"
+                and not target.path.endswith(f"/accounts/{self.account_id}/api/{self.contract}")
+            )
+            or (target.scheme == "http" and target.hostname not in {"127.0.0.1", "localhost"})
         ):
             raise ValueError("Use HTTPS, o HTTP con 127.0.0.1 para pruebas")
         if target.port is not None and not 1 <= target.port <= 65535:
@@ -119,6 +122,11 @@ class RelayIngress:
             raise V2AuthorizationError(
                 "Contrato no autorizado", reason=AuthorizationRejection.CONTRACT
             )
+        return self.store(producer, contract, body, authorization, now=now)
+
+    def store(
+        self, producer: RelayProducer, contract: str, body: bytes, authorization: str, *, now: float
+    ) -> tuple[bool, int, bool]:
         if contract == "trading-events":
             directory = TradingEventsProducerDirectory(
                 (

@@ -1,5 +1,6 @@
 #ifndef TRADINGLAB_COLLECTOR_COMMON
 #define TRADINGLAB_COLLECTOR_COMMON
+#include "TradingLabAccountGuard.mqh"
 
 // No trading, network or disk side effects. Shared primitives and retry policy.
 enum CollectorCaptureState { CAPTURE_READY, CAPTURE_WAIT_BROKER, CAPTURE_STOPPED };
@@ -74,11 +75,11 @@ bool IsApprovedDemo(const bool connected, const long mode, const long login,
 
 CollectorCaptureState EvaluateCaptureState(const bool connected, const bool read_ok,
    const long mode, const long login, const string server,
-   const long expected_login, const string expected_server)
+   const long expected_login, const string expected_server, const bool allow_real_account = false)
 {
    if(!connected || !read_ok)
       return CAPTURE_WAIT_BROKER;
-   return IsApprovedDemo(true, mode, login, server, expected_login, expected_server) ?
+   return IsApprovedAccount(true, mode, login, server, expected_login, expected_server, allow_real_account) ?
       CAPTURE_READY : CAPTURE_STOPPED;
 }
 

@@ -1,5 +1,10 @@
 # Spike de colector de telemetría MT5
 
+> Documento histórico del contrato previo. Para operación vigente, consulte el
+> [manual de collectors](mt5-collector-operations.md) y la
+> [guía de cutover descriptivo](descriptive-api-cutover.md).
+> Los comandos de receptor descritos abajo fueron retirados; no ejecutarlos.
+
 **Fecha:** 2026-10-16
 
 **Estado:** piloto demo integrado aprobado; adoptado como fuente operativa primaria

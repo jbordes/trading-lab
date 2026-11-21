@@ -10,11 +10,11 @@ from pathlib import Path
 from test_mt5_telemetry import encoded
 from test_telemetry_history import history_message
 
+from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.sqlite_store import (
     DealHistoryCursor,
     MessageAdmissionError,
     TelemetryStorageError,
-    create_database,
     open_registry,
 )
 
@@ -24,11 +24,15 @@ class DealHistoryQueryTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "history.sqlite3"
-        create_database(self.path)
+        create_central_database(self.path)
         self.now = datetime(2026, 10, 20, 12, tzinfo=UTC)
         with open_registry(self.path) as registry:
-            registry.register_account("a", "Demo A", "DEMO-SERVER", "USD", created_at=self.now)
-            registry.register_account("b", "Demo B", "DEMO-SERVER", "USD", created_at=self.now)
+            registry.register_account(
+                "a", "Demo A", "DEMO-SERVER", "USD", login_masked="****1234", created_at=self.now
+            )
+            registry.register_account(
+                "b", "Demo B", "DEMO-SERVER", "USD", login_masked="****1234", created_at=self.now
+            )
             registry.register_source("demo-terminal-01", "a", created_at=self.now)
             registry.register_source("other-source", "b", created_at=self.now)
 

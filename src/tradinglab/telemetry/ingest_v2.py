@@ -115,7 +115,7 @@ def create_v2_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
-            if serve_api_docs(self, self.path, "v2"):
+            if serve_api_docs(self, self.path, "trading-events"):
                 return
             try:
                 target = urlsplit(self.path)
@@ -134,17 +134,17 @@ def create_v2_telemetry_server(
                 self._send_json(HTTPStatus.OK, state)
                 return
             if target.path not in {
-                "/v2/activity",
-                "/v2/activity-progress",
-                "/v2/position-cycles",
-                "/v2/position-cycle-magics",
+                "/api/trading/activity",
+                "/api/trading/activity-progress",
+                "/api/trading/position-cycles",
+                "/api/trading/position-cycle-magics",
             }:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not self._is_read_authorized():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            if target.path == "/v2/activity-progress":
+            if target.path == "/api/trading/activity-progress":
                 if target.query:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
                     return
@@ -161,7 +161,7 @@ def create_v2_telemetry_server(
                     {"activity_progress": asdict(progress) if progress is not None else None},
                 )
                 return
-            if target.path == "/v2/position-cycle-magics":
+            if target.path == "/api/trading/position-cycle-magics":
                 if target.query:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_query"})
                     return
@@ -175,7 +175,7 @@ def create_v2_telemetry_server(
                     return
                 self._send_json(HTTPStatus.OK, {"magics": list(magics)})
                 return
-            if target.path == "/v2/position-cycles":
+            if target.path == "/api/trading/position-cycles":
                 try:
                     query = self._position_cycles_query(target.query)
                     page = backend.position_cycles(**query)
@@ -236,7 +236,7 @@ def create_v2_telemetry_server(
             except ValueError:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_target"})
                 return
-            if target.path != "/v2/telemetry" or target.query:
+            if target.path != "/api/trading-events" or target.query:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if self.headers.get_content_type() != "application/json":

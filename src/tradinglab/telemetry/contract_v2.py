@@ -13,7 +13,7 @@ from typing import Any
 from tradinglab.telemetry import contract as v1
 from tradinglab.telemetry.contract import TelemetryEnvelope, TelemetryValidationError
 
-SCHEMA_VERSION = "mt5-telemetry-v2"
+SCHEMA_VERSION = "mt5-trading-events-v1"
 IDENTITY_FIELDS = {"login_masked", "server", "currency"}
 HISTORY_ORDER_FIELDS = {
     "ticket",

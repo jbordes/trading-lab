@@ -1,5 +1,8 @@
 # Persistencia inicial MT5: mapa CSV → collector → SQLite
 
+> Archivo histórico: las CLIs de provisión y arranque mencionadas aquí se
+> retiraron. Use el [bootstrap central vigente](remote-host-setup.md).
+
 **Fecha:** 2026-10-20
 
 **Estado:** creación, apertura validada, registro, guardado y lectura aislada implementados.

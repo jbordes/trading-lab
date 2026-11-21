@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create verified, non-destructive backups for both pilot telemetry databases."""
+"""Create a verified, non-destructive backup of the central SQLite database."""
 
 from __future__ import annotations
 
@@ -17,36 +17,32 @@ if hasattr(sys.stdout, "reconfigure"):
 
 def main(argv: list[str] | None = None) -> int:
     from tradinglab.telemetry.backup import BackupPlan
+    from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION
     from tradinglab.telemetry.operational_job import exclusive_job_lock, write_job_status
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--storage-root", type=Path, default=ROOT / "_storage")
-    parser.add_argument("--v1-database", default="piloto.sqlite3")
-    parser.add_argument("--v2-database", default="piloto-v2.sqlite3")
+    parser.add_argument("--database", default="central.sqlite3")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:
         storage = args.storage_root.resolve(strict=True)
-        plans = (
-            BackupPlan(ROOT, args.v1_database, storage, (1,)),
-            BackupPlan(ROOT, args.v2_database, storage, (4,)),
-        )
-        for plan in plans:
-            _ = plan.source
+        plan = BackupPlan(ROOT, args.database, storage, (CENTRAL_SCHEMA_VERSION,))
+        _ = plan.source
         if not args.apply:
-            print("Vista previa: se crearían dos copias SQLite verificadas, sin eliminar otras.")
+            print("Vista previa: se crearía una copia SQLite central verificada.")
             return 0
         status = storage / "operations" / "maintenance-status.json"
         with exclusive_job_lock(storage / "operations" / "maintenance.lock"):
             write_job_status(status, job="telemetry-maintenance", state="running", detail="Inicio")
-            results = [plan.apply() for plan in plans]
+            result = plan.apply()
             write_job_status(
                 status,
                 job="telemetry-maintenance",
                 state="succeeded",
-                detail=f"Copias verificadas: {len(results)}",
+                detail=f"Copia verificada: {result.size_bytes} bytes",
             )
-        print("Mantenimiento terminado: 2 copias verificadas.")
+        print("Mantenimiento terminado: copia central verificada.")
     except (ValueError, OSError, sqlite3.Error, RuntimeError) as exc:
         try:
             if args.apply and args.storage_root.is_dir():

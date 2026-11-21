@@ -11,7 +11,7 @@ if (-not [IO.Path]::IsPathRooted($Config) -or -not [IO.Path]::IsPathRooted($Data
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) { throw 'No existe el JSON' }
 if (Test-Path -LiteralPath $DataDir) { throw 'El destino ya existe; no se toca' }
 if (-not $Apply) {
-    Write-Output 'Vista previa: instalar uv si falta, Python 3.14, dependencias locked y bases privadas.'
+    Write-Output 'Vista previa: instalar uv si falta, Python 3.14, dependencias locked y una base central privada.'
     Write-Output "Destino: $DataDir. No se modificó nada; repetir con -Apply."
     exit 0
 }

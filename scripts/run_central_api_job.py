@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run independent receivers as one non-interactive, scheduler-friendly job."""
+"""Run the prepared central API as one non-interactive supervised job."""
 
 from __future__ import annotations
 
@@ -22,35 +22,34 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--storage-root", type=Path, default=ROOT / "_storage")
-    parser.add_argument("--secrets-file", type=Path, default=ROOT / ".env.local")
+    parser.add_argument("--data-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        storage = args.storage_root.resolve(strict=True)
-        secrets = args.secrets_file.resolve(strict=True)
-        if not storage.is_dir() or not secrets.is_file():
-            raise ValueError("Almacenamiento o archivo local de secretos inválido")
+        if not args.data_dir.is_absolute() or args.data_dir.is_symlink():
+            raise ValueError("Use un directorio absoluto sin enlace simbólico")
+        storage = args.data_dir.resolve(strict=True)
+        if storage.is_relative_to(ROOT.resolve()):
+            raise ValueError("El host operativo debe estar fuera del checkout")
+        if not storage.is_dir() or not (storage / "host.json").is_file():
+            raise ValueError("Host central no preparado")
         operations = storage / "operations"
-        status = operations / "receivers-status.json"
+        status = operations / "central-api-status.json"
         command = [
             sys.executable,
-            str(ROOT / "scripts" / "start_telemetry_v2_component.py"),
-            "receivers",
-            "--storage-root",
+            str(ROOT / "scripts" / "run_remote_host.py"),
+            "--data-dir",
             str(storage),
-            "--secrets-file",
-            str(secrets),
         ]
-        with exclusive_job_lock(operations / "receivers.lock"):
-            write_job_status(status, job="telemetry-receivers", state="running", detail="Inicio")
+        with exclusive_job_lock(operations / "central-api.lock"):
+            write_job_status(status, job="central-api", state="running", detail="Inicio")
             return_code = run_logged(
                 command,
                 cwd=ROOT,
-                log_path=operations / "receivers.log",
+                log_path=operations / "central-api.log",
             )
             write_job_status(
                 status,
-                job="telemetry-receivers",
+                job="central-api",
                 state="failed" if return_code else "succeeded",
                 detail=f"Proceso finalizado con código {return_code}",
             )

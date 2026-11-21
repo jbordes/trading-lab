@@ -4,8 +4,8 @@
   "login_masked": "****1234",
   "server": "REEMPLAZAR-SERVIDOR",
   "currency": "USD",
-  "v1_source_id": "juampi-demo-01",
-  "v2_live_source_id": "juampi-demo-live-v2",
-  "v2_activity_source_id": "juampi-demo-activity-v2",
+  "snapshot_source_id": "juampi-demo-01",
+  "live_source_id": "juampi-demo-live-v2",
+  "activity_source_id": "juampi-demo-activity-v2",
   "port": 8781
 }

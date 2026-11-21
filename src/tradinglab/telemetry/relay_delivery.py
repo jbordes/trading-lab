@@ -31,18 +31,22 @@ def unique_json_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def validate_central_ack(status: int, content_type: str, body: bytes, *, version: str) -> None:
+def validate_central_ack(status: int, content_type: str, body: bytes, *, contract: str) -> None:
+    if contract not in {"account-state", "trading-events"}:
+        raise ValueError("Contrato de ACK no admitido")
     if status not in {200, 202} or len(body) > 4096 or content_type != "application/json":
         raise ValueError("ACK inválido")
     result = json.loads(body, object_pairs_hook=unique_json_fields)
-    keys = {"status", "sequence_gap"} | ({"out_of_order"} if version == "v2" else set())
+    keys = {"status", "sequence_gap"} | (
+        {"out_of_order"} if contract == "trading-events" else set()
+    )
     if (
         not isinstance(result, dict)
         or set(result) != keys
         or result["status"] != {200: "duplicate", 202: "accepted"}[status]
         or type(result["sequence_gap"]) is not int
         or result["sequence_gap"] < 0
-        or (version == "v2" and type(result["out_of_order"]) is not bool)
+        or (contract == "trading-events" and type(result["out_of_order"]) is not bool)
     ):
         raise ValueError("ACK inválido")
 

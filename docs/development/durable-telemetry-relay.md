@@ -161,12 +161,23 @@ El ejemplo es genérico; no describe el almacenamiento del piloto validado.
 
 Copiar y adaptar [la topología de ejemplo](telemetry-relay.example.json) a un
 archivo local. Define las identidades y targets; las credenciales se referencian
-por nombre de variable. V1 utiliza rol live; v2 admite live/activity según fuente.
+por nombre de variable. En la configuración descriptiva, `contract` sustituye
+la clave anterior `version` y usa `account-state` o `trading-events` según la
+fuente. `account-state` requiere `role: snapshot`; `trading-events` admite
+`role: live` o `role: activity`. El relay rechaza combinaciones incompatibles.
+No edite el ejemplo compartido como parte de una configuración local.
 Configurar credenciales distintas para cada productor y frontera. El token local
 debe coincidir con el EA; el central, con el receptor de destino. Los targets
-`8776/8777` del ejemplo son ilustrativos de receptores legacy: para la topología
-FastAPI validada, adaptarlos a `http://127.0.0.1:8781/v1/telemetry` y
-`http://127.0.0.1:8781/v2/telemetry`. No apuntar el relay a sí mismo.
+`8776/8777` del ejemplo son ilustrativos de receptores legacy: para el contrato
+descriptivo de FastAPI, usar `http://127.0.0.1:8781/api/account-state` y
+`http://127.0.0.1:8781/api/trading-events`. No apuntar el relay a sí mismo.
+El cambio de targets y configuración requiere el corte coordinado descrito en
+[la guía de cutover](descriptive-api-cutover.md); no reescriba una outbox activa.
+El relay nuevo valida que las fuentes pendientes estén configuradas y rechaza
+mensajes cuya fuente falta para no dejarlos huérfanos sin aviso. También rechaza
+bindings v1/v2 antiguos incluso con todos sus mensajes ACKed; no adopta esa cola
+automáticamente. Drene la cola anterior y cree una nueva antes del cutover, o
+presérvela intacta y cree otra solo con aprobación y plan de recuperación.
 
 Se admiten variables del proceso o un archivo local ignorado `.env.relay` con
 asignaciones `RELAY_...=valor`, una por línea y sin comillas. No versionarlo ni
@@ -254,24 +265,24 @@ uv run python scripts/telemetry_relay.py --queue "C:\TradingLabData\relay.sqlite
 Agregar `--apply` para rehabilitar esos mensajes y arrancar de nuevo. Mantiene
 identidad y contenido; no omite un 409 ni cambia la operación que lo produjo.
 
-## Compatibilidad con el sistema actual
+## Componentes anteriores retirados
 
-El relay no sirve las lecturas `/v1/snapshot` o `/v2/activity` del dashboard;
-éstas se consultan en FastAPI central `8781` en la topología validada. Los
-receptores SQLite legacy permanecen para compatibilidad y solo deben iniciarse
-aparte, en puertos libres; no son parte del arranque habitual. FastAPI separa
-ingesta v1 con `CENTRAL_V1_INGEST` y lectura con `CENTRAL_V1_READ`.
-`TRADINGLAB_V1_READ_TOKEN` corresponde solo al receptor legacy.
-
-Los receptores SQLite admiten mensajes con capturas antiguas; sus proyecciones
-conservan la captura original y no infieren frescura del ACK. El modo memoria v1
-no es un destino válido para garantías durables: usar siempre receptor SQLite.
+El relay no sirve lecturas del dashboard; éstas se consultan en FastAPI central
+`8781`. En el contrato descriptivo, las lecturas usan `/api/accounts/*` y
+`/api/trading/*`. Los
+Los receptores SQLite independientes y sus CLIs fueron retirados del producto;
+no intente iniciarlos desde recetas históricas. FastAPI separa
+credenciales de ingesta de snapshot/live/activity y de lectura de cuenta/trading;
+consulte [la guía de cutover](descriptive-api-cutover.md) para los nombres
+vigentes.
+Los antiguos datasets se conservan como archivos, pero no hay runtime para
+abrirlos ni migrarlos automáticamente. La ingesta central admite esquema 7.
 
 ## Despliegue remoto futuro
 
 - Preparar servicios macOS y transporte privado HTTPS/Tailscale.
 - Conectar las lecturas del dashboard al backend remoto y sus credenciales.
-- Confirmar configuración persistente de receptores y permisos del directorio.
+- Confirmar configuración persistente de la API central y permisos del directorio.
 - Observar capacidad y atraso del piloto; definir retención de huellas y manejo
   de crecimiento, así como objetivos operativos antes de una cuenta real.
 - La prioridad interna entre backfill y actividad reciente de una misma fuente

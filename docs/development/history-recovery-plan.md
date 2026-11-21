@@ -1,5 +1,8 @@
 # Recuperación histórica — primer paso
 
+> Archivo histórico de planificación y comandos retirados. No ejecutar las
+> utilidades citadas aquí; use [el bootstrap central](remote-host-setup.md).
+
 Fecha: 2026-10-25. Estado: backend, collector y consulta durable implementados;
 recuperación reciente prioritaria preparada, piloto pendiente.
 

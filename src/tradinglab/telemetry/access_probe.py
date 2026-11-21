@@ -20,7 +20,7 @@ def create_access_probe(
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
-            if self.path not in {"/v1/telemetry", "/v2/telemetry"}:
+            if self.path not in {"/api/account-state", "/api/trading-events"}:
                 self.send_error(404)
                 return
             lengths = self.headers.get_all("Content-Length", [])

@@ -12,8 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from storage_fixtures import SnapshotTestPlan  # noqa: E402
+
 from tradinglab.telemetry.backup import BackupPlan  # noqa: E402
-from tradinglab.telemetry.provisioning import ProvisionPlan  # noqa: E402
 from tradinglab.telemetry.sqlite_store import open_registry  # noqa: E402
 
 
@@ -23,18 +24,29 @@ class TelemetryBackupTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.now = datetime(2026, 10, 20, 12, tzinfo=UTC)
-        self.source = ProvisionPlan(
+        self.source = SnapshotTestPlan(
             self.root, "pilot.sqlite3", "account-demo", "Demo", "DEMO", "USD", "demo-source"
         ).apply(clock=self.now)
         self.plan = BackupPlan(self.root, "pilot.sqlite3")
 
     def test_online_backup_has_valid_manifest_without_touching_source(self) -> None:
         with open_registry(self.source) as registry:
-            registry.register_source("another-source", "account-demo", created_at=self.now)
+            registry.register_account(
+                "another-account",
+                "Demo",
+                "DEMO",
+                "USD",
+                login_masked="****1234",
+                created_at=self.now,
+            )
+            registry.register_source("another-source", "another-account", created_at=self.now)
             before = self.source.read_bytes()
             result = self.plan.apply(clock=self.now)
             self.assertEqual(self.source.read_bytes(), before)
-            registry.register_source("after-backup", "account-demo", created_at=self.now)
+            registry.register_account(
+                "after-account", "Demo", "DEMO", "USD", login_masked="****1234", created_at=self.now
+            )
+            registry.register_source("after-backup", "after-account", created_at=self.now)
         copied = result.directory / "data.sqlite3"
         manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["sha256"], hashlib.sha256(copied.read_bytes()).hexdigest())
@@ -57,7 +69,7 @@ class TelemetryBackupTest(unittest.TestCase):
         self.assertEqual(first.sha256, first_hash)
 
     def test_preview_and_invalid_inputs_do_not_create_backups(self) -> None:
-        self.assertEqual(self.plan.source, self.source)
+        self.assertEqual(self.plan.source, self.source.resolve())
         self.assertFalse((self.root / "_storage" / "backups").exists())
 
     def test_explicit_storage_accepts_the_expected_v2_schema_only(self) -> None:

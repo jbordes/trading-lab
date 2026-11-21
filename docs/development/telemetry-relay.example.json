@@ -1,25 +1,25 @@
 [
   {
-    "version": "v1",
+    "contract": "account-state",
     "source_id": "demo-terminal-01",
     "account_id": "account-demo",
-    "role": "live",
+    "role": "snapshot",
     "login_masked": "****1234",
     "server": "DEMO-SERVER",
     "currency": "USD",
-    "target": "http://127.0.0.1:8776/v1/telemetry",
+    "target": "http://127.0.0.1:8776/api/account-state",
     "local_token_env": "RELAY_LIVE_LOCAL_TOKEN",
     "central_token_env": "RELAY_LIVE_CENTRAL_TOKEN"
   },
   {
-    "version": "v2",
+    "contract": "trading-events",
     "source_id": "synthetic-activity",
     "account_id": "account-demo",
     "role": "activity",
     "login_masked": "****1234",
     "server": "DEMO-SERVER",
     "currency": "USD",
-    "target": "http://127.0.0.1:8777/v2/telemetry",
+    "target": "http://127.0.0.1:8777/api/trading-events",
     "local_token_env": "RELAY_ACTIVITY_LOCAL_TOKEN",
     "central_token_env": "RELAY_ACTIVITY_CENTRAL_TOKEN"
   }

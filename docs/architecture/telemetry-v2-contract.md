@@ -1,4 +1,7 @@
-# Contrato de telemetría v2 — propuesta
+# Contrato de telemetría v2 — propuesta histórica
+
+> El wire descriptivo actual usa `mt5-trading-events-v1`; consulte la
+> [guía de cutover](../development/descriptive-api-cutover.md).
 
 Estado: especificación revisable del ADR-0011, con validador y admisión aislados en
 `src/tradinglab/telemetry/contract_v2.py` y
@@ -172,11 +175,12 @@ olvidar duplicados antiguos y no sobrevive reinicios. Por eso todavía no se usa
 en HTTP ni constituye idempotencia durable. SQLite deberá aplicar las mismas
 reglas dentro de la transacción antes de confirmar al productor.
 
-La [persistencia v2 aislada](../development/telemetry-v2-persistence.md) ya aplica
-esas reglas dentro de una transacción SQLite y restaura evidencia verificada tras
-reinicios. Permanece opt-in y separada de las bases v1: todavía no existe migración,
-provisión operativa ni endpoint v2. La composición de referencia conserva ambos
-flujos y sus conflictos sin presentarlos como una captura atómica.
+La persistencia v2 aplica esas reglas dentro de una transacción SQLite y restaura
+evidencia verificada tras reinicios. Sus tablas se integran con la persistencia
+v1 en el archivo central de esquema 6 ([ADR-0020](../adr/0020-single-central-sqlite-database.md)).
+El almacén v2 aislado documentado en [su guía histórica](../development/telemetry-v2-persistence.md)
+se conserva para el piloto anterior, no como destino del bootstrap remoto. La
+composición sigue conservando frescura y cobertura independientes por flujo.
 
 ## Composición para dashboard y compatibilidad
 

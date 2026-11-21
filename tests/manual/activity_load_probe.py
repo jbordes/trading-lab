@@ -99,19 +99,19 @@ def main() -> None:
         create_relay_database(path)
         queue = RelayQueue(path)
         producer = RelayProducer(
-            "v2",
+            "trading-events",
             "synthetic-activity",
             "demo",
             ProducerRole.ACTIVITY,
             ProducerIdentity("****1234", "DEMO-SERVER", "USD"),
-            "http://127.0.0.1:1/v2/telemetry",
+            "http://127.0.0.1:1/api/trading-events",
             "synthetic-load-probe-local-key",
-            fixture.settings.v2_activity,
+            fixture.settings.activity_ingest,
         )
         ingress = RelayIngress(queue, (producer,))
         for body in messages(template):
             fixture.assertTrue(
-                ingress.accept("v2", body, f"Bearer {producer.local_token}", now=1)[0]
+                ingress.accept("trading-events", body, f"Bearer {producer.local_token}", now=1)[0]
             )
         fixture.assertEqual(queue.status(now=1)["states"], {"pending": MESSAGE_COUNT})
         enqueued = time.perf_counter()
@@ -125,7 +125,7 @@ def main() -> None:
 
             def send(self, producer: RelayProducer, body: bytes) -> tuple[int, str, bytes]:
                 response = fixture.client.post(
-                    "/v2/telemetry",
+                    "/api/trading-events",
                     content=body,
                     headers={
                         "Authorization": f"Bearer {producer.central_token}",
@@ -147,7 +147,9 @@ def main() -> None:
         fixture.assertEqual(queue.status(now=100000)["pending_bytes"], 0)
         for body in messages(template):
             fixture.assertFalse(
-                ingress.accept("v2", body, f"Bearer {producer.local_token}", now=100000)[0]
+                ingress.accept(
+                    "trading-events", body, f"Bearer {producer.local_token}", now=100000
+                )[0]
             )
         delivered = time.perf_counter()
 
@@ -158,7 +160,7 @@ def main() -> None:
                 response = fixture.client.get(
                     path,
                     params=params,
-                    headers={"Authorization": f"Bearer {fixture.settings.v2_read}"},
+                    headers={"Authorization": f"Bearer {fixture.settings.trading_read}"},
                 )
                 fixture.assertEqual(response.status_code, 200, response.text[:200])
                 page = response.json()
@@ -173,7 +175,7 @@ def main() -> None:
         counts = {}
         for entity in ("deal", "order"):
             counts[entity] = count(
-                "/v2/activity",
+                "/api/trading/activity",
                 {
                     "entity": entity,
                     "from_msc": 1792000000000,
@@ -183,7 +185,7 @@ def main() -> None:
             )
             fixture.assertEqual(counts[entity], BATCHES * POSITIONS_PER_BATCH * 2)
         counts["closed_cycles"] = count(
-            "/v2/position-cycles", {"closed_only": "true", "limit": 100}
+            "/api/trading/position-cycles", {"closed_only": "true", "limit": 100}
         )
         fixture.assertEqual(counts["closed_cycles"], BATCHES * POSITIONS_PER_BATCH)
         print(

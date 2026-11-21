@@ -17,15 +17,12 @@ class TelemetryWindowsTasksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             storage = root / "storage"
-            secrets = root / ".env.local"
-            receivers, maintenance = task_plan(
-                root, storage, secrets, start_date=date(2026, 10, 29)
-            )
+            receivers, maintenance = task_plan(root, storage, start_date=date(2026, 10, 29))
             receiver_xml = receivers.xml(user_id="demo-user")
             maintenance_xml = maintenance.xml(user_id="demo-user")
         self.assertIn("LogonTrigger", receiver_xml)
         self.assertIn("RestartOnFailure", receiver_xml)
-        self.assertIn("run_telemetry_receivers_job.py", receiver_xml)
+        self.assertIn("run_central_api_job.py", receiver_xml)
         self.assertIn("CalendarTrigger", maintenance_xml)
         self.assertIn("2026-10-29T03:30:00", maintenance_xml)
         self.assertIn("run_telemetry_maintenance.py", maintenance_xml)

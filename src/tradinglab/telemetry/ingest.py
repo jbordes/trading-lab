@@ -272,7 +272,7 @@ def create_telemetry_server(
                 self.close_connection = True
 
         def do_GET(self) -> None:  # noqa: N802
-            if serve_api_docs(self, self.path, "v1"):
+            if serve_api_docs(self, self.path, "account-state"):
                 return
             try:
                 request_target = urlsplit(self.path)
@@ -292,7 +292,7 @@ def create_telemetry_server(
                 health.update(self.server.connection_state())
                 self._send_json(HTTPStatus.OK, health)
                 return
-            if path == "/v1/snapshot":
+            if path == "/api/accounts/snapshot":
                 if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
@@ -315,7 +315,7 @@ def create_telemetry_server(
                     return
                 self._send_json(HTTPStatus.OK, latest)
                 return
-            if path == "/v1/account-history":
+            if path == "/api/accounts/history":
                 if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
@@ -351,7 +351,7 @@ def create_telemetry_server(
                     return
                 self._send_json(HTTPStatus.OK, result)
                 return
-            if path == "/v1/deals":
+            if path == "/api/accounts/deals":
                 if not self._is_read_authorized():
                     self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
@@ -394,7 +394,7 @@ def create_telemetry_server(
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path.split("?", 1)[0] != "/v1/telemetry":
+            if self.path.split("?", 1)[0] != "/api/account-state":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not self._is_authorized():

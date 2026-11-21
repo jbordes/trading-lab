@@ -10,9 +10,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from storage_fixtures import SnapshotTestPlan  # noqa: E402
+
 from tradinglab.telemetry.inspection import InspectionPlan  # noqa: E402
 from tradinglab.telemetry.inspection import _summarize as summarize  # noqa: E402
-from tradinglab.telemetry.provisioning import ProvisionPlan  # noqa: E402
 from tradinglab.telemetry.sqlite_store import open_registry  # noqa: E402
 
 
@@ -27,7 +28,7 @@ def message(
     stamp = captured.isoformat(timespec="seconds").replace("+00:00", "Z")
     session_id = f"{source_id}-session"
     body = {
-        "schema_version": "mt5-telemetry-v1",
+        "schema_version": "mt5-account-state-v1",
         "collector_version": "0.1.0",
         "source_id": source_id,
         "session_id": session_id,
@@ -101,7 +102,7 @@ class TelemetryInspectionTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.now = datetime(2026, 10, 21, 12, tzinfo=UTC)
-        self.database = ProvisionPlan(
+        self.database = SnapshotTestPlan(
             self.root,
             "pilot.sqlite3",
             "demo-account",
@@ -177,26 +178,25 @@ class TelemetryInspectionTest(unittest.TestCase):
         self.assertEqual(summary.message_count, 2)
         self.assertEqual(summary.latest_orders, 0)
 
-    def test_deals_are_deduplicated_by_account_across_sources(self) -> None:
+    def test_deals_are_deduplicated_across_observations(self) -> None:
         with open_registry(self.database) as registry:
-            registry.register_source("second-source", "demo-account", created_at=self.now)
             registry.store_message(
                 message(1, self.now, magic="11122", ticket="500"), received_at=self.now
             )
             registry.store_message(
                 message(
-                    1,
+                    2,
                     self.now,
                     magic="11122",
                     ticket="500",
-                    source_id="second-source",
+                    source_id="demo-source",
                 ),
                 received_at=self.now,
             )
         summary = InspectionPlan(self.root, "pilot.sqlite3").inspect()
-        self.assertEqual(summary.source_ids, ("demo-source", "second-source"))
-        self.assertEqual(summary.session_count, 2)
-        self.assertEqual(summary.latest_orders, 2)
+        self.assertEqual(summary.source_ids, ("demo-source",))
+        self.assertEqual(summary.session_count, 1)
+        self.assertEqual(summary.latest_orders, 1)
         self.assertEqual(summary.unique_historical_deals, 1)
 
     def test_same_deal_ticket_remains_distinct_between_accounts(self) -> None:
@@ -206,6 +206,7 @@ class TelemetryInspectionTest(unittest.TestCase):
                 "Second demo",
                 "DEMO",
                 "USD",
+                login_masked="****1234",
                 created_at=self.now,
             )
             registry.register_source("second-source", "second-account", created_at=self.now)

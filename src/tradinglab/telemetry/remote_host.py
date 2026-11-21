@@ -15,18 +15,18 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tradinglab.telemetry.admission_v2 import ProducerIdentity
+from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.contract import IDENTIFIER
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
-from tradinglab.telemetry.sqlite_store import create_database, open_registry
+from tradinglab.telemetry.sqlite_store import open_registry
 from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
 
 CENTRAL_KEYS = (
-    "CENTRAL_V1_INGEST",
-    "CENTRAL_V1_READ",
-    "CENTRAL_V2_LIVE",
-    "CENTRAL_V2_ACTIVITY",
-    "CENTRAL_V2_READ",
+    "CENTRAL_SNAPSHOT_INGEST",
+    "CENTRAL_ACCOUNT_READ",
+    "CENTRAL_LIVE_INGEST",
+    "CENTRAL_ACTIVITY_INGEST",
+    "CENTRAL_TRADING_READ",
 )
 
 
@@ -50,34 +50,38 @@ class RemoteHostConfig:
     login_masked: str
     server: str
     currency: str
-    v1_source_id: str
-    v2_live_source_id: str
-    v2_activity_source_id: str
+    snapshot_source_id: str
+    live_source_id: str
+    activity_source_id: str
     port: int = 8781
 
     def __post_init__(self) -> None:
-        # Reuse the production identity and provisioning validators before any IO.
-        self.plan(Path.cwd(), Path.cwd())
-        if not isinstance(self.v1_source_id, str) or not IDENTIFIER.fullmatch(self.v1_source_id):
-            raise ValueError("Fuente v1 inválida")
-        if len({self.v1_source_id, self.v2_live_source_id, self.v2_activity_source_id}) != 3:
+        _ = self.identity  # Validate the complete MT5 identity before any IO.
+        for value in (
+            self.account_id,
+            self.snapshot_source_id,
+            self.live_source_id,
+            self.activity_source_id,
+        ):
+            if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
+                raise ValueError("Identificador de cuenta o fuente inválido")
+        if (
+            not isinstance(self.label, str)
+            or not self.label.strip()
+            or len(self.label) > 128
+            or not self.label.isprintable()
+        ):
+            raise ValueError("Etiqueta de cuenta inválida")
+        if len({self.snapshot_source_id, self.live_source_id, self.activity_source_id}) != 3:
             raise ValueError("Configure tres fuentes distintas")
         if type(self.port) is not int or not 1024 <= self.port <= 65535:
             raise ValueError("Puerto de API inválido (1024..65535)")
         if self.server.startswith("REEMPLAZAR"):
             raise ValueError("Complete la identidad del broker antes de preparar el host")
 
-    def plan(self, repo: Path, directory: Path) -> V2ProvisionPlan:
-        return V2ProvisionPlan(
-            repo,
-            "central-v2.sqlite3",
-            self.account_id,
-            self.label,
-            ProducerIdentity(self.login_masked, self.server, self.currency),
-            self.v2_live_source_id,
-            self.v2_activity_source_id,
-            storage_root=directory,
-        )
+    @property
+    def identity(self) -> ProducerIdentity:
+        return ProducerIdentity(self.login_masked, self.server, self.currency)
 
 
 def read_host_config(path: Path) -> RemoteHostConfig:
@@ -141,7 +145,9 @@ def _write_new(path: Path, content: str) -> None:
         os.fsync(target.fileno())
 
 
-def prepare_host(repo: Path, directory: Path, config: RemoteHostConfig, *, apply: bool) -> dict:
+def prepare_host(
+    repo: Path, directory: Path, config: RemoteHostConfig, *, apply: bool
+) -> dict[str, object]:
     """Preview or create an isolated bundle; never migrate, start services or delete."""
     repo = repo.resolve(strict=True)
     if not directory.is_absolute() or directory.is_symlink():
@@ -149,32 +155,18 @@ def prepare_host(repo: Path, directory: Path, config: RemoteHostConfig, *, apply
     directory = directory.resolve()
     if directory.is_relative_to(repo) or directory.exists() or not directory.parent.is_dir():
         raise ValueError("El destino debe ser nuevo, fuera del checkout y con padre existente")
-    plan = config.plan(repo, directory)
-    result = {"directory": str(directory), "schema_v1": 1, "schema_v2": 5, "applied": apply}
+    database = directory / "central.sqlite3"
+    result = {
+        "directory": str(directory),
+        "database": database.name,
+        "schema_version": CENTRAL_SCHEMA_VERSION,
+        "applied": apply,
+    }
     if not apply:
         return result
     _private_directory(directory)
     # Failure preserves partial files for inspection; no destructive rollback.
-    v1 = directory / "central-v1.sqlite3"
-    create_database(v1)
-    stamp = datetime.now(UTC)
-    with open_registry(v1) as registry:
-        registry.register_account(
-            config.account_id, config.label, config.server, config.currency, created_at=stamp
-        )
-        registry.register_source(config.v1_source_id, config.account_id, created_at=stamp)
-    plan.apply(clock=stamp)
-    for name, version in ((v1.name, 1), (plan.filename, 5)):
-        with closing(sqlite3.connect((directory / name).as_uri() + "?mode=ro", uri=True)) as db:
-            if (
-                db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-                or db.execute("PRAGMA user_version").fetchone()[0] != version
-                or db.execute("PRAGMA foreign_key_check").fetchall()
-            ):
-                raise RuntimeError("Falló la verificación de SQLite")
-    with open_v2_registry(plan.database, read_only=True) as registry:
-        if registry.account_evidence(config.account_id).identity != plan.identity:
-            raise RuntimeError("La identidad creada no coincide")
+    create_registered_database(database, config)
     _write_new(
         directory / ".env.central",
         "".join(f"{key}={secrets.token_urlsafe(32)}\n" for key in CENTRAL_KEYS),
@@ -185,3 +177,50 @@ def prepare_host(repo: Path, directory: Path, config: RemoteHostConfig, *, apply
     # Written last: launch refuses incomplete preparation. No secrets in this JSON.
     _write_new(directory / "host.json", json.dumps(asdict(config), indent=2) + "\n")
     return result
+
+
+def create_registered_database(
+    database: Path, config: RemoteHostConfig, *, clock: datetime | None = None
+) -> None:
+    """Create only the registered database, without secrets, services or migration."""
+    stamp = clock or datetime.now(UTC)
+    if stamp.tzinfo is None or stamp.utcoffset() is None:
+        raise ValueError("La hora del alta debe incluir zona horaria")
+    create_central_database(database)
+    with open_v2_registry(database) as registry:
+        registry.register_account(
+            config.account_id,
+            config.label,
+            config.identity,
+            created_at=stamp,
+        )
+        registry.register_source(
+            config.live_source_id,
+            config.account_id,
+            ProducerRole.LIVE,
+            created_at=stamp,
+        )
+        registry.register_source(
+            config.activity_source_id,
+            config.account_id,
+            ProducerRole.ACTIVITY,
+            created_at=stamp,
+        )
+    with open_registry(database) as registry:
+        registry.register_source(config.snapshot_source_id, config.account_id, created_at=stamp)
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
+        if (
+            db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+            or db.execute("PRAGMA user_version").fetchone()[0] != CENTRAL_SCHEMA_VERSION
+            or db.execute("PRAGMA foreign_key_check").fetchall()
+        ):
+            raise RuntimeError("Falló la verificación de SQLite central")
+    with open_v2_registry(database, read_only=True) as registry:
+        evidence = registry.account_evidence(config.account_id)
+        if evidence.identity != config.identity or {
+            (source.source_id, source.role) for source in evidence.sources
+        } != {
+            (config.live_source_id, ProducerRole.LIVE),
+            (config.activity_source_id, ProducerRole.ACTIVITY),
+        }:
+            raise RuntimeError("La identidad creada no coincide")

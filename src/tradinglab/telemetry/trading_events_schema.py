@@ -1,10 +1,8 @@
-"""SQLite v2 schema definitions and structural verification shared by storage and migrations."""
+"""Trading-event tables and structural verification for central SQLite."""
 
 from __future__ import annotations
 
 import sqlite3
-
-DATABASE_SCHEMA_VERSION = 5
 
 POSITION_CYCLE_TABLE = """CREATE TABLE position_cycle_observations (
     message_id INTEGER PRIMARY KEY REFERENCES telemetry_v2_messages(message_id),
@@ -35,10 +33,13 @@ ON position_cycle_observations(
 POSITION_CYCLE_MAGIC_INDEX = """CREATE INDEX position_cycle_observations_magic_query
 ON position_cycle_observations(account_id, owner_magic, last_event_at_msc, position_id);"""
 POSITION_CYCLE_EXTRA_INDEXES = POSITION_CYCLE_REVISION_INDEX + "\n" + POSITION_CYCLE_MAGIC_INDEX
-POSITION_CYCLE_DDL_V4 = POSITION_CYCLE_TABLE + "\n" + POSITION_CYCLE_INDEX
-POSITION_CYCLE_DDL = POSITION_CYCLE_DDL_V4 + "\n" + POSITION_CYCLE_EXTRA_INDEXES
+POSITION_CYCLE_BASE_DDL = POSITION_CYCLE_TABLE + "\n" + POSITION_CYCLE_INDEX
+POSITION_CYCLE_DDL = POSITION_CYCLE_BASE_DDL + "\n" + POSITION_CYCLE_EXTRA_INDEXES
 
-SCHEMA = f"""
+
+def build_schema(*, version: int, source_roles_sql: str, extra_tables: str = "") -> str:
+    """Compose schema from internal SQL constants; never accept request/config fragments."""
+    return f"""
 BEGIN IMMEDIATE;
 CREATE TABLE accounts (
     account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
@@ -55,7 +56,7 @@ CREATE TABLE accounts (
 CREATE TABLE sources (
     source_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),
     account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    role TEXT NOT NULL CHECK(role IN ('live', 'activity')),
+    role TEXT NOT NULL CHECK(role IN ({source_roles_sql})),
     created_at_utc TEXT NOT NULL CHECK(length(created_at_utc) BETWEEN 20 AND 27),
     UNIQUE(account_id, role)
 ) STRICT;
@@ -79,7 +80,7 @@ CREATE TABLE telemetry_v2_messages (
     kind TEXT NOT NULL CHECK(kind IN ('live_snapshot', 'activity_batch', 'heartbeat')),
     captured_at_utc TEXT NOT NULL CHECK(length(captured_at_utc) BETWEEN 20 AND 27),
     received_at_utc TEXT NOT NULL CHECK(length(received_at_utc) BETWEEN 20 AND 27),
-    schema_version TEXT NOT NULL CHECK(schema_version = 'mt5-telemetry-v2'),
+    schema_version TEXT NOT NULL CHECK(schema_version = 'mt5-trading-events-v1'),
     collector_version TEXT NOT NULL CHECK(length(collector_version) BETWEEN 1 AND 128),
     payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
     content_sha256 TEXT NOT NULL CHECK(
@@ -131,15 +132,10 @@ CREATE TABLE activity_coverage (
 CREATE INDEX activity_coverage_query
 ON activity_coverage(account_id, entity_type, from_server_msc, to_server_msc);
 {POSITION_CYCLE_DDL}
-PRAGMA user_version = 5;
+{extra_tables}
+PRAGMA user_version = {version};
 COMMIT;
 """
-SCHEMA_V4 = SCHEMA.replace("\n" + POSITION_CYCLE_EXTRA_INDEXES, "").replace(
-    "PRAGMA user_version = 5", "PRAGMA user_version = 4"
-)
-SCHEMA_V3 = SCHEMA_V4.replace(POSITION_CYCLE_DDL_V4, "").replace(
-    "PRAGMA user_version = 4", "PRAGMA user_version = 3"
-)
 
 
 def schema_objects(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:

@@ -1,4 +1,10 @@
-# Persistencia y composición aisladas de telemetría v2
+# Persistencia v2 del piloto aislado
+
+> Esta implementación conserva el esquema v2 independiente para pruebas del
+> piloto anterior. El contrato descriptivo y esquema 7 están pendientes de
+> corte; consulte la [guía de cutover](descriptive-api-cutover.md) y el
+> [bootstrap central](remote-host-setup.md).
+> Los comandos de provisión, migración y receptor de esta receta se retiraron.
 
 **Estado:** activo como piloto local opt-in; la migración a esquema 4 está
 implementada en código pero todavía no fue aplicada a la base de Juampi.

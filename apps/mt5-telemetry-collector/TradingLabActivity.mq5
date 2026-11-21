@@ -1,13 +1,13 @@
 #property copyright "TradingLab 2.0"
-#property version   "1.000"
+#property version   "1.100"
 #property strict
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
 #include "TradingLabActivityState.mqh"
 
-// Read-only v2 activity collector. It never sends or modifies trading orders.
+// Read-only trading-events collector. It never sends or modifies trading orders.
 
-input string IngestUrl = "http://127.0.0.1:8777/v2/telemetry";
+input string IngestUrl = "http://127.0.0.1:8777/api/trading-events";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string SourceId = "demo-activity-01";
 input int IntervalSeconds = 10;
@@ -27,8 +27,8 @@ input int CycleBudgetMs = 25;
 input long ExpectedDemoLogin = 0;
 input string ExpectedDemoServer = "";
 
-const string SCHEMA_VERSION = "mt5-telemetry-v2";
-const string COLLECTOR_VERSION = "activity-0.7.1";
+const string SCHEMA_VERSION = "mt5-trading-events-v1";
+const string COLLECTOR_VERSION = "activity-0.8.0";
 const int MAX_PAYLOAD_BYTES = 262144;
 const int TRANSACTION_HINT_CAPACITY = 128;
 const int LOCAL_ENCODING_FAILURE = -2;
@@ -80,7 +80,7 @@ int OnInit()
    logger.Configure("activity", SourceId, COLLECTOR_VERSION);
    if(!IsLoopbackIngestUrl(IngestUrl))
    {
-      logger.Error("invalid_configuration", "TradingLab activity: only a loopback v2 endpoint is accepted");
+      logger.Error("invalid_configuration", "TradingLab activity: only the loopback trading-events endpoint is accepted");
       return INIT_PARAMETERS_INCORRECT;
    }
    if(!IsCollectorToken(Token))
@@ -1258,7 +1258,7 @@ int Utf8Size(const string value)
 
 bool IsLoopbackIngestUrl(const string url)
 {
-   return IsLoopbackCollectorUrl(url, "/v2/telemetry");
+   return IsLoopbackCollectorUrl(url, "/api/trading-events");
 }
 
 

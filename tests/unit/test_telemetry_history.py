@@ -161,7 +161,7 @@ class TelemetryHistoryHttpTest(unittest.TestCase):
     def test_history_reconciliation_over_http_and_safe_health(self) -> None:
         for sequence in (1, 2):
             request = urllib.request.Request(
-                f"{self.base_url}/v1/telemetry",
+                f"{self.base_url}/api/account-state",
                 data=encoded(history_message(sequence)),
                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
             )

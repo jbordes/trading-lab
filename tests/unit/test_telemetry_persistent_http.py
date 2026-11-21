@@ -16,10 +16,11 @@ from unittest.mock import patch
 from test_mt5_telemetry import TOKEN, encoded, snapshot_message
 from test_telemetry_history import history_message
 
+from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.contract import parse_envelope
 from tradinglab.telemetry.ingest import create_telemetry_server
 from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
-from tradinglab.telemetry.sqlite_store import create_database, open_registry
+from tradinglab.telemetry.sqlite_store import open_registry
 
 SOURCE = "demo-terminal-01"
 
@@ -29,22 +30,26 @@ class PersistentHttpTest(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/docs", timeout=3) as response:
             page = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("/v1/telemetry", page)
+            self.assertIn("/api/account-state", page)
             self.assertNotIn(TOKEN, page)
             self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         status, catalog = self.request("/docs.json", token="invalid")
         self.assertEqual(status, 200)
-        self.assertTrue(any(row["path"] == "/v1/snapshot" for row in catalog["routes"]))
-        self.assertEqual(self.request("/v1/snapshot?source_id=demo", token="invalid")[0], 401)
+        self.assertTrue(any(row["path"] == "/api/accounts/snapshot" for row in catalog["routes"]))
+        self.assertEqual(
+            self.request("/api/accounts/snapshot?source_id=demo", token="invalid")[0], 401
+        )
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.database = Path(temporary.name) / "receiver.sqlite3"
-        create_database(self.database)
+        create_central_database(self.database)
         now = datetime(2026, 10, 20, 12, tzinfo=UTC)
         with open_registry(self.database) as registry:
-            registry.register_account("a", "Demo", "DEMO-SERVER", "USD", created_at=now)
+            registry.register_account(
+                "a", "Demo", "DEMO-SERVER", "USD", login_masked="****1234", created_at=now
+            )
             registry.register_source(SOURCE, "a", created_at=now)
         self.start_receiver()
         self.addCleanup(self.stop_receiver)
@@ -86,15 +91,15 @@ class PersistentHttpTest(unittest.TestCase):
             return response.status, json.loads(response.read())
 
     def test_recovery_retry_and_health_after_restart(self) -> None:
-        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 202)
-        before = self.request(f"/v1/snapshot?source_id={SOURCE}")
+        self.assertEqual(self.request("/api/account-state", message=snapshot_message())[0], 202)
+        before = self.request(f"/api/accounts/snapshot?source_id={SOURCE}")
         self.assertEqual(before[1]["sequence"], 1)
         self.stop_receiver()
         self.start_receiver()
-        self.assertEqual(self.request(f"/v1/snapshot?source_id={SOURCE}"), before)
+        self.assertEqual(self.request(f"/api/accounts/snapshot?source_id={SOURCE}"), before)
         health = self.request("/health")[1]
         self.assertEqual((health["storage"], health["accepted"]), ("sqlite", 0))
-        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 200)
+        self.assertEqual(self.request("/api/account-state", message=snapshot_message())[0], 200)
         with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(
                 connection.execute("SELECT count(*) FROM telemetry_messages").fetchone()[0], 1
@@ -102,18 +107,20 @@ class PersistentHttpTest(unittest.TestCase):
 
     def test_source_binding_auth_and_conflict(self) -> None:
         self.assertEqual(
-            self.request("/v1/telemetry", message=snapshot_message(), token="x")[0], 401
+            self.request("/api/account-state", message=snapshot_message(), token="x")[0], 401
         )
         self.assertEqual(
-            self.request("/v1/telemetry", message=snapshot_message(source_id="other"))[0], 403
+            self.request("/api/account-state", message=snapshot_message(source_id="other"))[0], 403
         )
-        self.assertEqual(self.request("/v1/snapshot?source_id=other")[0], 404)
-        self.assertEqual(self.request("/v1/telemetry", message=snapshot_message())[0], 202)
+        self.assertEqual(self.request("/api/accounts/snapshot?source_id=other")[0], 404)
+        self.assertEqual(self.request("/api/account-state", message=snapshot_message())[0], 202)
         changed = snapshot_message()
         changed["payload"]["account"]["balance"] = 2.0
-        self.assertEqual(self.request("/v1/telemetry", message=changed)[0], 409)
+        self.assertEqual(self.request("/api/account-state", message=changed)[0], 409)
         self.assertEqual(
-            self.request(f"/v1/snapshot?source_id={SOURCE}")[1]["payload"]["account"]["balance"],
+            self.request(f"/api/accounts/snapshot?source_id={SOURCE}")[1]["payload"]["account"][
+                "balance"
+            ],
             100000.0,
         )
 
@@ -124,9 +131,11 @@ class PersistentHttpTest(unittest.TestCase):
             message = snapshot_message(sequence=sequence)
             message["captured_at"] = f"2026-10-20T10:{minute:02d}:00Z"
             message["payload"]["account"].update(balance=balance, equity=balance - 50)
-            self.assertEqual(self.request("/v1/telemetry", message=message)[0], 202)
+            self.assertEqual(self.request("/api/account-state", message=message)[0], 202)
         start = int(datetime(2026, 10, 20, 10, tzinfo=UTC).timestamp() * 1000)
-        route = f"/v1/account-history?source_id={SOURCE}&from_msc={start}&to_msc={start + 3600000}"
+        route = (
+            f"/api/accounts/history?source_id={SOURCE}&from_msc={start}&to_msc={start + 3600000}"
+        )
         status, result = self.request(route)
         self.assertEqual(status, 200)
         self.assertEqual([p["balance"] for p in result["points"]], [100000, 100010, 99990])
@@ -150,15 +159,16 @@ class PersistentHttpTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(
                 pool.map(
-                    lambda _: self.request("/v1/telemetry", message=snapshot_message())[0], range(2)
+                    lambda _: self.request("/api/account-state", message=snapshot_message())[0],
+                    range(2),
                 )
             )
         self.assertEqual(sorted(responses), [200, 202])
         self.assertEqual(
-            self.request("/v1/telemetry", message=snapshot_message(sequence=3))[0], 202
+            self.request("/api/account-state", message=snapshot_message(sequence=3))[0], 202
         )
         self.assertEqual(
-            self.request("/v1/telemetry", message=snapshot_message(sequence=2))[0], 409
+            self.request("/api/account-state", message=snapshot_message(sequence=2))[0], 409
         )
         self.assertEqual(self.request("/health")[1]["missing_sequences"], 1)
 
@@ -204,9 +214,9 @@ class PersistentHttpTest(unittest.TestCase):
         prototype = message["payload"]["history"]["deals"][0]
         deals = [dict(prototype, ticket=str(ticket), time_msc="999001") for ticket in range(1, 4)]
         message["payload"]["history"].update(deals=deals, total=3)
-        self.assertEqual(self.request("/v1/telemetry", message=message)[0], 202)
+        self.assertEqual(self.request("/api/account-state", message=message)[0], 202)
 
-        route = f"/v1/deals?source_id={SOURCE}&from_msc=999000&to_msc=1000000&limit=2"
+        route = f"/api/accounts/deals?source_id={SOURCE}&from_msc=999000&to_msc=1000000&limit=2"
         status, first = self.request(route)
         self.assertEqual(status, 200)
         self.assertEqual([deal["ticket"] for deal in first["deals"]], ["3", "2"])
@@ -221,11 +231,13 @@ class PersistentHttpTest(unittest.TestCase):
         self.assertEqual(self.request(route, token="x")[0], 401)
 
     def test_deal_history_rejects_invalid_or_unauthorized_queries(self) -> None:
-        base = f"/v1/deals?source_id={SOURCE}&from_msc=1&to_msc=2"
+        base = f"/api/accounts/deals?source_id={SOURCE}&from_msc=1&to_msc=2"
         self.assertEqual(self.request(base + "&limit=0")[0], 400)
         self.assertEqual(self.request(base + "&magic_number=01")[0], 400)
         self.assertEqual(self.request(base + "&cursor=invalid")[0], 400)
-        self.assertEqual(self.request("/v1/deals?source_id=other&from_msc=1&to_msc=2")[0], 404)
+        self.assertEqual(
+            self.request("/api/accounts/deals?source_id=other&from_msc=1&to_msc=2")[0], 404
+        )
 
 
 if __name__ == "__main__":

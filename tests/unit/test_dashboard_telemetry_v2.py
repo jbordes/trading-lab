@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from storage_fixtures import TradingTestPlan
+
 from tradinglab.dashboard.telemetry_v2 import LoopbackV2HistoryClient, V2HistoryProvider
 from tradinglab.metrics.position_cycles import CycleExclusion
 from tradinglab.telemetry.admission_v2 import ProducerIdentity
 from tradinglab.telemetry.ingest_v2 import create_v2_telemetry_server
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
-from tradinglab.telemetry.provisioning_v2 import V2ProvisionPlan
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "telemetry_v2"
 LIVE_AUTHORIZATION = "synthetic-live-authorization-safe-length"
@@ -26,7 +27,7 @@ class DashboardTelemetryV2Test(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        database = V2ProvisionPlan(
+        database = TradingTestPlan(
             Path(temporary.name),
             "pilot.sqlite3",
             "account-demo",

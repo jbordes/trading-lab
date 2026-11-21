@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from test_mt5_telemetry import encoded, snapshot_message
 
+from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.contract import TelemetryValidationError, parse_envelope
 from tradinglab.telemetry.persisted_view import PersistedSnapshotView
 from tradinglab.telemetry.sqlite_store import (
@@ -21,7 +22,6 @@ from tradinglab.telemetry.sqlite_store import (
     MessageConflictError,
     TelemetryRegistry,
     TelemetryStorageError,
-    create_database,
     open_registry,
 )
 
@@ -44,12 +44,19 @@ class StoredMessagesTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "messages.sqlite3"
-        create_database(self.path)
+        create_central_database(self.path)
         self.now = datetime(2026, 10, 20, 12, tzinfo=UTC)
         with open_registry(self.path) as registry:
-            registry.register_account("a", "Demo", "DEMO-SERVER", "USD", created_at=self.now)
             for source in ("demo-terminal-01", "other-source"):
-                registry.register_source(source, "a", created_at=self.now)
+                registry.register_account(
+                    source,
+                    "Demo",
+                    "DEMO-SERVER",
+                    "USD",
+                    login_masked="****1234",
+                    created_at=self.now,
+                )
+                registry.register_source(source, source, created_at=self.now)
 
     def rows(self) -> list[tuple]:
         with closing(sqlite3.connect(self.path)) as connection:

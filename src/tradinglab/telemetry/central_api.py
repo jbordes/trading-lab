@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hmac
-from contextlib import ExitStack, asynccontextmanager
+import sqlite3
+from contextlib import ExitStack, asynccontextmanager, closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
@@ -26,6 +27,7 @@ from tradinglab.telemetry.admission_v2 import (
     V2ConflictError,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import validate_central_schema
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryValidationError, parse_envelope
 from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 from tradinglab.telemetry.http_contracts_v2 import (
@@ -44,27 +46,32 @@ from tradinglab.telemetry.sqlite_store import (
 )
 from tradinglab.telemetry.sqlite_store_v2 import V2StorageError
 
-_V1_PRODUCER = HTTPBearer(auto_error=False, scheme_name="V1Producer")
-_V2_PRODUCER = HTTPBearer(auto_error=False, scheme_name="V2Producer")
-_V1_READER = HTTPBearer(auto_error=False, scheme_name="V1Read")
-_V2_READER = HTTPBearer(auto_error=False, scheme_name="V2Read")
+_SNAPSHOT_PRODUCER = HTTPBearer(auto_error=False, scheme_name="AccountStateProducer")
+_EVENTS_PRODUCER = HTTPBearer(auto_error=False, scheme_name="TradingEventsProducer")
+_ACCOUNT_READER = HTTPBearer(auto_error=False, scheme_name="AccountRead")
+_TRADING_READER = HTTPBearer(auto_error=False, scheme_name="TradingRead")
 
 
 @dataclass(frozen=True)
 class CentralSettings:
-    v1_database: Path
-    v2_database: Path
+    database: Path
     source_id: str
     account_id: str
-    v1_ingest: str = field(repr=False)
-    v1_read: str = field(repr=False)
-    v2_live: str = field(repr=False)
-    v2_activity: str = field(repr=False)
-    v2_read: str = field(repr=False)
+    snapshot_ingest: str = field(repr=False)
+    account_read: str = field(repr=False)
+    live_ingest: str = field(repr=False)
+    activity_ingest: str = field(repr=False)
+    trading_read: str = field(repr=False)
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
 
     def __post_init__(self) -> None:
-        keys = (self.v1_ingest, self.v1_read, self.v2_live, self.v2_activity, self.v2_read)
+        keys = (
+            self.snapshot_ingest,
+            self.account_read,
+            self.live_ingest,
+            self.activity_ingest,
+            self.trading_read,
+        )
         if any(
             not isinstance(key, str)
             or not 24 <= len(key) <= 256
@@ -83,8 +90,8 @@ class CentralSettings:
 
 @dataclass(frozen=True)
 class CentralServices:
-    v1: PersistentTelemetryReceiver
-    v2: PersistentV2TelemetryReceiver
+    account_state: PersistentTelemetryReceiver
+    trading_events: PersistentV2TelemetryReceiver
 
 
 def _single_query(request: Request, allowed: set[str]) -> None:
@@ -96,14 +103,23 @@ def _single_query(request: Request, allowed: set[str]) -> None:
 def create_central_app(settings: CentralSettings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        database = settings.database.resolve(strict=True)
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as registry:
+            validate_central_schema(registry)
+            source = registry.execute(
+                "SELECT account_id, role FROM sources WHERE source_id = ?",
+                (settings.source_id,),
+            ).fetchone()
+            if source != (settings.account_id, "snapshot"):
+                raise ValueError("La fuente de telemetría no corresponde a la cuenta central")
         with ExitStack() as stack:
-            v1 = PersistentTelemetryReceiver(settings.v1_database, source_id=settings.source_id)
+            v1 = PersistentTelemetryReceiver(settings.database, source_id=settings.source_id)
             stack.callback(v1.close)
             v2 = PersistentV2TelemetryReceiver(
-                settings.v2_database,
+                settings.database,
                 account_id=settings.account_id,
-                live_authorization=settings.v2_live,
-                activity_authorization=settings.v2_activity,
+                live_authorization=settings.live_ingest,
+                activity_authorization=settings.activity_ingest,
             )
             stack.callback(v2.close)
             app.state.services = CentralServices(v1, v2)
@@ -114,7 +130,7 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
 
     app = FastAPI(
         title="TradingLab Central API",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
         swagger_ui_parameters={"persistAuthorization": False, "validatorUrl": None},
         description="API optativa con SQLite durable. Captura UTC y tiempos MT5 se conservan por separado.",
@@ -136,17 +152,17 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
             raise HTTPException(401, "unauthorized")
         return values[0]
 
-    def read1(
+    def account_read(
         request: Request,
-        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_V1_READER)],
+        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_ACCOUNT_READER)],
     ) -> None:
-        authorize(request, (settings.v1_read,))
+        authorize(request, (settings.account_read,))
 
-    def read2(
+    def trading_read(
         request: Request,
-        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_V2_READER)],
+        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_TRADING_READER)],
     ) -> None:
-        authorize(request, (settings.v2_read,))
+        authorize(request, (settings.trading_read,))
 
     @app.middleware("http")
     async def safe_headers(request: Request, call_next):
@@ -252,56 +268,58 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         }
 
     @app.post(
-        "/v1/telemetry",
+        "/api/account-state",
         tags=["Ingesta"],
         status_code=202,
-        response_model=m.AckV1,
-        responses={**errors, 200: {"model": m.AckV1}},
-        openapi_extra=request_schema(m.V1_REQUEST, m.EXAMPLE_V1),
+        response_model=m.AccountStateAck,
+        responses={**errors, 200: {"model": m.AccountStateAck}},
+        openapi_extra=request_schema(m.ACCOUNT_STATE_REQUEST, m.EXAMPLE_ACCOUNT_STATE),
     )
-    async def ingest1(
+    async def ingest_account_state(
         request: Request,
         response: Response,
-        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_V1_PRODUCER)],
+        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_SNAPSHOT_PRODUCER)],
     ):
-        authorize(request, (settings.v1_ingest,))
+        authorize(request, (settings.snapshot_ingest,))
         if request.query_params:
             raise HTTPException(400, "invalid_query")
         raw = await body(request)
         envelope = parse_envelope(raw)
         try:
-            m.V1_REQUEST.validate_python(envelope.as_dict())
+            m.ACCOUNT_STATE_REQUEST.validate_python(envelope.as_dict())
         except ValidationError:
             raise HTTPException(400, "invalid_message") from None
-        result = await anyio.to_thread.run_sync(services(request).v1.accept, envelope)
+        result = await anyio.to_thread.run_sync(services(request).account_state.accept, envelope)
         response.status_code = 200 if result.status == "duplicate" else 202
-        return m.AckV1(status=result.status, sequence_gap=result.sequence_gap)
+        return m.AccountStateAck(status=result.status, sequence_gap=result.sequence_gap)
 
     @app.post(
-        "/v2/telemetry",
+        "/api/trading-events",
         tags=["Ingesta"],
         status_code=202,
-        response_model=m.AckV2,
-        responses={**errors, 200: {"model": m.AckV2}},
-        openapi_extra=request_schema(m.V2_REQUEST, m.EXAMPLE_V2),
+        response_model=m.TradingEventsAck,
+        responses={**errors, 200: {"model": m.TradingEventsAck}},
+        openapi_extra=request_schema(m.TRADING_EVENTS_REQUEST, m.EXAMPLE_TRADING_EVENTS),
     )
-    async def ingest2(
+    async def ingest_trading_events(
         request: Request,
         response: Response,
-        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_V2_PRODUCER)],
+        credential: Annotated[HTTPAuthorizationCredentials | None, Depends(_EVENTS_PRODUCER)],
     ):
-        authorization = authorize(request, (settings.v2_live, settings.v2_activity))
+        authorization = authorize(request, (settings.live_ingest, settings.activity_ingest))
         if request.query_params:
             raise HTTPException(400, "invalid_query")
         raw = await body(request)
         envelope = parse_envelope_v2(raw)
         try:
-            m.V2_REQUEST.validate_python(envelope.as_dict())
+            m.TRADING_EVENTS_REQUEST.validate_python(envelope.as_dict())
         except ValidationError:
             raise HTTPException(400, "invalid_message") from None
-        result = await anyio.to_thread.run_sync(services(request).v2.accept, raw, authorization)
+        result = await anyio.to_thread.run_sync(
+            services(request).trading_events.accept, raw, authorization
+        )
         response.status_code = 200 if result.disposition.value == "duplicate" else 202
-        return m.AckV2(
+        return m.TradingEventsAck(
             status=result.disposition.value,
             sequence_gap=result.sequence_gap,
             out_of_order=result.out_of_order,
@@ -310,34 +328,38 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
     @app.get("/health", response_model=m.Health, tags=["Operación"], responses=errors)
     def health(request: Request):
         current = services(request)
-        current.v1.state(include_latest=False)
-        current.v2.state()
-        return m.Health(status="ready", storage="sqlite", services={"v1": "ready", "v2": "ready"})
+        current.account_state.state(include_latest=False)
+        current.trading_events.state()
+        return m.Health(
+            status="ready",
+            storage="sqlite",
+            services={"account_state": "ready", "trading_events": "ready"},
+        )
 
     @app.get(
-        "/v1/health",
-        response_model=m.V1Health,
-        dependencies=[Depends(read1)],
-        tags=["Lecturas v1"],
+        "/api/accounts/health",
+        response_model=m.AccountStateHealth,
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
         responses=errors,
     )
-    def v1_health(request: Request):
+    def account_health(request: Request):
         if request.query_params:
             raise HTTPException(400, "invalid_query")
-        return services(request).v1.state(include_latest=False)
+        return services(request).account_state.state(include_latest=False)
 
     @app.get(
-        "/v1/snapshot",
-        response_model=m.V1Snapshot,
+        "/api/accounts/snapshot",
+        response_model=m.AccountStateSnapshot,
         response_model_exclude_unset=True,
-        dependencies=[Depends(read1)],
-        tags=["Lecturas v1"],
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
         responses={**errors, 404: {"model": m.ApiError}},
     )
     def snapshot(request: Request, source_id: str):
         try:
             _single_query(request, {"source_id"})
-            result = services(request).v1.latest_account_snapshot(source_id)
+            result = services(request).account_state.latest_account_snapshot(source_id)
         except ValueError:
             raise HTTPException(400, "invalid_source") from None
         if result is None:
@@ -350,10 +372,10 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         return int(value)
 
     @app.get(
-        "/v1/deals",
-        response_model=m.V1DealPage,
-        dependencies=[Depends(read1)],
-        tags=["Lecturas v1"],
+        "/api/accounts/deals",
+        response_model=m.DealPage,
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
         responses=errors,
     )
     def deals(
@@ -370,7 +392,7 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
                 request, {"source_id", "from_msc", "to_msc", "magic_number", "limit", "cursor"}
             )
             start, end = integer(from_msc), integer(to_msc)
-            page = services(request).v1.deal_history(
+            page = services(request).account_state.deal_history(
                 source_id,
                 from_msc=start,
                 to_msc=end,
@@ -391,26 +413,26 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         }
 
     @app.get(
-        "/v1/account-history",
+        "/api/accounts/history",
         response_model=m.AccountHistory,
-        dependencies=[Depends(read1)],
-        tags=["Lecturas v1"],
+        dependencies=[Depends(account_read)],
+        tags=["Estado de cuenta"],
         responses=errors,
     )
     def account_history(request: Request, source_id: str, from_msc: str, to_msc: str):
         try:
             _single_query(request, {"source_id", "from_msc", "to_msc"})
-            return services(request).v1.account_history(
+            return services(request).account_state.account_history(
                 source_id, from_msc=integer(from_msc), to_msc=integer(to_msc)
             )
         except ValueError:
             raise HTTPException(400, "invalid_history_query") from None
 
     @app.get(
-        "/v2/activity",
+        "/api/trading/activity",
         response_model=m.ActivityPage,
-        dependencies=[Depends(read2)],
-        tags=["Lecturas v2"],
+        dependencies=[Depends(trading_read)],
+        tags=["Actividad de trading"],
         responses=errors,
     )
     def activity(
@@ -424,7 +446,7 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
     ):
         try:
             query = parse_activity_query(request.url.query)
-            page, coverage = services(request).v2.activity_history(**query)
+            page, coverage = services(request).trading_events.activity_history(**query)
         except ValueError:
             raise HTTPException(400, "invalid_activity_query") from None
         return {
@@ -444,36 +466,36 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
         }
 
     @app.get(
-        "/v2/activity-progress",
+        "/api/trading/activity-progress",
         response_model=m.ProgressResponse,
-        dependencies=[Depends(read2)],
+        dependencies=[Depends(trading_read)],
         response_model_exclude_unset=True,
-        tags=["Lecturas v2"],
+        tags=["Actividad de trading"],
         responses=errors,
     )
     def progress(request: Request):
         if request.query_params:
             raise HTTPException(400, "invalid_query")
-        result = services(request).v2.activity_progress()
+        result = services(request).trading_events.activity_progress()
         return {"activity_progress": asdict(result) if result else None}
 
     @app.get(
-        "/v2/position-cycle-magics",
+        "/api/trading/position-cycle-magics",
         response_model=m.Magics,
-        dependencies=[Depends(read2)],
-        tags=["Lecturas v2"],
+        dependencies=[Depends(trading_read)],
+        tags=["Actividad de trading"],
         responses=errors,
     )
     def magics(request: Request):
         if request.query_params:
             raise HTTPException(400, "invalid_query")
-        return {"magics": list(services(request).v2.position_cycle_magics())}
+        return {"magics": list(services(request).trading_events.position_cycle_magics())}
 
     @app.get(
-        "/v2/position-cycles",
+        "/api/trading/position-cycles",
         response_model=m.CyclePage,
-        dependencies=[Depends(read2)],
-        tags=["Lecturas v2"],
+        dependencies=[Depends(trading_read)],
+        tags=["Actividad de trading"],
         responses=errors,
     )
     def cycles(
@@ -490,7 +512,7 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
     ):
         try:
             query = parse_position_cycles_query(request.url.query)
-            page = services(request).v2.position_cycles(**query)
+            page = services(request).trading_events.position_cycles(**query)
         except ValueError:
             raise HTTPException(400, "invalid_position_cycles_query") from None
         return jsonable_encoder(

@@ -74,7 +74,7 @@ class AccessProbeTests(unittest.TestCase):
 
     def test_both_codes_and_paths_reject_without_ack(self) -> None:
         for status in (401, 403):
-            for path in ("/v1/telemetry", "/v2/telemetry"):
+            for path in ("/api/account-state", "/api/trading-events"):
                 with self.subTest(status=status, path=path):
                     code, body = self.request(status, path, b"synthetic-not-even-json")
                     self.assertEqual(code, status)
@@ -84,7 +84,7 @@ class AccessProbeTests(unittest.TestCase):
         self.assertEqual(self.request(401, "/other", b"x")[0], 404)
 
     def test_empty_body_is_not_reported_as_access_rejection(self) -> None:
-        self.assertEqual(self.request(401, "/v1/telemetry", b"")[0], 413)
+        self.assertEqual(self.request(401, "/api/account-state", b"")[0], 413)
 
     def test_invalid_configuration(self) -> None:
         for port, status in ((-1, 401), (65536, 403), (0, 200)):

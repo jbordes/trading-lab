@@ -61,7 +61,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
     def test_source_is_read_only_loopback_v2(self) -> None:
         for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
             self.assertNotIn(pattern, self.normalized)
-        self.assertIn('"http://127.0.0.1:8777/v2/telemetry"', self.source)
+        self.assertIn('"http://127.0.0.1:8777/api/trading-events"', self.source)
         self.assertIn("ACCOUNT_TRADE_MODE_DEMO", self.common)
         self.assertIn("login == expected_login && server == expected_server", self.common)
         self.assertIn("HistorySelect(", self.source)
@@ -125,7 +125,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("Sleep(", self.source)
 
     def test_recent_capture_and_deep_recovery_have_independent_durable_cursors(self) -> None:
-        self.assertIn('COLLECTOR_VERSION = "activity-0.7.1"', self.source)
+        self.assertIn('COLLECTOR_VERSION = "activity-0.8.0"', self.source)
         self.assertIn('recent_cursor_key = StringFormat("TL2.ACT.%08X.RECENT"', self.source)
         self.assertIn('recent_blocked_key = StringFormat("TL2.ACT.%08X.RBLOCK"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]

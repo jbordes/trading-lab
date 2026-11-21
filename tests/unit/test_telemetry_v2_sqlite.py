@@ -17,21 +17,17 @@ from tradinglab.telemetry.admission_v2 import (
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
+    TradingEventsProducerDirectory,
     V2AuthorizationError,
     V2ConflictError,
-    V2ProducerDirectory,
     V2StaleSequenceError,
 )
+from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, create_central_database
 from tradinglab.telemetry.composition_v2 import compose_account
-from tradinglab.telemetry.sqlite_store import create_database
 from tradinglab.telemetry.sqlite_store_v2 import (
-    DATABASE_SCHEMA_VERSION,
     V2RegistrationConflictError,
     V2StorageError,
     V2TelemetryRegistry,
-    create_v2_database,
-    migrate_v2_database_v3_to_v4,
-    migrate_v2_database_v4_to_v5,
     open_v2_registry,
 )
 
@@ -70,8 +66,8 @@ def body(
     return json.dumps(value).encode()
 
 
-def directory() -> V2ProducerDirectory:
-    return V2ProducerDirectory(
+def directory() -> TradingEventsProducerDirectory:
+    return TradingEventsProducerDirectory(
         (
             ProducerRegistration(
                 "account-demo",
@@ -162,7 +158,7 @@ class V2SqliteTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "telemetry-v2.sqlite3"
         self.now = datetime(2026, 10, 22, 8, 30, tzinfo=UTC)
-        create_v2_database(self.path)
+        create_central_database(self.path)
         with open_v2_registry(self.path) as registry:
             registry.register_account("account-demo", "Demo", IDENTITY, created_at=self.now)
             registry.register_source(
@@ -223,7 +219,7 @@ class V2SqliteTest(unittest.TestCase):
                     "activity_batch",
                     captured,
                     captured,
-                    "mt5-telemetry-v2",
+                    "mt5-trading-events-v1",
                     "synthetic-fixture",
                     "{}",
                     "0" * 64,
@@ -266,20 +262,19 @@ class V2SqliteTest(unittest.TestCase):
             connection.commit()
         return start_msc, start_msc + count * step_msc
 
-    def test_schema_is_isolated_exact_and_never_replaces_files(self) -> None:
+    def test_schema_is_shared_exact_and_never_replaces_files(self) -> None:
         with closing(sqlite3.connect(self.path)) as connection:
             self.assertEqual(
                 connection.execute("PRAGMA user_version").fetchone()[0],
-                DATABASE_SCHEMA_VERSION,
+                CENTRAL_SCHEMA_VERSION,
             )
         with self.assertRaises(FileExistsError):
-            create_v2_database(self.path)
+            create_central_database(self.path)
 
         other = self.path.with_name("v1.sqlite3")
-        create_database(other)
-        with self.assertRaises(V2StorageError):
-            with open_v2_registry(other):
-                pass
+        create_central_database(other)
+        with open_v2_registry(other):
+            pass
 
     def test_multi_year_cycles_are_complete_paginated_and_indexed(self) -> None:
         start_msc, to_msc = self.insert_synthetic_cycles(2500)
@@ -435,7 +430,7 @@ class V2SqliteTest(unittest.TestCase):
         for after_commit in (False, True):
             with self.subTest(after_commit=after_commit):
                 path = self.path.with_name(f"commit-{after_commit}.sqlite3")
-                create_v2_database(path)
+                create_central_database(path)
                 with open_v2_registry(path) as registry:
                     registry.register_account("account-demo", "Demo", IDENTITY, created_at=self.now)
                     registry.register_source(
@@ -755,61 +750,6 @@ class V2SqliteTest(unittest.TestCase):
                 ],
                 1,
             )
-
-    def test_v3_migration_creates_verified_backup_and_backfills_cycles(self) -> None:
-        with open_v2_registry(self.path) as registry:
-            registry.store_authorized(
-                authorized("activity-position-reconcile"), received_at=self.now
-            )
-        with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("DROP INDEX position_cycle_observations_query")
-            connection.execute("DROP TABLE position_cycle_observations")
-            connection.execute("PRAGMA user_version = 3")
-
-        backup = self.path.with_name("telemetry-v2-before-v4.sqlite3")
-        self.assertEqual(migrate_v2_database_v3_to_v4(self.path, backup), 1)
-
-        with closing(sqlite3.connect(backup)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
-            self.assertIsNone(
-                connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name = 'position_cycle_observations'"
-                ).fetchone()
-            )
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        backup_v4 = self.path.with_name("telemetry-v2-before-v5.sqlite3")
-        migrate_v2_database_v4_to_v5(self.path, backup_v4)
-        with closing(sqlite3.connect(backup_v4)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        with open_v2_registry(self.path) as registry:
-            cycles = registry.position_cycles("account-demo")
-        self.assertEqual(len(cycles.items), 1)
-        self.assertEqual(cycles.items[0].cycle.position_id, "600000000000000001")
-
-    def test_v4_migration_adds_verified_multi_year_query_indexes(self) -> None:
-        with closing(sqlite3.connect(self.path)) as connection:
-            connection.execute("DROP INDEX position_cycle_observations_revision")
-            connection.execute("DROP INDEX position_cycle_observations_magic_query")
-            connection.execute("PRAGMA user_version = 4")
-        backup = self.path.with_name("telemetry-v2-v4-backup.sqlite3")
-
-        migrate_v2_database_v4_to_v5(self.path, backup)
-
-        with closing(sqlite3.connect(backup)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
-            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
-        with open_v2_registry(self.path) as registry:
-            self.assertEqual(registry.position_cycles("account-demo").items, ())
-        with closing(sqlite3.connect(self.path)) as connection:
-            indexes = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'index'"
-                ).fetchall()
-            }
-        self.assertIn("position_cycle_observations_revision", indexes)
-        self.assertIn("position_cycle_observations_magic_query", indexes)
 
     def test_position_cycles_use_stable_keyset_pagination(self) -> None:
         second = fixture("activity-position-reconcile")

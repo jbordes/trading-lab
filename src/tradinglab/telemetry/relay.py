@@ -15,9 +15,9 @@ from tradinglab.telemetry.admission_v2 import (
     ProducerIdentity,
     ProducerRegistration,
     ProducerRole,
+    TradingEventsProducerDirectory,
     V2AuthenticationError,
     V2AuthorizationError,
-    V2ProducerDirectory,
 )
 from tradinglab.telemetry.contract import parse_envelope
 from tradinglab.telemetry.relay_delivery import (
@@ -30,7 +30,7 @@ from tradinglab.telemetry.relay_queue import RelayQueue
 
 @dataclass(frozen=True)
 class RelayProducer:
-    version: str
+    contract: str
     source_id: str
     account_id: str
     role: ProducerRole
@@ -40,8 +40,8 @@ class RelayProducer:
     central_token: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        if self.version not in {"v1", "v2"}:
-            raise ValueError("Versión de relay no admitida")
+        if self.contract not in {"account-state", "trading-events"}:
+            raise ValueError("Contrato de relay no admitido")
         # Reuse strict source/account/role and credential validation.
         ProducerRegistration(
             self.account_id, self.source_id, self.role, self.identity, self.local_token
@@ -51,8 +51,13 @@ class RelayProducer:
         )
         if self.local_token == self.central_token:
             raise ValueError("El token central debe ser distinto del token local")
-        if self.version == "v1" and self.role != ProducerRole.LIVE:
-            raise ValueError("V1 requiere rol live")
+        allowed_roles = (
+            (ProducerRole.SNAPSHOT,)
+            if self.contract == "account-state"
+            else (ProducerRole.LIVE, ProducerRole.ACTIVITY)
+        )
+        if self.role not in allowed_roles:
+            raise ValueError("Rol incompatible con el contrato del productor")
         target = urlsplit(self.target)
         if (
             target.scheme not in {"http", "https"}
@@ -61,7 +66,7 @@ class RelayProducer:
             or target.password is not None
             or target.query
             or target.fragment
-            or target.path != f"/{self.version}/telemetry"
+            or target.path != f"/api/{self.contract}"
             or (target.scheme == "http" and target.hostname != "127.0.0.1")
         ):
             raise ValueError("Use HTTPS, o HTTP con 127.0.0.1 para pruebas")
@@ -70,7 +75,7 @@ class RelayProducer:
 
     @property
     def stream(self) -> str:
-        return f"{self.version}:{self.source_id}"
+        return f"{self.contract}:{self.source_id}"
 
 
 class RelayIngress:
@@ -84,6 +89,7 @@ class RelayIngress:
             raise ValueError("Las credenciales deben ser distintas por productor y frontera")
         self.queue = queue
         self.producers = producers
+        queue.validate_streams(tuple(producer.stream for producer in producers))
         for producer in producers:
             queue.bind(
                 producer.stream,
@@ -99,7 +105,7 @@ class RelayIngress:
             )
 
     def accept(
-        self, version: str, body: bytes, authorization: str, *, now: float
+        self, contract: str, body: bytes, authorization: str, *, now: float
     ) -> tuple[bool, int, bool]:
         if not authorization.isascii():
             raise V2AuthenticationError("Credencial inválida")
@@ -109,12 +115,12 @@ class RelayIngress:
                 producer = candidate
         if producer is None:
             raise V2AuthenticationError("Credencial inválida")
-        if producer.version != version:
+        if producer.contract != contract:
             raise V2AuthorizationError(
-                "Versión no autorizada", reason=AuthorizationRejection.VERSION
+                "Contrato no autorizado", reason=AuthorizationRejection.CONTRACT
             )
-        if version == "v2":
-            directory = V2ProducerDirectory(
+        if contract == "trading-events":
+            directory = TradingEventsProducerDirectory(
                 (
                     ProducerRegistration(
                         producer.account_id,
@@ -182,7 +188,7 @@ class RelayForwarder:
                     )
                     continue
                 try:
-                    validate_central_ack(status, content_type, body, version=producer.version)
+                    validate_central_ack(status, content_type, body, contract=producer.contract)
                 except ValueError, UnicodeDecodeError, RecursionError:
                     self._queue.finish(message, acked=False, error="invalid_ack")
                 else:

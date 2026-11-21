@@ -36,92 +36,31 @@ def utc_offset_minutes(value: str) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument(
-        "--demo", action="store_true", help="Usa datos sintéticos sin conectar MT5."
-    )
-    source.add_argument(
-        "--telemetry",
-        action="store_true",
-        help="Lee el receptor push local del collector MQL5.",
-    )
-    source.add_argument(
-        "--central-api-port", type=port, help="Lee v1/v2 desde una única API central loopback."
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--demo", action="store_true", help="Datos sintéticos sin conectar MT5.")
+    mode.add_argument("--central-api-port", type=port, help="Puerto de la API central loopback.")
+    parser.add_argument("--snapshot-source", help="SourceId del collector de estado.")
+    parser.add_argument("--activity-source", help="SourceId del collector de actividad.")
+    parser.add_argument(
+        "--secrets-file", type=Path, help="Credenciales privadas de lectura central."
     )
     parser.add_argument(
-        "--secrets-file", type=Path, help="Archivo .env.central; solo con --central-api-port."
+        "--dashboard-secrets-file", type=Path, help="Credencial privada del dashboard."
     )
-    parser.add_argument(
-        "--dashboard-secrets-file",
-        type=Path,
-        help="Archivo privado con TRADINGLAB_DASHBOARD_TOKEN.",
-    )
-    parser.add_argument("--interval", type=interval, default=5.0, help="Segundos entre lecturas.")
-    parser.add_argument("--port", type=port, default=8765, help="Puerto local.")
-    parser.add_argument(
-        "--broker-utc-offset-minutes",
-        type=utc_offset_minutes,
-        help="Offset UTC explícito del reloj del broker (por ejemplo, 120 para UTC+02:00).",
-    )
-    parser.add_argument(
-        "--telemetry-port", type=port, default=8766, help="Puerto local del receptor push."
-    )
-    parser.add_argument(
-        "--telemetry-source",
-        help="SourceId no sensible configurado en el colector MQL5.",
-    )
-    parser.add_argument(
-        "--telemetry-max-age",
-        type=interval,
-        default=30.0,
-        help="Segundos máximos sin una nueva muestra antes de degradar la vista.",
-    )
-    parser.add_argument(
-        "--telemetry-capture-interval",
-        type=interval,
-        default=20.0,
-        help="Cadencia esperada del collector MQL5, independiente del refresco del dashboard.",
-    )
-    parser.add_argument(
-        "--history-v2",
-        action="store_true",
-        help="Lee deals recuperados desde el receptor v2 en lugar del historial v1.",
-    )
-    parser.add_argument(
-        "--history-v2-port",
-        type=port,
-        default=8777,
-        help="Puerto local del receptor v2.",
-    )
-    parser.add_argument(
-        "--history-v2-source",
-        help="SourceId de actividad provisionado en el receptor v2.",
-    )
+    parser.add_argument("--interval", type=interval, default=5.0)
+    parser.add_argument("--port", type=port, default=8765)
+    parser.add_argument("--broker-utc-offset-minutes", type=utc_offset_minutes)
+    parser.add_argument("--snapshot-max-age", type=interval, default=30.0)
+    parser.add_argument("--capture-interval", type=interval, default=20.0)
     args = parser.parse_args(argv)
-    if args.central_api_port is not None:
-        args.telemetry = True
-        args.history_v2 = True
-        args.telemetry_port = args.central_api_port
-        args.history_v2_port = args.central_api_port
-    elif args.secrets_file is not None:
-        parser.error("--secrets-file requiere --central-api-port")
-    if args.telemetry and not args.telemetry_source:
-        parser.error("--telemetry requiere --telemetry-source")
-    if args.demo and args.telemetry_source:
-        parser.error("--telemetry-source solo se admite con --telemetry")
-    if args.history_v2 and not args.telemetry:
-        parser.error("--history-v2 requiere --telemetry")
-    if args.history_v2 and not args.history_v2_source:
-        parser.error("--history-v2 requiere --history-v2-source")
-    if args.history_v2_source and not args.history_v2:
-        parser.error("--history-v2-source requiere --history-v2")
-    if args.port == args.telemetry_port and args.telemetry:
-        parser.error("dashboard y backend requieren puertos distintos")
-    if args.history_v2 and (
-        args.history_v2_port == args.port
-        or (args.history_v2_port == args.telemetry_port and args.central_api_port is None)
-    ):
-        parser.error("dashboard, receptor v1 y receptor v2 requieren puertos distintos")
+    args.telemetry = args.central_api_port is not None
+    if args.telemetry:
+        if not args.snapshot_source or not args.activity_source:
+            parser.error("La API central requiere --snapshot-source y --activity-source")
+        if args.port == args.central_api_port:
+            parser.error("Dashboard y API requieren puertos distintos")
+    elif args.snapshot_source or args.activity_source or args.secrets_file:
+        parser.error("Las fuentes y credenciales centrales requieren --central-api-port")
     return args
 
 
@@ -132,12 +71,10 @@ def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None
     from tradinglab.dashboard.service import LiveDashboardService
     from tradinglab.dashboard.snapshot import DemoSnapshotSource
     from tradinglab.dashboard.telemetry import (
-        TELEMETRY_TOKEN_ENV,
         LoopbackTelemetryClient,
         TelemetrySnapshotSource,
     )
     from tradinglab.dashboard.telemetry_v2 import (
-        TELEMETRY_READ_TOKEN_ENV,
         LoopbackV2HistoryClient,
         V2HistoryProvider,
     )
@@ -151,11 +88,11 @@ def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None
             values = load_local_secrets(
                 args.secrets_file,
                 allowed_names=(
-                    "CENTRAL_V1_INGEST",
-                    "CENTRAL_V1_READ",
-                    "CENTRAL_V2_LIVE",
-                    "CENTRAL_V2_ACTIVITY",
-                    "CENTRAL_V2_READ",
+                    "CENTRAL_SNAPSHOT_INGEST",
+                    "CENTRAL_ACCOUNT_READ",
+                    "CENTRAL_LIVE_INGEST",
+                    "CENTRAL_ACTIVITY_INGEST",
+                    "CENTRAL_TRADING_READ",
                 ),
                 environment=values,
             )
@@ -190,8 +127,8 @@ def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None
     if args.demo:
         source = DemoSnapshotSource()
     elif args.telemetry:
-        assert args.telemetry_source is not None
-        read1_name = "CENTRAL_V1_READ" if args.central_api_port is not None else TELEMETRY_TOKEN_ENV
+        assert args.snapshot_source is not None
+        read1_name = "CENTRAL_ACCOUNT_READ"
         ingest = values.get(read1_name, "")
         if len(ingest) < 24:
             print(
@@ -204,38 +141,34 @@ def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None
                 "Error: los tokens de telemetría y dashboard deben ser distintos.", file=sys.stderr
             )
             return 2
-        if args.port == args.telemetry_port:
+        if args.port == args.central_api_port:
             print("Error: dashboard y receptor deben usar puertos diferentes.", file=sys.stderr)
             return 2
         try:
             source = TelemetrySnapshotSource(
                 LoopbackTelemetryClient(
                     token=ingest,
-                    source_id=args.telemetry_source,
-                    port=args.telemetry_port,
-                    central_api=args.central_api_port is not None,
+                    source_id=args.snapshot_source,
+                    port=args.central_api_port,
+                    central_api=True,
                 ),
-                source_id=args.telemetry_source,
-                max_age=timedelta(seconds=args.telemetry_max_age),
+                source_id=args.snapshot_source,
+                max_age=timedelta(seconds=args.snapshot_max_age),
             )
             history_provider = source
-            if args.history_v2:
-                read2_name = (
-                    "CENTRAL_V2_READ"
-                    if args.central_api_port is not None
-                    else TELEMETRY_READ_TOKEN_ENV
-                )
+            if args.telemetry:
+                read2_name = "CENTRAL_TRADING_READ"
                 read_authorization = values.get(read2_name, "")
                 if read_authorization in {access, ingest}:
                     raise ValueError(
-                        "La credencial de lectura v2 debe ser distinta de dashboard e ingesta v1"
+                        "La credencial de lectura de trading debe ser distinta de dashboard y lectura de cuenta"
                     )
-                assert args.history_v2_source is not None
+                assert args.activity_source is not None
                 history_provider = V2HistoryProvider(
                     LoopbackV2HistoryClient(
                         read_authorization=read_authorization,
-                        activity_source_id=args.history_v2_source,
-                        port=args.history_v2_port,
+                        activity_source_id=args.activity_source,
+                        port=args.central_api_port,
                     )
                 )
                 position_cycle_provider = history_provider
@@ -249,9 +182,7 @@ def main(argv: list[str] | None = None, *, environment: Mapping[str, str] | None
     service = LiveDashboardService(
         source,
         interval_seconds=args.interval,
-        capture_interval_seconds=args.telemetry_capture_interval
-        if args.telemetry
-        else args.interval,
+        capture_interval_seconds=args.capture_interval if args.telemetry else args.interval,
         health_provider=source if isinstance(source, TelemetrySnapshotSource) else None,
     )
     server = create_server(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,30 +21,51 @@ from tradinglab.multi_terminal import COLLECTORS, HELPER, stage_collectors
 from tradinglab.telemetry.operational_job import exclusive_job_lock
 
 
-def attach(root: Path, cfg: Settings) -> None:
+def attach(root: Path, cfg: Settings, admin: str = "") -> None:
     dest = Path(cfg.data_dir)
-    if not cfg.mt5_data_dir or not (dest / "relay.private.json").is_file():
-        raise ValueError("Prepare el relay local y seleccione la carpeta de datos MT5")
+    if not cfg.mt5_data_dir or ("relay" not in cfg.components and not cfg.remote_relay_id):
+        raise ValueError(
+            "Seleccione la carpeta MT5 y prepare el relay local o indique el ID del relay remoto"
+        )
     terminal = Path(cfg.mt5_data_dir).resolve(strict=True)
     registry = dest / "terminals.json"
     binaries = root / "collectors"
     if not binaries.is_dir():
-        binaries = root / "_storage/multicuenta/compiled"
+        binaries = root / "_storage/setup/compiled"
     with exclusive_job_lock(dest / "prepare.lock"):
         terminals = json.loads(registry.read_bytes()) if registry.exists() else {}
         path_key = os.path.normcase(str(terminal))
         record = terminals.setdefault(path_key, {"id": uuid.uuid4().hex, "files": {}})
         save_json(registry, terminals)
-        master = json.loads((dest / "relay.private.json").read_bytes())["terminal_master"]
+        roles = ("account-state", "trading-events")
+        if "relay" in cfg.components:
+            master = json.loads((dest / "relay.private.json").read_bytes())["terminal_master"]
+            tokens = {role: credential(master, record["id"], role) for role in roles}
+        else:
+            if not admin and "api" in cfg.components:
+                admin = json.loads((dest / "api.private.json").read_bytes())["admin"]
+            if not admin:
+                raise ValueError(
+                    "Ingrese la clave de administración de la API para preparar esta terminal"
+                )
+            tokens = api_request(
+                f"{cfg.api_base_url}/pair/terminal/{cfg.remote_relay_id}/{record['id']}", admin, {}
+            )
+            if not isinstance(tokens, dict) or any(
+                not isinstance(tokens.get(role), str)
+                or not re.fullmatch(record["id"] + r"\.[a-f0-9]{64}", tokens[role])
+                for role in roles
+            ):
+                raise ValueError("La API devolvió una vinculación de terminal inválida")
         with TemporaryDirectory(dir=dest) as tmp:
             presets = Path(tmp)
             for name, url, role in zip(
                 COLLECTORS,
                 (cfg.snapshot_ingest_url, cfg.activity_ingest_url),
-                ("account-state", "trading-events"),
+                roles,
                 strict=True,
             ):
-                key = credential(master, record["id"], role)
+                key = tokens[role]
                 (presets / (name + ".set")).write_bytes(
                     f"IngestUrl={url}\r\nToken={key}\r\nTerminalId={record['id']}\r\n".encode(
                         "utf-16"
@@ -69,7 +91,9 @@ def status(config: Settings) -> str:
                 note += " · último error: " + json.loads(error.read_bytes())["error"]
             lines.append(f"{role}: {note}")
             continue
-        port = urlsplit(config.snapshot_ingest_url).port if role == "relay" else config.port(role)
+        port = (
+            config.relay_port(config.snapshot_ingest_url) if role == "relay" else config.port(role)
+        )
         try:
             with request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
                 health = json.load(response)
@@ -94,6 +118,11 @@ def dispatch(root: Path, action: str, form: dict) -> dict:
     if action == "prepare":
         prepare(cfg, form.get("admin", ""), form.get("password", ""))
         instructions = ["Configuración preparada. Puede iniciar los servicios seleccionados."]
+        if "relay" in cfg.components:
+            relay_id = json.loads((dest / "relay.private.json").read_bytes())["id"]
+            instructions.append(
+                f"ID público del relay para preparar terminales remotas: {relay_id}"
+            )
         if "dashboard" in cfg.components:
             instructions.append(
                 f"Contraseña del dashboard: campo password en {dest / 'dashboard.private.json'}."
@@ -133,13 +162,19 @@ def dispatch(root: Path, action: str, form: dict) -> dict:
         raise ValueError("Primero prepare este equipo o abra su setup.json existente")
     stored = Settings.model_validate_json((dest / "setup.json").read_bytes())
     if action == "attach":
-        attach(root, stored.model_copy(update={"mt5_data_dir": cfg.mt5_data_dir}))
+        attach(
+            root,
+            stored.model_copy(
+                update={"mt5_data_dir": cfg.mt5_data_dir, "remote_relay_id": cfg.remote_relay_id}
+            ),
+            form.get("admin", ""),
+        )
         origins = [
             urlsplit(url) for url in (stored.snapshot_ingest_url, stored.activity_ingest_url)
         ]
         return {
             "message": "En MT5 permita WebRequest a "
-            + " y ".join("http://" + o.netloc for o in origins)
+            + " y ".join(o.scheme + "://" + o.netloc for o in origins)
             + ". En Navegador > Scripts > TradingLab ejecute TradingLabAttachCollectors."
         }
     roles = form["roles"]

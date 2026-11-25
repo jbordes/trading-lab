@@ -1024,3 +1024,7 @@ El contraste con TradingLab 1.0 confirma que la estructura 2.3 cubre tanto la au
 El repositorio Git ya fue inicializado y conectado con GitHub. La siguiente acción, una vez aprobada esta propuesta, será ejecutar la Fase 1 y elegir el recorte del proyecto piloto sin anticipar componentes que todavía no hayan sido validados por el flujo real.
 
 La instalación piloto y la guarda de identidad de cuenta se describen en la [ADR-0024](../adr/0024-dual-installation-account-guard.md) y en la [guía de instalación remote](../development/installation.md).
+
+## Evolución de Activity en la plataforma multicuenta
+
+La rama de desarrollo incorpora captura acotada en MT5, entrega durable en el relay y reconstrucción financiera en la base central. El [ADR-0026](../adr/0026-reconstruccion-remota-de-posiciones.md) define la atribución temporal y la [secuencia de aceptación](../development/remote-activity-roadmap.md) cubre el cambio desde el collector anterior.

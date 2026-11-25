@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Literal
@@ -49,6 +50,7 @@ class Settings(BaseModel):
     dashboard_listen_port: int | None = Field(default=None, ge=1024, le=65535)
     data_dir: str
     mt5_data_dir: str = ""
+    remote_relay_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
 
     @field_validator("snapshot_ingest_url", "activity_ingest_url")
     @classmethod
@@ -88,18 +90,38 @@ class Settings(BaseModel):
                 or (parts.scheme == "http" and parts.hostname not in ("127.0.0.1", "localhost"))
             ):
                 raise ValueError("URL de servicio inválida: " + role)
-            if role == "relay" and (
-                parts.scheme != "http" or parts.hostname != "127.0.0.1" or not parts.port
-            ):
-                raise ValueError("El collector requiere HTTP y 127.0.0.1 con puerto explícito")
+            if role == "relay":
+                if parts.scheme == "http":
+                    if (
+                        not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}" + suffix, url)
+                        or not parts.port
+                    ):
+                        raise ValueError("El relay HTTP requiere loopback y puerto explícito")
+                elif (
+                    not re.fullmatch(
+                        r"https://[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*(?::[1-9][0-9]{0,4})?" + suffix,
+                        url,
+                    )
+                    or parts.port == 0
+                    or len(parts.hostname) > 253
+                ):
+                    raise ValueError("Revise el nombre y el puerto HTTPS del relay")
+                port = self.relay_port(url)
+            else:
+                port = self.port(role)
             if role in self.components:
-                port = parts.port if role == "relay" else self.port(role)
                 if port < 1024 or port in ports:
                     raise ValueError("Revise los puertos locales de escucha y del proxy HTTPS")
                 ports.append(port)
         if len(set(self.components)) != len(self.components):
             raise ValueError("Componente duplicado")
         return self
+
+    def relay_port(self, url: str) -> int:
+        parts = urlsplit(url)
+        if parts.scheme == "https":
+            return 8776 if parts.path == "/account-state" else 8777
+        return parts.port or 80
 
     def port(self, role: str) -> int:
         if role == "api":

@@ -4,7 +4,6 @@
 #define GlobalVariableSet FakeGlobalSet
 #define GlobalVariablesFlush FakeGlobalFlush
 #define HistorySelect FakeHistorySelect
-#define HistorySelectByPosition FakePositionSelect
 #define HistoryDealsTotal FakeDealCount
 #define HistoryOrdersTotal FakeOrderCount
 #define HistoryDealGetTicket FakeDealTicket
@@ -35,7 +34,6 @@ datetime FakeUtc() { return (datetime)1793820000; }
 datetime FakeGlobalSet(const string name, const double value) { saved_cursor = value; return (datetime)1; }
 void FakeGlobalFlush() { flushes++; }
 bool FakeHistorySelect(datetime start, datetime end) { return true; }
-bool FakePositionSelect(ulong position) { return true; }
 int FakeDealCount() { return fake_deals; }
 int FakeOrderCount() { return fake_orders; }
 ulong FakeDealTicket(int index) { return (ulong)(index + 1); }
@@ -98,7 +96,6 @@ void OnStart()
    pending.from_msc = 10000;
    pending.to_msc = 20000;
    confirmed_from_msc = 10000;
-   candidate_position_count = 0;
    TrySendPending(0);
    Check(pending.body == "original-batch" && confirmed_from_msc == 10000, "403 preserves body and cursor");
    Check(capture_state == CAPTURE_READY && transport.State() == DELIVERY_ACCESS_BLOCKED, "access is not safety stop");
@@ -137,11 +134,6 @@ void OnStart()
    Check(flushes == 1, "partial page does not persist range cursor");
 
    page_scan.active = false;
-   fake_deals = 2; fake_orders = 1;
-   string position = "";
-   Check(BuildPositionReconcilePayload(9000, position) == 1, "closed position evidence built");
-   fake_deals = 201;
-   Check(BuildPositionReconcilePayload(9000, position) == 0, "oversized position is not falsely complete");
    pending.body = "encoding-failure-fixture";
    fake_status = LOCAL_ENCODING_FAILURE;
    transport.Reset();

@@ -44,18 +44,17 @@ def _keys(path: Path, factory) -> dict:
 
 def prepare(config: Settings, admin: str, password: str) -> None:
     dest = Path(config.data_dir)
+    marker = dest / "setup.version"
     if not dest.exists():
         private_directory(dest)
-        write_private(dest / "multicuenta.version", "2")
-    if (
-        dest.is_symlink()
-        or dest.is_junction()
-        or not (dest / "multicuenta.version").is_file()
-        or (dest / "multicuenta.version").read_text() != "2"
-    ):
-        raise ValueError(
-            "Elija una carpeta nueva o la carpeta privada de esta instalación multicuenta"
-        )
+        write_private(marker, "2")
+    if dest.is_symlink() or dest.is_junction():
+        raise ValueError("La carpeta de datos de TradingLab no puede ser un enlace")
+    # Accept the marker of existing SetUp installations when explicitly selected.
+    if not marker.exists():
+        marker = dest / "multicuenta.version"
+    if marker.is_symlink() or not marker.is_file() or marker.read_text() != "2":
+        raise ValueError("Elija una carpeta nueva o la carpeta privada de TradingLab SetUp")
     with exclusive_job_lock(dest / "prepare.lock"):
         prior = dest / "setup.json"
         if prior.exists() and Settings.model_validate(_read(prior)) != config:
@@ -80,7 +79,7 @@ def prepare(config: Settings, admin: str, password: str) -> None:
                     os.link(staged, db)
             with closing(sqlite3.connect(db)) as connection:
                 validate_central_schema(connection)
-                if connection.execute("PRAGMA user_version").fetchone()[0] != 9:
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in (9, 10):
                     raise ValueError("La base seleccionada pertenece a otra versión")
         for role in ("relay", "dashboard"):
             if role not in config.components:
@@ -143,7 +142,7 @@ def launch(root: Path, config: Settings, roles: list[str]) -> None:
         if running(dest, role):
             continue
         subprocess.Popen(
-            [sys.executable, str(root / "scripts/multi_setup.py"), "serve", role, str(dest)],
+            [sys.executable, str(root / "scripts/tradinglab_setup.py"), "serve", role, str(dest)],
             cwd=root,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
             start_new_session=os.name != "nt",
@@ -206,7 +205,7 @@ def run_service(config: Settings, role: str) -> None:
                 with closing(RelayQueue(dest / "relay.sqlite3")) as queue:
                     relay = MultiRelay(queue, config.api_base_url, keys)
                     ports = [
-                        urlsplit(url).port
+                        config.relay_port(url)
                         for url in (config.snapshot_ingest_url, config.activity_ingest_url)
                     ]
                     with relay_listeners(relay, ports):

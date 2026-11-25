@@ -550,7 +550,7 @@ class Mql5CollectorSafetyTest(unittest.TestCase):
         self.assertLess(timer.index("CheckPilotSafety()"), timer.index("EnqueueSnapshot("))
         send = source.split("int SendMessage(", 1)[1].split("#endif", 1)[0]
         self.assertLess(send.index("CheckPilotSafety()"), send.index("WebRequest("))
-        self.assertIn("!IsLoopbackIngestUrl(IngestUrl)", send)
+        self.assertIn("!IsCollectorIngestUrl(IngestUrl)", send)
         guard = (folder / "TradingLabObservedAccount.mqh").read_text(encoding="utf-8")
         self.assertIn("observed_identity==CurrentIdentity()", guard)
         self.assertIn("capture_state=CAPTURE_WAIT_BROKER", guard)

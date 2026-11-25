@@ -1,6 +1,14 @@
 # Construcción de la plataforma de datos remota
 
-## Próximos pasos acordados al 2026-11-09
+## Estado al 25 de noviembre de 2026
+
+[TradingLab SetUp](tradinglab-setup.md) es la vía predeterminada de instalación.
+La instalación limpia en Windows quedó estable en el recorrido local
+con captura multicuenta y esquema 10. Los pasos siguientes son la revisión del
+PR hacia la rama de integración y las [pruebas manuales pendientes](remote-activity-roadmap.md).
+El programa conserva su regla temporal de bitácora hasta preparar el PR final a main.
+
+## Plan histórico acordado el 9 de noviembre de 2026
 
 El piloto local ya fue migrado de forma supervisada al esquema 8 y recibe
 Telemetry 0.3.1 con hora del broker. El instalador independiente de mantenimiento

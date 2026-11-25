@@ -55,17 +55,44 @@ MULTI_SCHEMA = CENTRAL_SCHEMA.replace(
 )
 
 
+# Additive multicuenta projection. The central single-account schema stays at v8.
+REMOTE_ACTIVITY_DDL = (
+    """CREATE TABLE remote_position_cycles (
+        account_id TEXT NOT NULL REFERENCES accounts(account_id),
+        position_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL REFERENCES telemetry_v2_messages(message_id),
+        source_id TEXT NOT NULL REFERENCES sources(source_id),
+        captured_at_utc TEXT NOT NULL,
+        owner_magic TEXT, started_at_msc INTEGER NOT NULL, last_event_at_msc INTEGER NOT NULL,
+        cycle_json TEXT NOT NULL CHECK(json_valid(cycle_json)),
+        details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+        PRIMARY KEY(account_id, position_id)
+    ) STRICT;""",
+    """CREATE TABLE pending_position_coverage (
+        account_id TEXT NOT NULL REFERENCES accounts(account_id), position_id TEXT NOT NULL,
+        from_msc INTEGER NOT NULL, to_msc INTEGER NOT NULL,
+        PRIMARY KEY(account_id, position_id)
+    ) STRICT;""",
+    """CREATE INDEX observations_position ON activity_observations(
+        account_id, json_extract(row_json,'$.position_id'));""",
+    """CREATE INDEX observations_position_by ON activity_observations(
+        account_id, json_extract(row_json,'$.position_by_id'));""",
+)
+REMOTE_MULTI_SCHEMA = MULTI_SCHEMA.replace(
+    "PRAGMA user_version = 9;", "\n".join((*REMOTE_ACTIVITY_DDL, "PRAGMA user_version = 10;"))
+)
+
+
 def validate_central_schema(
     connection: sqlite3.Connection, *, check_integrity: bool = False
 ) -> None:
     """Verify central schema; scan all rows only during creation or backup checks."""
 
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (CENTRAL_SCHEMA_VERSION, 9):
+    schemas = {CENTRAL_SCHEMA_VERSION: CENTRAL_SCHEMA, 9: MULTI_SCHEMA, 10: REMOTE_MULTI_SCHEMA}
+    if version not in schemas:
         raise ValueError("Versión de esquema central no admitida")
-    if schema_objects(connection) != expected_schema_objects(
-        MULTI_SCHEMA if version == 9 else CENTRAL_SCHEMA
-    ):
+    if schema_objects(connection) != expected_schema_objects(schemas[version]):
         raise ValueError("El esquema no coincide con TradingLab Central")
     if check_integrity:
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
@@ -86,7 +113,7 @@ def create_central_database(path: Path, *, multicuenta: bool = False) -> None:
         connection = sqlite3.connect(path, timeout=5.0)
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
-        connection.executescript(MULTI_SCHEMA if multicuenta else CENTRAL_SCHEMA)
+        connection.executescript(REMOTE_MULTI_SCHEMA if multicuenta else CENTRAL_SCHEMA)
         if connection.execute("PRAGMA journal_mode = WAL").fetchone()[0].lower() != "wal":
             raise RuntimeError("SQLite no habilitó WAL para la base central")
         validate_central_schema(connection, check_integrity=True)

@@ -1,4 +1,5 @@
 #property strict
+#include "TradingLabRelayUrl.mqh"
 #property description "TradingLab collector setup for the multicuenta."
 
 const string Folder = "TradingLabSetup\\";
@@ -75,12 +76,7 @@ bool LoadPreset(const string name, string &body)
    string endpoint = name == Activity ? "/trading-events" : "/account-state";
    if(StringFind(values[0], "/api" + endpoint) >= 0)
       endpoint = "/api" + endpoint;
-   string origin = "http://127.0.0.1:";
-   int digits = StringLen(values[0]) - StringLen(origin) - StringLen(endpoint);
-   if(digits < 1 || digits > 5)
-      return PresetError(name, "IngestUrl incompatible");
-   long port = StringToInteger(StringSubstr(values[0], StringLen(origin), digits));
-   if(port < 1024 || port > 65535 || values[0] != origin + IntegerToString(port) + endpoint)
+   if(!IsRelayUrl(values[0], endpoint))
       return PresetError(name, "IngestUrl incompatible");
    if(StringLen(values[1]) < 24)
       return PresetError(name, "Token demasiado corto");

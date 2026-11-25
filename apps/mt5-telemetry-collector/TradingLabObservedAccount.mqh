@@ -61,7 +61,12 @@ bool SelectObservedAccount()
    string headers="Content-Type: application/json\r\nAuthorization: Bearer "+Token+"\r\n";
    string response_headers;
    ResetLastError();
-   int status=WebRequest("POST",IngestUrl+"/resolve",headers,3000,data,reply,response_headers);
+#ifdef REMOTE_ACTIVITY_PROJECTION
+   string route="/resolve-raw";
+#else
+   string route="/resolve";
+#endif
+   int status=WebRequest("POST",IngestUrl+route,headers,3000,data,reply,response_headers);
    int local_error=(status<0 ? GetLastError() : 0);
    string result=CharArrayToString(reply,0,ArraySize(reply),CP_UTF8);
    if(status!=200)
@@ -77,7 +82,7 @@ bool SelectObservedAccount()
          unknown_reported=true;
       }
       else if(status==404)
-         logger.Warn("account_lookup_failed","Revise la ruta del relay: "+IngestUrl+"/resolve",0,status,local_error);
+         logger.Warn("account_lookup_failed","Revise la ruta del relay: "+IngestUrl+route,0,status,local_error);
       else logger.Warn("account_lookup_failed","Revise el relay, la API y WebRequest",0,status,local_error);
       return false;
    }

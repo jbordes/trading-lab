@@ -14,12 +14,9 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
                 self.assertNotIn(pattern, normalized, path.name)
 
-    def test_preparation_and_reconciliation_have_bounded_work(self) -> None:
-        self.assertIn("long candidate_position_ids[200]", self.source)
-        adder = self.source.split("void AddCandidatePosition", 1)[1].split(
-            "void ContinuePosition", 1
-        )[0]
-        self.assertNotIn("ArrayResize", adder)
+    def test_preparation_has_bounded_work(self) -> None:
+        self.assertNotIn("HistorySelectByPosition", self.source)
+        self.assertNotIn("position_reconcile", self.source)
         scanner = self.source.split("string BuildPagedActivityPayload", 1)[1].split(
             "string PagedCollectionJson", 1
         )[0]
@@ -28,15 +25,10 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("page_scan.deal_index++", scanner)
         self.assertIn("page_scan.order_index++", scanner)
         self.assertNotIn("PersistValue", scanner)
-        recon = self.source.split("void ContinuePositionReconciliation", 1)[1].split(
-            "bool PersistValue", 1
-        )[0]
-        self.assertIn("processed++ < 2", recon)
-        self.assertIn("CycleBudgetMs", recon)
 
     def test_partial_deep_pages_yield_to_recent_without_committing_range(self) -> None:
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
-            "int BuildPosition", 1
+            "bool PersistValue", 1
         )[0]
         partial = finalizer.split("long next_cursor", 1)[0]
         self.assertIn("saved_deep_page = pagination", partial)
@@ -62,7 +54,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         for pattern in ("ordersend(", "ctrade", "#import", "positionclose(", "orderdelete("):
             self.assertNotIn(pattern, self.normalized)
         self.assertIn('"http://127.0.0.1:8777/trading-events"', self.source)
-        self.assertIn('IsLoopbackCollectorUrl(url, "/trading-events")', self.source)
+        self.assertIn('IsRelayUrl(url, "/trading-events")', self.source)
         self.assertIn("if(!SelectObservedAccount())", self.source)
         self.assertIn("HistorySelect(", self.source)
         self.assertIn("HistoryOrderGetTicket(", self.source)
@@ -73,10 +65,10 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         success = sender.split("if(status == 200 || status == 202)", 1)[1]
         before_success = sender.split("if(status == 200 || status == 202)", 1)[0]
         self.assertNotIn("confirmed_from_msc =", before_success)
-        self.assertIn("batch_waiting_for_positions = true", success)
+        self.assertIn("return FinalizeConfirmedBatch();", success)
         self.assertNotIn("confirmed_from_msc =", success)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
-            "void ResetCandidatePositions", 1
+            "bool PersistValue", 1
         )[0]
         self.assertIn("PersistValue(selected_cursor_key, next_cursor)", finalizer)
         self.assertLess(
@@ -84,23 +76,6 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
             finalizer.index("confirmed_from_msc ="),
         )
         self.assertIn("pending.body", sender)
-
-    def test_closed_position_evidence_precedes_cursor_advance(self) -> None:
-        self.assertIn("HistorySelectByPosition((ulong)position_id)", self.source)
-        self.assertIn("position_reconcile", self.source)
-        self.assertIn("MathAbs(signed_volume) > 0.00000001", self.source)
-        self.assertIn("has_opening_order", self.source)
-
-        timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("ContinuePositionReconciliation()", timer)
-        reconciler = self.source.split("void ContinuePositionReconciliation", 1)[1].split(
-            "bool PersistValue", 1
-        )[0]
-        self.assertIn("BuildPositionReconcilePayload", reconciler)
-        self.assertLess(
-            reconciler.index("BuildPositionReconcilePayload"),
-            reconciler.index("FinalizeConfirmedBatch"),
-        )
 
     def test_saturation_splits_then_pages_without_early_cursor_advance(self) -> None:
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
@@ -132,7 +107,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("SelectRecoveryLane(now_msc, pending.is_recent)", timer)
         self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
-            "void ResetCandidatePositions", 1
+            "bool PersistValue", 1
         )[0]
         self.assertIn("selected_cursor_key", finalizer)
         self.assertIn("recent_confirmed_from_msc = next_cursor", finalizer)
@@ -176,7 +151,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertNotIn("PersistValue", heartbeat)
         sender = self.source.split("bool TrySendPending", 1)[1].split("void ResetRetryState", 1)[0]
         heartbeat_ack = sender.split("if(pending.is_heartbeat)", 1)[1].split(
-            "if(pending.is_position_reconcile)", 1
+            "if(pending.blocks_recovery)", 1
         )[0]
         self.assertNotIn("FinalizeConfirmedBatch", heartbeat_ack)
         self.assertNotIn("PersistValue", heartbeat_ack)
@@ -203,7 +178,7 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         self.assertIn("pending.page_snapshot_id != pagination.snapshot_id", timer)
         self.assertIn("pagination.after.time_msc = 0", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
-            "int BuildPositionReconcilePayload", 1
+            "bool PersistValue", 1
         )[0]
         partial = finalizer.split("if(pending.is_paged && pending.page_has_more)", 1)[1]
         self.assertNotIn("PersistValue", partial.split("long next_cursor", 1)[0])

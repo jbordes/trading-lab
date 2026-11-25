@@ -10,13 +10,15 @@ Reducir el trabajo de MT5 por período cubierto, preservando el tiempo de llegad
 | --- | --- | --- |
 | 0 | [Línea base](collector-optimization-baseline.md) en la versión vigente | Referencia de volumen, contenido y tiempo comprobada en Juampi. |
 | 1 | UC1. Instrumentación agregada y diagnóstico por fase | Comparación inicial completada con los mismos binarios y cobertura y contenido equivalentes. La latencia de los EAs sigue pendiente. |
-| 2 | UC2. Progreso garantizado al paginar por bytes | Una página grande se entrega en partes válidas. Un registro imposible queda diagnosticado sin reintento incesante. |
-| 3 | UC3. Ventana adaptable para el historial antiguo | Menos consultas y turnos por período con igual cobertura, datos y frescura reciente. |
+| 2 | UC3. Ventana adaptable para el historial antiguo | Medir contra la referencia de Juampi. Reducir consultas y turnos por período con igual cobertura, datos y frescura reciente. |
+| 3 | UC2. Progreso garantizado al paginar por bytes | Reproducir el límite con historial sintético. Una página grande se entrega en partes válidas y un registro imposible queda diagnosticado una vez. |
 | 4 | UC4. Reutilización de UTF-8 | Aplicar si las mediciones muestran costo material. Comparar asignaciones, bytes y pico de memoria. |
 | 5 | UC5–UC7. Historial repetido, completitud y desconexión de Telemetry | Auditar primero lectores y semántica. La reducción de datos requiere que cada consumidor pueda distinguir ausencia, muestra parcial y continuidad. |
 | 6 | UC8–UC10. Escaneo denso, cadencia y relay | Opcionales e independientes. Elegir únicamente si los perfiles del escenario correspondiente muestran el cuello de botella. |
 
 Cada entrega tiene un [caso de uso con pasos y aceptación](collector-optimization-use-cases.md). Registrar en el PR la revisión probada, los resultados y el motivo para implementar o descartar cada opción. Mantener la bitácora diaria en integración según el protocolo del programa.
+
+Se prioriza UC3 por la espera observada en los envíos al relay y la cantidad de ventanas vacías durante la descarga. La primera implementación conserva la paginación actual. UC2 sigue como corrección de fiabilidad y tiene una prueba independiente.
 
 ## Condiciones de aceptación
 

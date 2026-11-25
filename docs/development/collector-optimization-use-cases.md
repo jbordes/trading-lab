@@ -18,6 +18,14 @@ Aplicar el [orden del roadmap](collector-optimization-roadmap.md) y completar la
 4. Avanzar through únicamente al confirmar el relay. Persistir el cursor temporal al confirmar la última página. Ante cambio de huella, reanudar con las reglas de reinicio de ventana. Tras reiniciar el proceso se admite reproducir desde el último cursor durable.
 5. Probar límite exacto, exceso de un byte, Unicode, múltiples filas en el mismo milisegundo, una fila imposible, pérdida de ACK, reinicio y cobertura final. Comparar conjunto y contenido de tickets y observar progreso del otro carril.
 
+### Cómo reproducir el bloqueo
+
+1. Ampliar la historia simulada de `tests/mql5/activity_collector_test.mq5`. Generar, por ejemplo, 201 órdenes finalizadas dentro del mismo minuto con tickets únicos. Incluir varias con la misma marca de milisegundo y alguna ejecución con la misma marca. Configurar 200 filas por página y dejar que Activity llegue a su ventana mínima. Esto prueba que se activa la paginación por cantidad.
+2. Medir el sobre completo de la primera página con los campos, comentarios y caracteres Unicode que conserva el serializador. La condición a reproducir es una página de hasta 200 filas que supere el máximo de bytes. Usar 262.144 bytes si los datos de prueba permiten alcanzar ese tamaño con los límites reales de los campos. Si quedan por debajo, inyectar en la prueba nativa un límite menor, entre el tamaño de una fila y el de la primera página. Mantener el límite de producción en 262.144 bytes.
+3. Avanzar dos o más turnos con un relay simulado que acepta mensajes válidos. Con el comportamiento actual se vuelve a construir la misma página, el relay no recibe ese sobre y el cursor no avanza. Verificar también que una página apenas dentro del límite se acepte.
+4. Con la corrección, registrar el tamaño de cada solicitud y los límites de las páginas. Cada solicitud debe caber y entregar el siguiente prefijo de filas ordenadas por tiempo, tipo y ticket. Simular pérdida del ACK de una página y luego aceptarla. Comprobar que se reenvían los mismos bytes, que la página siguiente no salta ni repite filas dentro de la secuencia confirmada y que el cursor temporal avanza únicamente al confirmar la última página. Comparar la cobertura y las filas admitidas con la fixture.
+5. Reducir el límite por debajo del sobre con una sola fila para cubrir el caso imposible. Verificar diagnóstico, cursor conservado y progreso del carril sano. Ejecutar la prueba en el harness de MT5 con historia y transporte simulados. La carga de Juampi tuvo cero páginas y sirve para comparar UC3.
+
 ## UC3. Ajustar el tamaño del historial antiguo a su densidad
 
 1. Inicializar el tamaño propuesto del carril profundo al valor de WindowSeconds. Conservar límites explícitos mínimo y máximo y el comportamiento vigente del carril reciente.

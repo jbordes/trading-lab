@@ -66,8 +66,9 @@ Este fragmento Python reproduce los hashes y la medida de Telemetry en la instal
 ```python
 import hashlib, json, os, sqlite3
 from pathlib import Path
+
 db = Path(os.environ["LOCALAPPDATA"]) / "TradingLab-multicuenta" / "central.sqlite3"
-with sqlite3.connect(db.as_uri()+"?mode=ro", uri=True) as conn:
+with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
     conn.execute("PRAGMA query_only=ON")
     conn.execute("BEGIN")
     rows = conn.execute("""
@@ -84,10 +85,17 @@ with sqlite3.connect(db.as_uri()+"?mode=ro", uri=True) as conn:
     for kind, row in rows:
         counts[kind] = counts.get(kind, 0) + 1
         digest = digests.setdefault(kind, hashlib.sha256())
-        digest.update((json.dumps(json.loads(row), sort_keys=True, ensure_ascii=True,
-                                  separators=(",", ":"))+"\n").encode("ascii"))
-    print({k:(counts[k],v.hexdigest()) for k,v in digests.items()})
-    print(conn.execute("""
+        digest.update(
+            (
+                json.dumps(
+                    json.loads(row), sort_keys=True, ensure_ascii=True, separators=(",", ":")
+                )
+                + "\n"
+            ).encode("ascii")
+        )
+    print({k: (counts[k], v.hexdigest()) for k, v in digests.items()})
+    print(
+        conn.execute("""
       SELECT count(*), count(DISTINCT json_extract(payload_json,'$.payload.history')),
              sum(length(CAST(json_extract(payload_json,'$.payload.history') AS BLOB))),
              sum(length(CAST(payload_json AS BLOB)))
@@ -95,10 +103,19 @@ with sqlite3.connect(db.as_uri()+"?mode=ro", uri=True) as conn:
         AND received_at_utc >= '2026-11-25T12:22:00'
         AND received_at_utc < '2026-11-25T12:52:24'
         AND json_type(payload_json,'$.payload.history')='object'
-    """).fetchone())
+    """).fetchone()
+    )
 ```
 
 ## Mediciones pendientes para el antes y el después
+
+### Control con el binario instrumentado
+
+Usar los mismos dos EX5 en ambas variantes. Configurar `EnablePerformanceDiagnostics=false` en la primera y `true` en la segunda desde las propiedades de ambos EAs. Verificar el ajuste al volver a adjuntarlos. Registrar el SHA-256 de cada EX5 y la versión de MT5. Para cada descarga independiente, conservar el catálogo, la fecha desde y las condiciones de prueba y partir con almacenamiento y cursores de prueba limpios. Comparar al mismo corte de tiempo del bróker.
+
+Buscar las entradas `TradingLab perf` en la pestaña **Expertos** de MT5 o en el archivo diario en `MQL5/Logs`. El collector emite un resumen por categoría de trabajo cada cinco minutos cuando hay muestras y descarga las mediciones restantes al cerrar o reiniciar la sesión de captura. Cada fase contiene cantidad de observaciones, fallos registrados, suma y máximo en microsegundos y ocho contadores de duración. Los límites superiores inclusivos son 100, 500, 1.000, 5.000, 25.000, 100.000 y 500.000 µs. El último contador reúne las duraciones mayores. Sumar los contadores antes de ubicar p50, p95 o p99 en un intervalo. La secuencia del resumen es la última asignada al emitirlo y permite relacionar la ventana de medición con la sesión en la base central. Los intentos HTTP de reenvío tienen su propia fase.
+
+Los cronómetros miden tiempo transcurrido. El ciclo completo incluye las fases anidadas y el reporte se emite después de medirlo. La lectura de propiedades y la construcción del JSON de cada fila se miden juntas para evitar un cronómetro por fila. La captura de Telemetry incluye su lectura de historial cuando renueva la caché. Combinar estos tiempos con el muestreo externo del proceso MT5 y conservar la medición de la variante desactivada. Todavía queda pendiente la corrida pareada de este binario en demo.
 
 Antes de optimizar, ejecutar UC1 con el control intacto y con la instrumentación sola. Usar una terminal demo aislada y almacenamiento de prueba independiente para repetir la descarga del mismo período. Conservar la configuración de cursores de la instalación en uso. Si el extremo superior avanza con el reloj, recortar la comparación de filas y medir el instante en que ambas corridas alcanzan el mismo extremo. El heartbeat mide detección de puesta al día y depende de su propia cadencia.
 

@@ -29,6 +29,7 @@ input bool EnableDeepRecovery = true;
 input int MaxHistoryRowsPerCycle = 500;
 input int CycleBudgetMs = 25;
 input bool EnablePerformanceDiagnostics = false;
+input bool EnableAdaptiveDeepWindow = true;
 
 const string SCHEMA_VERSION = "mt5-trading-events-v1";
 const string COLLECTOR_VERSION = "activity-0.9.0";
@@ -51,6 +52,8 @@ ActivityPagination saved_deep_page;
 ActivityPreparation preparation;
 ActivityPageScan page_scan;
 bool prefer_recent = true;
+long deep_window_msc = 0;
+int sparse_deep_windows = 0;
 bool recovery_initialized = false;
 bool recovery_blocked = false;
 bool recent_recovery_blocked = false;
@@ -88,6 +91,30 @@ bool SelectRecoveryLane(const long now_msc, bool &recent)
    return recent_due || deep_due;
 }
 
+long DeepWindowMs()
+{
+   if(!EnableAdaptiveDeepWindow || deep_window_msc == 0)
+      return (long)WindowSeconds * 1000;
+   return deep_window_msc;
+}
+
+void ObserveConfirmedDeepWindow(const long duration, const bool sparse)
+{
+   if(!EnableAdaptiveDeepWindow)
+      return;
+   long current = DeepWindowMs();
+   if(duration < current || !sparse)
+   {
+      sparse_deep_windows = 0;
+      return;
+   }
+   if(++sparse_deep_windows >= 2)
+   {
+      deep_window_msc = MathMin(current * 2, 86400000);
+      sparse_deep_windows = 0;
+   }
+}
+
 #ifndef ACTIVITY_COLLECTOR_TEST
 #define REMOTE_ACTIVITY_PROJECTION
 #include "TradingLabObservedAccount.mqh"
@@ -114,6 +141,8 @@ void ResetAccountCapture()
    last_hint_position_id=0;
    startup_pending=true;
    prefer_recent=true;
+   deep_window_msc=0;
+   sparse_deep_windows=0;
    trade_activity_pending=false;
    sequence_number=0;
    ResetRetryState();
@@ -286,22 +315,27 @@ void RunCollectorCycle()
    long selected_limit_msc = pending.is_recent ? now_msc : recent_confirmed_from_msc;
    if(selected_limit_msc <= selected_from_msc + (long)OverlapSeconds * 1000)
       return;
-   long window_end_msc = selected_from_msc + (long)WindowSeconds * 1000;
+   long window_end_msc = selected_from_msc +
+      (pending.is_recent ? (long)WindowSeconds * 1000 : DeepWindowMs());
    long target_to_msc = window_end_msc < selected_limit_msc ? window_end_msc : selected_limit_msc;
    string reason = RecoveryReason(now_msc, pending.is_recent);
    bool truncated = false;
+   bool sparse = false;
    bool use_pagination = false;
    string payload = "";
    if(preparation.active && preparation.from_msc == selected_from_msc)
       target_to_msc = preparation.to_msc;
    preparation.active = false;
-   payload = BuildActivityPayload(reason, selected_from_msc, target_to_msc, truncated);
+   payload = BuildActivityPayload(reason, selected_from_msc, target_to_msc, truncated, sparse);
    if(payload == "")
       return;
    long duration = target_to_msc - selected_from_msc;
-   bool payload_too_large = Utf8Size(payload) > MAX_PAYLOAD_BYTES - 1024;
+   int payload_bytes = Utf8Size(payload);
+   bool payload_too_large = payload_bytes > MAX_PAYLOAD_BYTES - 1024;
    if(truncated || payload_too_large)
    {
+      if(!pending.is_recent)
+         sparse_deep_windows = 0;
       if(duration <= (long)MinimumWindowSeconds * 1000)
       {
          ActivityPageKey page_start;
@@ -327,6 +361,8 @@ void RunCollectorCycle()
          target_to_msc = (halved / 1000) * 1000;
          if(target_to_msc < selected_from_msc + (long)MinimumWindowSeconds * 1000)
             target_to_msc = selected_from_msc + (long)MinimumWindowSeconds * 1000;
+         if(!pending.is_recent && EnableAdaptiveDeepWindow)
+            deep_window_msc = target_to_msc - selected_from_msc;
          preparation.active = true;
          preparation.is_recent = pending.is_recent;
          preparation.from_msc = selected_from_msc;
@@ -346,6 +382,7 @@ void RunCollectorCycle()
    pending.to_msc = target_to_msc;
    pending.blocks_recovery = truncated && !use_pagination;
    pending.is_paged = use_pagination;
+   pending.sparse = sparse && payload_bytes > 0 && payload_bytes <= (MAX_PAYLOAD_BYTES - 1024) / 4;
    pending.is_heartbeat = false;
    TrySendPending(GetTickCount64());
 }
@@ -524,7 +561,10 @@ bool FinalizeConfirmedBatch()
    if(pending.is_recent)
       recent_confirmed_from_msc = next_cursor;
    else
+   {
       confirmed_from_msc = next_cursor;
+      ObserveConfirmedDeepWindow(pending.to_msc - pending.from_msc, !pending.is_paged && pending.sparse);
+   }
    pending.blocks_recovery = false;
    pending.is_paged = false;
    pagination.active = false;
@@ -608,7 +648,7 @@ int SendMessage(const string body)
 #endif
 
 string BuildActivityPayload(const string reason, const long from_msc, const long to_msc,
-                            bool &truncated)
+                            bool &truncated, bool &sparse)
 {
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
@@ -645,6 +685,7 @@ string BuildActivityPayload(const string reason, const long from_msc, const long
    bool deals_truncated = deal_total > MaxItemsPerCollection;
    bool orders_truncated = order_total > MaxItemsPerCollection;
    truncated = deals_truncated || orders_truncated;
+   sparse = deal_total <= MaxItemsPerCollection / 4 && order_total <= MaxItemsPerCollection / 4;
    string payload = "{";
    payload += "\"reason\":\"" + reason + "\",";
    payload += "\"identity\":" + BuildIdentity() + ",";

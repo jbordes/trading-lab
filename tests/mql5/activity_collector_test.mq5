@@ -81,6 +81,30 @@ void OnStart()
    Check(SelectRecoveryLane(last_tick + 1000, recent) && recent,
          "startup resumes recent work when broker time advances");
    confirmed_from_msc = 0;
+   trade_activity_pending = true;
+   prefer_recent = false;
+   Check(SelectRecoveryLane(last_tick + 1000, recent) && !recent,
+         "ongoing trade activity does not starve a pending deep lane");
+   prefer_recent = true;
+   Check(SelectRecoveryLane(last_tick + 1000, recent) && recent,
+         "recent lane takes the next turn after a deep confirmation");
+   trade_activity_pending = false;
+
+   long initial_window = DeepWindowMs();
+   ObserveConfirmedDeepWindow(initial_window, true);
+   Check(DeepWindowMs() == initial_window, "one sparse window does not grow the deep interval");
+   ObserveConfirmedDeepWindow(initial_window - 1000, true);
+   ObserveConfirmedDeepWindow(initial_window, true);
+   Check(DeepWindowMs() == initial_window, "short tail does not count toward growth");
+   ObserveConfirmedDeepWindow(initial_window, true);
+   Check(DeepWindowMs() == initial_window * 2, "two full sparse windows grow the deep interval");
+   deep_window_msc = 64800000;
+   ObserveConfirmedDeepWindow(deep_window_msc, true);
+   ObserveConfirmedDeepWindow(deep_window_msc, true);
+   Check(DeepWindowMs() == 86400000, "adaptive deep interval is capped at one day");
+   deep_window_msc = 0;
+   sparse_deep_windows = 0;
+   confirmed_from_msc = 0;
    recent_confirmed_from_msc = 0;
    // Regression: the production timer checks the untouched global state first.
    // Assigning a fixture before this check hid a NULL/uninitialized body.

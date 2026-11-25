@@ -34,6 +34,10 @@ Aplicar el [orden del roadmap](collector-optimization-roadmap.md) y completar la
 4. Mantener alternancia entre carriles y prioridad operativa de transacciones recientes. Una ventana vacía confirmada acredita solo el intervalo leído. Un error de selección conserva cursor y cobertura.
 5. Alternar tramos vacíos y densos, insertar actividad reciente durante la descarga y cortar el enlace durante una división. Comparar igualdad de filas y unión de intervalos por colección. Aceptar si baja el costo total por intervalo cubierto con frescura reciente comparable.
 
+La primera implementación se aplica solo al carril profundo. Empieza con `WindowSeconds` y conserva el tamaño reducido cuando una ventana se subdivide. Duplica el tamaño tras dos ventanas completas consecutivas y confirmadas que usen hasta un cuarto del límite de filas de cada colección y del presupuesto de bytes del payload. El máximo es 24 horas. Las páginas y las ventanas recortadas por el final del rango no cuentan para crecer. Tras cambiar de cuenta, la estimación vuelve a su tamaño inicial. Usar `EnableAdaptiveDeepWindow=false` para el control con el mismo binario.
+
+Con actividad continua, los dos carriles alternan cuando ambos tienen trabajo, a partir de la confirmación de un lote o página. Un lote pendiente y su reintento conservan prioridad. La preparación de una ventana puede ocupar más de un turno. Conservar la recuperación profunda habilitada para cubrir desconexiones y reinicios, incluso en cuentas cuyo historial configurado empieza el día de inicio de la operativa. La opción `EnableDeepRecovery` sigue disponible para una pausa deliberada.
+
 ## UC4. Reutilizar los bytes de un mensaje listo
 
 1. Medir cuántas conversiones y bytes temporales genera cada tipo de mensaje. Distinguir los borradores que se descartan al dividir de los mensajes preparados para enviar.

@@ -25,6 +25,7 @@ struct ActivityPendingBatch
       is_heartbeat = false;
       is_paged = false;
       page_has_more = false;
+      sparse = false;
       page_through.time_msc = 0;
       page_through.entity_type = 0;
       page_through.ticket = 0;
@@ -37,6 +38,7 @@ struct ActivityPendingBatch
    bool is_heartbeat;
    bool is_paged;
    bool page_has_more;
+   bool sparse;
    ActivityPageKey page_through;
    string page_snapshot_id;
 };

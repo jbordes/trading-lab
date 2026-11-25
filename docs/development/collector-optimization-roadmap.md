@@ -8,8 +8,8 @@ Reducir el trabajo de MT5 por período cubierto, preservando el tiempo de llegad
 
 | Orden | Entrega | Evidencia para continuar |
 | --- | --- | --- |
-| 0 | [Línea base](collector-optimization-baseline.md) en la versión vigente | Referencia reproducible de volumen, contenido y tiempo. Antes de cambiar el comportamiento, ejecutar la medición pareada de terminal descrita en UC1. |
-| 1 | UC1. Instrumentación agregada y diagnóstico por fase | Comparar el mismo binario con medición habilitada y deshabilitada. Evaluar el costo de observar. |
+| 0 | [Línea base](collector-optimization-baseline.md) en la versión vigente | Referencia de volumen, contenido y tiempo comprobada en Juampi. |
+| 1 | UC1. Instrumentación agregada y diagnóstico por fase | Comparación inicial completada con los mismos binarios y cobertura y contenido equivalentes. La latencia de los EAs sigue pendiente. |
 | 2 | UC2. Progreso garantizado al paginar por bytes | Una página grande se entrega en partes válidas. Un registro imposible queda diagnosticado sin reintento incesante. |
 | 3 | UC3. Ventana adaptable para el historial antiguo | Menos consultas y turnos por período con igual cobertura, datos y frescura reciente. |
 | 4 | UC4. Reutilización de UTF-8 | Aplicar si las mediciones muestran costo material. Comparar asignaciones, bytes y pico de memoria. |

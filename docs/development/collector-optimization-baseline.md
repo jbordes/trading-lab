@@ -107,7 +107,44 @@ with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
     )
 ```
 
-## Mediciones pendientes para el antes y el después
+## Comparación con la instrumentación activada y desactivada
+
+Se ejecutó una corrida por variante el 25 de noviembre de 2026 en Juampi con los EX5 de `f04ceb9`, una central y una cola limpias por corrida y la misma fecha desde. Las huellas SHA-256 de los binarios instalados fueron `72ae604678fbf09243ea7e2330ae54c7408ff784918458843e46807e7b477cc9` para Activity y `7bccb5c72ca66fdf6a9cf058a852c0b5000be268a202d563711f743199a3cb58` para Telemetry.
+
+| Medida | Desactivada | Activada |
+| --- | ---: | ---: |
+| Primer lote → corte común de órdenes y ejecuciones | 27 min 40,009 s | 27 min 39,961 s |
+| Primer lote → heartbeat de puesta al día | 28 min 30,162 s | 28 min 20,051 s |
+| Lotes de Activity / vacíos / paginados | 135 / 52 / 0 | 133 / 51 / 0 |
+| CPU media de MT5, equivalente de un núcleo lógico | 28,66 % | 24,48 % |
+| CPU p95 de intervalos de cinco segundos | 34,96 % | 32,46 % |
+| Pico de memoria residente | 318,42 MiB | 290,54 MiB |
+| Pico de memoria privada | 390,57 MiB | 364,28 MiB |
+
+Ambas variantes tuvieron cobertura continua del corte de la referencia. Coincidieron las 8.021 órdenes, 71 ejecuciones y 35 posiciones reconstruidas, incluidas sus huellas. Todos los mensajes recibidos por el relay hasta cada heartbeat se confirmaron. Los heartbeats miden la puesta al día respecto a dos extremos distintos del historial, uno por corrida.
+
+El muestreo externo de la variante desactivada se reanudó 238,7 s después del primer lote. Para comparar recursos se usaron 292 muestras por variante en el tramo común, aproximadamente entre el minuto 4 y el 28. Los valores describen todo MT5 y la carga de los operadores pudo variar. Esta pareja de corridas verifica el funcionamiento de la instrumentación y la reproducibilidad del tiempo hasta el mismo corte. La variación de CPU y memoria no permite estimar el costo propio de la instrumentación. Quedan por medir la latencia de los EAs y la distribución de tiempos bajo otras cargas y redes.
+
+### Fases observadas con diagnóstico activado
+
+Se agregaron cinco resúmenes por categoría de las sesiones confirmadas hasta el corte. Las fases están anidadas en el callback. Cada promedio usa sus propias observaciones y la última ventana parcial queda fuera.
+
+| Collector y fase | Observaciones | Media | Máximo |
+| --- | ---: | ---: | ---: |
+| Activity profundo, ciclo | 102 | 17,03 ms | 37,17 ms |
+| Activity profundo, envío al relay | 94 | 15,03 ms | 28,23 ms |
+| Activity profundo, lectura y JSON de filas | 94 | 2,72 ms | 12,98 ms |
+| Activity profundo, selección de historial | 102 | 0,122 ms | 0,215 ms |
+| Activity profundo, persistencia de cursor | 94 | 0,094 ms | 0,181 ms |
+| Activity profundo, codificación UTF-8 | 290 | 0,013 ms | 0,123 ms |
+| Activity reciente, ciclo | 27 | 13,40 ms | 51,64 ms |
+| Telemetry, ciclo | 303 | 10,44 ms | 55,30 ms |
+| Telemetry, envío al relay | 303 | 10,18 ms | 21,67 ms |
+| Telemetry, construcción de captura | 303 | 0,076 ms | 1,17 ms |
+
+La espera HTTP explica alrededor del 81 % de la suma de tiempos de los ciclos profundos y el 98 % de los ciclos de Telemetry en esta muestra local. La lectura de filas y su JSON fue el costo local medido más alto en Activity profundo. El costo de codificar UTF-8 fue pequeño. Estos datos favorecen reducir consultas y envíos con ventanas adaptables. Esta carga tuvo cero páginas. El caso de falta de progreso por tamaño de mensaje requiere el escenario denso de UC2.
+
+## Mediciones pendientes para las siguientes optimizaciones
 
 ### Control con el binario instrumentado
 
@@ -115,9 +152,9 @@ Usar los mismos dos EX5 en ambas variantes. Configurar `EnablePerformanceDiagnos
 
 Buscar las entradas `TradingLab perf` en la pestaña **Expertos** de MT5 o en el archivo diario en `MQL5/Logs`. El collector emite un resumen por categoría de trabajo cada cinco minutos cuando hay muestras y descarga las mediciones restantes al cerrar o reiniciar la sesión de captura. Cada fase contiene cantidad de observaciones, fallos registrados, suma y máximo en microsegundos y ocho contadores de duración. Los límites superiores inclusivos son 100, 500, 1.000, 5.000, 25.000, 100.000 y 500.000 µs. El último contador reúne las duraciones mayores. Sumar los contadores antes de ubicar p50, p95 o p99 en un intervalo. La secuencia del resumen es la última asignada al emitirlo y permite relacionar la ventana de medición con la sesión en la base central. Los intentos HTTP de reenvío tienen su propia fase.
 
-Los cronómetros miden tiempo transcurrido. El ciclo completo incluye las fases anidadas y el reporte se emite después de medirlo. La lectura de propiedades y la construcción del JSON de cada fila se miden juntas para evitar un cronómetro por fila. La captura de Telemetry incluye su lectura de historial cuando renueva la caché. Combinar estos tiempos con el muestreo externo del proceso MT5 y conservar la medición de la variante desactivada. Todavía queda pendiente la corrida pareada de este binario en demo.
+Los cronómetros miden tiempo transcurrido. El ciclo completo incluye las fases anidadas y el reporte se emite después de medirlo. La lectura de propiedades y la construcción del JSON de cada fila se miden juntas para evitar un cronómetro por fila. La captura de Telemetry incluye su lectura de historial cuando renueva la caché. Combinar estos tiempos con el muestreo externo del proceso MT5 y conservar la medición de la variante desactivada.
 
-Antes de optimizar, ejecutar UC1 con el control intacto y con la instrumentación sola. Usar una terminal demo aislada y almacenamiento de prueba independiente para repetir la descarga del mismo período. Conservar la configuración de cursores de la instalación en uso. Si el extremo superior avanza con el reloj, recortar la comparación de filas y medir el instante en que ambas corridas alcanzan el mismo extremo. El heartbeat mide detección de puesta al día y depende de su propia cadencia.
+Para repetir UC1, usar una terminal demo y almacenamiento de prueba independiente con la misma fecha desde. Conservar la configuración de cursores de la instalación en uso. Si el extremo superior avanza con el reloj, recortar la comparación de filas y medir el instante en que ambas corridas alcanzan el mismo extremo. El heartbeat mide detección de puesta al día y depende de su propia cadencia.
 
 | Escenario | Control | Candidata | Comparación |
 | --- | --- | --- | --- |

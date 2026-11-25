@@ -2,9 +2,15 @@
 
 Propuesta de trabajo al 20 de noviembre de 2026. La referencia técnica es la rama de instalación remota en `bc27ae3`. La instalación estable de Windows sirve como referencia de experiencia de usuario. Los binarios de producción serán los collectors del contrato remoto. La compatibilidad con collectors estables y el despliegue automatizado entre servidores quedan fuera del alcance actual.
 
-## Estado de la implementación multicuenta
+## Estado vigente
 
-La rama `feature/tradinglab-setup-multicuenta` parte de `bc27ae3`. La referencia de experiencia del instalador estable es `a86cf1f`. La entrada de Windows es `TradingLab SetUp.cmd`. La [guía de operación y aceptación](tradinglab-setup-multicuenta.md) describe la preparación en un equipo y la disposición con API central detrás de un proxy HTTPS.
+TradingLab SetUp es el instalador predeterminado. El
+[seguimiento de Activity 0.9.0](remote-activity-roadmap.md) recoge la cobertura
+histórica verificada y las pruebas manuales pendientes.
+
+## Antecedentes de la implementación multicuenta
+
+La rama `feature/tradinglab-setup-multicuenta` parte de `bc27ae3`. La referencia de experiencia del instalador estable es `a86cf1f`. La entrada de Windows es `TradingLab SetUp.cmd`. La [guía de operación y aceptación](tradinglab-setup.md) describe la preparación en un equipo y la disposición con API central detrás de un proxy HTTPS.
 
 Se compilaron Activity, Telemetry y el asistente de gráficos con MetaEditor de Roboforex. En la revisión manual local se creó una base nueva, se dieron de alta dos cuentas de muestra con el mismo login en servidores distintos y se consultó la salud de API, relay y dashboard. Al detener la API, el relay y el dashboard siguieron respondiendo. Los tres servicios de esa revisión se detuvieron al terminar.
 

@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = ROOT / "_storage/multicuenta"
+BUILD = ROOT / "_storage/setup"
 EXPERTS = ("TradingLabTelemetry", "TradingLabActivity", "TradingLabAttachCollectors")
 
 
@@ -19,12 +19,12 @@ def package() -> Path:
     content = {}
     for name in (
         "TradingLab SetUp.cmd",
-        "scripts/multi_setup_windows.ps1",
-        "scripts/multi_setup.py",
+        "scripts/tradinglab_setup_windows.ps1",
+        "scripts/tradinglab_setup.py",
         "pyproject.toml",
         "uv.lock",
         ".python-version",
-        "docs/development/tradinglab-setup-multicuenta.md",
+        "docs/development/tradinglab-setup.md",
     ):
         content[name] = (ROOT / name).read_bytes()
     assets = set(
@@ -51,14 +51,14 @@ def package() -> Path:
         if not binary:
             raise ValueError("EX5 vacío")
         content["collectors/" + name + ".ex5"] = binary
-    content["LEEME.md"] = content["docs/development/tradinglab-setup-multicuenta.md"]
+    content["LEEME.md"] = content["docs/development/tradinglab-setup.md"]
     manifest = {
-        "layout": "multi-central-relay-v2",
+        "layout": "tradinglab-setup-v2",
         "files": {p: hashlib.sha256(data).hexdigest() for p, data in sorted(content.items())},
     }
     content["MANIFEST.json"] = json.dumps(manifest, indent=2).encode()
     release = hashlib.sha256(content["MANIFEST.json"]).hexdigest()[:12]
-    output = BUILD / f"TradingLab-SetUp-multicuenta-{release}.zip"
+    output = BUILD / f"TradingLab-SetUp-{release}.zip"
     with tempfile.NamedTemporaryFile(dir=BUILD, delete=False) as temporary:
         staged = Path(temporary.name)
     try:

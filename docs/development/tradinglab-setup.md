@@ -1,10 +1,10 @@
-# TradingLab SetUp multicuenta para Windows
+# TradingLab SetUp para Windows
 
 Extraiga el ZIP completo en una carpeta local y abra **TradingLab SetUp.cmd**. El iniciador prepara Python 3.14 y las dependencias de `uv.lock` mediante uv. La primera preparación de un equipo necesita acceso a esas descargas.
 
 ## Equipo único
 
-1. En **Equipo** seleccione API, relay y dashboard. Elija una carpeta privada nueva y conserve las entradas del relay `http://127.0.0.1:8776/account-state` y `http://127.0.0.1:8777/trading-events` si esos puertos están disponibles. El relay envía ambos flujos a la API central configurada en **API URL** (por defecto `http://127.0.0.1:8782`). La API guarda las cuentas e historial en `central.sqlite3`. El relay guarda los envíos pendientes en `relay.sqlite3`.
+1. En **Equipo** seleccione API, relay y dashboard. Use la carpeta privada predeterminada `%LOCALAPPDATA%\TradingLab Data` o elija una carpeta nueva y conserve las entradas del relay `http://127.0.0.1:8776/account-state` y `http://127.0.0.1:8777/trading-events` si esos puertos están disponibles. El relay envía ambos flujos a la API central configurada en **API URL** (por defecto `http://127.0.0.1:8782`). La API guarda las cuentas e historial en `central.sqlite3`. El relay guarda los envíos pendientes en `relay.sqlite3`.
 2. Pulse **Preparar equipo**. La primera instalación genera automáticamente la clave de administración de la API y, si deja su campo vacío, la contraseña del dashboard. Para iniciar sesión consulte el campo `password` de `dashboard.private.json` en la carpeta privada del dashboard. Al volver a preparar el equipo se conservan las credenciales existentes. Para continuar otro día, use **Abrir JSON** y elija el `setup.json` de esa carpeta. **Guardar JSON** exporta un perfil de componentes, rutas y URLs. Las credenciales quedan en la carpeta privada del equipo.
 3. En **Servicios** seleccione uno o varios y pulse **Iniciar selección**. Cada servicio abre una consola independiente. **Consultar estado** permite ver si responden el proceso local y la API configurada. Puede cerrar el SetUp. Para detener servicios use **Detener selección** o Ctrl+C en la consola correspondiente.
 4. En **Cuentas** dé de alta cada cuenta con alias, login completo, servidor exacto, divisa, modo que reporta MT5, fecha desde y offset del broker en minutos. La fecha se expresa como `YYYY.MM.DD HH:MM:SS` en el reloj del broker. Repetir un alta idéntica conserva el registro. Una discrepancia con un registro existente genera un error.

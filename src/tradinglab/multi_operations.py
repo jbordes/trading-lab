@@ -31,7 +31,7 @@ def attach(root: Path, cfg: Settings, admin: str = "") -> None:
     registry = dest / "terminals.json"
     binaries = root / "collectors"
     if not binaries.is_dir():
-        binaries = root / "_storage/multicuenta/compiled"
+        binaries = root / "_storage/setup/compiled"
     with exclusive_job_lock(dest / "prepare.lock"):
         terminals = json.loads(registry.read_bytes()) if registry.exists() else {}
         path_key = os.path.normcase(str(terminal))

@@ -44,18 +44,17 @@ def _keys(path: Path, factory) -> dict:
 
 def prepare(config: Settings, admin: str, password: str) -> None:
     dest = Path(config.data_dir)
+    marker = dest / "setup.version"
     if not dest.exists():
         private_directory(dest)
-        write_private(dest / "multicuenta.version", "2")
-    if (
-        dest.is_symlink()
-        or dest.is_junction()
-        or not (dest / "multicuenta.version").is_file()
-        or (dest / "multicuenta.version").read_text() != "2"
-    ):
-        raise ValueError(
-            "Elija una carpeta nueva o la carpeta privada de esta instalación multicuenta"
-        )
+        write_private(marker, "2")
+    if dest.is_symlink() or dest.is_junction():
+        raise ValueError("La carpeta de datos de TradingLab no puede ser un enlace")
+    # Accept the marker of existing SetUp installations when explicitly selected.
+    if not marker.exists():
+        marker = dest / "multicuenta.version"
+    if marker.is_symlink() or not marker.is_file() or marker.read_text() != "2":
+        raise ValueError("Elija una carpeta nueva o la carpeta privada de TradingLab SetUp")
     with exclusive_job_lock(dest / "prepare.lock"):
         prior = dest / "setup.json"
         if prior.exists() and Settings.model_validate(_read(prior)) != config:
@@ -143,7 +142,7 @@ def launch(root: Path, config: Settings, roles: list[str]) -> None:
         if running(dest, role):
             continue
         subprocess.Popen(
-            [sys.executable, str(root / "scripts/multi_setup.py"), "serve", role, str(dest)],
+            [sys.executable, str(root / "scripts/tradinglab_setup.py"), "serve", role, str(dest)],
             cwd=root,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
             start_new_session=os.name != "nt",

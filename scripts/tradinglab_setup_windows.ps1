@@ -184,7 +184,7 @@ function Invoke-SetUp($op,$extra=@{}) {
     $payload=$inputData | ConvertTo-Json -Depth 5 -Compress
     $info=New-Object Diagnostics.ProcessStartInfo
     $info.FileName=$python
-    $info.Arguments='"'+(Join-Path $root 'scripts\multi_setup.py')+'" '+$op
+    $info.Arguments='"'+(Join-Path $root 'scripts\tradinglab_setup.py')+'" '+$op
     $info.UseShellExecute=$false
     $info.CreateNoWindow=$true
     $info.RedirectStandardInput=$true
@@ -221,7 +221,7 @@ $tabs.Add_SelectedIndexChanged($setHeading)
 $fields=@{}
 Label $hostPage 'Componentes de este equipo' 20 20
 $components=Checks $hostPage 16
-$fields.data_dir=Field $hostPage 'TradingLab Data File (carpeta)' 56 'Carpeta privada para las bases y las claves de este equipo. Para continuar una instalación, abra el archivo setup.json de esa carpeta con Abrir JSON.' (Join-Path $env:LOCALAPPDATA 'TradingLab-multicuenta') -Browse
+$fields.data_dir=Field $hostPage 'Carpeta de datos de TradingLab' 56 'Carpeta privada para las bases y las claves de este equipo. Para continuar una instalación, abra el archivo setup.json de esa carpeta con Abrir JSON.' (Join-Path $env:LOCALAPPDATA 'TradingLab Data') -Browse
 $fields.snapshot_ingest_url=Field $hostPage 'Telemetry Relay URL' 92 'Dirección donde Telemetry entrega el estado de la cuenta al relay. En el mismo equipo use HTTP en loopback. Para un relay remoto use su URL HTTPS con la ruta /account-state.' 'http://127.0.0.1:8776/account-state'
 $fields.activity_ingest_url=Field $hostPage 'Activity Relay URL' 128 'Dirección donde Activity entrega órdenes y ejecuciones al relay. Indique la URL HTTPS publicada o la dirección HTTP local con la ruta /trading-events.' 'http://127.0.0.1:8777/trading-events'
 $fields.dashboard_url=Field $hostPage 'Dashboard URL' 164 'Dirección completa que abrirá en el navegador. Conserve /dashboard al final. Para acceso remoto, indique la dirección HTTPS publicada por el proxy.' 'http://127.0.0.1:8775/dashboard'
@@ -248,19 +248,6 @@ Button $header 'Abrir JSON' 20 82 150 {Action {
                 $fields[$key].Text = $fields[$key].Text -replace '/api/(account-state|trading-events)$','/$1'
             }
             foreach ($role in $components.Keys) {$components[$role].Checked=$role -in $cfg.components}
-        } elseif ($cfg.snapshot_port -and $cfg.activity_port) {
-            $fields.snapshot_ingest_url.Text="http://127.0.0.1:$($cfg.snapshot_port)/account-state"
-            $fields.activity_ingest_url.Text="http://127.0.0.1:$($cfg.activity_port)/trading-events"
-            if ($cfg.central_port) {$fields.api_base_url.Text="http://127.0.0.1:$($cfg.central_port)"}
-            if ($cfg.dashboard_port) {$fields.dashboard_url.Text="http://127.0.0.1:$($cfg.dashboard_port)/dashboard"}
-            $fields.mt5_data_dir.Text=[string]$cfg.mt5_data_dir
-            $loginBox.Text=[string]$cfg.login_id
-            $broker.Text=[string]$cfg.server
-            $currency.Text=[string]$cfg.currency
-            $since.Text=[string]$cfg.history_date
-            $offset.Value=[int]$cfg.broker_utc_offset_minutes
-            if ($cfg.account_mode -in @('demo','real')) { $demo.Checked=($cfg.account_mode -eq 'demo') }
-            Message @{message='Puertos convertidos a URLs. Revise los valores y guarde como JSON de versión 2. El alta de la cuenta es un paso separado.'}
         } else { throw 'Formato de configuración desconocido.' }
     }
     $d.Dispose()

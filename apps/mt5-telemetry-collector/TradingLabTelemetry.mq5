@@ -4,6 +4,7 @@
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
+#include "TradingLabCollectorPerformance.mqh"
 
 // Spike-only collector. It emits observations and never accepts remote commands.
 
@@ -11,12 +12,14 @@ input string IngestUrl = "http://127.0.0.1:8776/account-state";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string TerminalId = "";
 string SourceId = "";
+CollectorPerformance performance;
 input int IntervalSeconds = 5;
 input int RequestTimeoutMs = 500;
 input int MaxItemsPerSnapshot = 200;
 input int HistoryLookbackSeconds = 3600;
 input int HistoryIntervalSeconds = 60;
 input int MaxDealsPerSnapshot = 200;
+input bool EnablePerformanceDiagnostics = false;
 datetime HistoryStartServerTime = 0;
 
 const string SCHEMA_VERSION = "mt5-account-state-v1";
@@ -53,6 +56,7 @@ bool IsCollectorIngestUrl(const string url)
 
 void ResetAccountCapture()
 {
+   performance.Report(session_id, sequence_number, true);
    startup_pending=true;
    trade_activity_pending=false;
    sequence_number=0;
@@ -62,6 +66,7 @@ void ResetAccountCapture()
 
 int OnInit()
 {
+   performance.Configure(EnablePerformanceDiagnostics);
    logger.Configure("telemetry", TerminalId, COLLECTOR_VERSION);
    if(!IsCollectorIngestUrl(IngestUrl))
    {
@@ -114,6 +119,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
+   performance.Report(session_id, sequence_number, true);
    EventKillTimer();
    while(outbox_count > 0)
       DropHead("shutdown");
@@ -121,7 +127,17 @@ void OnDeinit(const int reason)
 }
 
 
+void RunCollectorCycle();
+
 void OnTimer()
+{
+   ulong started = performance.Start();
+   RunCollectorCycle();
+   performance.Record(started, PERF_TIMER, PERF_GENERAL);
+   performance.Report(session_id, sequence_number);
+}
+
+void RunCollectorCycle()
 {
    if(!SelectObservedAccount())
       return;
@@ -132,7 +148,9 @@ void OnTimer()
       reason = "trade_activity";
 
    sequence_number++;
+   ulong snapshot_started = performance.Start();
    string body = BuildSnapshot(reason, sequence_number);
+   performance.Record(snapshot_started, PERF_SNAPSHOT, PERF_GENERAL, body != "");
    // Discard a sample collected while the terminal identity was changing.
    if(!CheckPilotSafety())
    {
@@ -183,7 +201,9 @@ void EnqueueSnapshot(const string body, const ulong sequence)
       return;
    }
    char encoded[];
+   ulong started = performance.Start();
    int size = StringToCharArray(body, encoded, 0, WHOLE_ARRAY, CP_UTF8) - 1;
+   performance.Record(started, PERF_UTF8, PERF_GENERAL, size > 0);
    if(size < 1 || size > MAX_PAYLOAD_BYTES)
    {
       RecordDrop(sequence, "payload_size");
@@ -258,16 +278,20 @@ int SendMessage(const string body)
    string response_headers = "";
    string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + Token + "\r\n";
 
+   ulong encoding_started = performance.Start();
    int encoded = StringToCharArray(body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
+   int encoding_error = encoded <= 1 ? GetLastError() : 0;
+   performance.Record(encoding_started, PERF_UTF8, PERF_GENERAL, encoded > 1);
    if(encoded <= 1)
    {
-      last_request_error = GetLastError();
+      last_request_error = encoding_error;
       logger.Error("encoding_failed", "cannot encode payload; no HTTP request sent",
                    sequence_number, 0, last_request_error);
       return LOCAL_ENCODING_FAILURE;
    }
    ArrayResize(request_body, encoded - 1);
 
+   ulong http_started = performance.Start();
    ResetLastError();
    int status = WebRequest(
       "POST",
@@ -279,6 +303,8 @@ int SendMessage(const string body)
       response_headers
    );
    last_request_error = GetLastError();
+   performance.Record(http_started, head_attempts > 0 ? PERF_RETRY_HTTP : PERF_INGEST_HTTP,
+                      PERF_GENERAL, status == 200 || status == 202);
    // Preserve the actual return separately from local errors. Values such as
    // 1001 are not labelled HTTP; the transport retains its existing retry policy.
    return status;
@@ -352,12 +378,18 @@ string BuildHistory()
    // window: no cursor advances on failed sends and missed callbacks are harmless.
    long to_time = (long)TimeCurrent();
    long from_time = MathMax(0, to_time - HistoryLookbackSeconds);
+   ulong selection_started = performance.Start();
    ResetLastError();
-   if(to_time <= 0 || !HistorySelect((datetime)from_time, (datetime)to_time))
+   bool selected = to_time > 0 && HistorySelect((datetime)from_time, (datetime)to_time);
+   int selection_error = GetLastError();
+   if(to_time > 0)
+      performance.Record(selection_started, PERF_HISTORY_SELECT, PERF_GENERAL, selected);
+   if(!selected)
       return HistoryResult("error", from_time, MathMax(0, to_time), 0, "[]");
    int total = HistoryDealsTotal();
-   if(GetLastError() != 0 || total < 0)
+   if(selection_error != 0 || GetLastError() != 0 || total < 0)
       return HistoryResult("error", from_time, to_time, 0, "[]");
+   ulong rows_started = performance.Start();
    int start = MathMax(0, total - MaxDealsPerSnapshot);
    string deals = "[";
    bool valid = true;
@@ -366,15 +398,22 @@ string BuildHistory()
       ResetLastError();
       ulong ticket = HistoryDealGetTicket(index);
       if(ticket == 0)
+      {
+         performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, PERF_GENERAL, false);
          return HistoryResult("error", from_time, to_time, 0, "[]");
+      }
       string row = BuildDeal(ticket, valid);
       if(!valid || GetLastError() != 0)
+      {
+         performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, PERF_GENERAL, false);
          return HistoryResult("error", from_time, to_time, 0, "[]");
+      }
       if(index > start)
          deals += ",";
       deals += row;
    }
    deals += "]";
+   performance.Record(rows_started, PERF_HISTORY_ROWS_JSON);
    return HistoryResult(start == 0 ? "complete" : "truncated", from_time, to_time, total, deals);
 }
 

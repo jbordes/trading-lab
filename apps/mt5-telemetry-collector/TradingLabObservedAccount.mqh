@@ -60,6 +60,7 @@ bool SelectObservedAccount()
    ArrayResize(data,length-1);
    string headers="Content-Type: application/json\r\nAuthorization: Bearer "+Token+"\r\n";
    string response_headers;
+   ulong http_started = performance.Start();
    ResetLastError();
 #ifdef REMOTE_ACTIVITY_PROJECTION
    string route="/resolve-raw";
@@ -68,6 +69,7 @@ bool SelectObservedAccount()
 #endif
    int status=WebRequest("POST",IngestUrl+route,headers,3000,data,reply,response_headers);
    int local_error=(status<0 ? GetLastError() : 0);
+   performance.Record(http_started, PERF_RESOLVE_HTTP, PERF_GENERAL, status == 200);
    string result=CharArrayToString(reply,0,ArraySize(reply),CP_UTF8);
    if(status!=200)
    {

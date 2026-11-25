@@ -4,6 +4,7 @@
 #include "TradingLabAccountGuard.mqh"
 #include "TradingLabCollectorCommon.mqh"
 #include "TradingLabCollectorLog.mqh"
+#include "TradingLabCollectorPerformance.mqh"
 #include "TradingLabActivityState.mqh"
 
 // Read-only trading-events collector. It never sends or modifies trading orders.
@@ -12,6 +13,8 @@ input string IngestUrl = "http://127.0.0.1:8777/trading-events";
 input string Token = "CHANGE-ME-WITH-A-LOCAL-TEST-TOKEN";
 input string TerminalId = "";
 string SourceId = "";
+CollectorPerformance performance;
+CollectorLane performance_lane = PERF_GENERAL;
 input int IntervalSeconds = 10;
 input int RequestTimeoutMs = 1000;
 datetime HistoryStartServerTime = 0;
@@ -25,6 +28,8 @@ input int HeartbeatSeconds = 60;
 input bool EnableDeepRecovery = true;
 input int MaxHistoryRowsPerCycle = 500;
 input int CycleBudgetMs = 25;
+input bool EnablePerformanceDiagnostics = false;
+input bool EnableAdaptiveDeepWindow = true;
 
 const string SCHEMA_VERSION = "mt5-trading-events-v1";
 const string COLLECTOR_VERSION = "activity-0.9.0";
@@ -47,6 +52,8 @@ ActivityPagination saved_deep_page;
 ActivityPreparation preparation;
 ActivityPageScan page_scan;
 bool prefer_recent = true;
+long deep_window_msc = 0;
+int sparse_deep_windows = 0;
 bool recovery_initialized = false;
 bool recovery_blocked = false;
 bool recent_recovery_blocked = false;
@@ -84,12 +91,37 @@ bool SelectRecoveryLane(const long now_msc, bool &recent)
    return recent_due || deep_due;
 }
 
+long DeepWindowMs()
+{
+   if(!EnableAdaptiveDeepWindow || deep_window_msc == 0)
+      return (long)WindowSeconds * 1000;
+   return deep_window_msc;
+}
+
+void ObserveConfirmedDeepWindow(const long duration, const bool sparse)
+{
+   if(!EnableAdaptiveDeepWindow)
+      return;
+   long current = DeepWindowMs();
+   if(duration < current || !sparse)
+   {
+      sparse_deep_windows = 0;
+      return;
+   }
+   if(++sparse_deep_windows >= 2)
+   {
+      deep_window_msc = MathMin(current * 2, 86400000);
+      sparse_deep_windows = 0;
+   }
+}
+
 #ifndef ACTIVITY_COLLECTOR_TEST
 #define REMOTE_ACTIVITY_PROJECTION
 #include "TradingLabObservedAccount.mqh"
 
 void ResetAccountCapture()
 {
+   performance.Report(session_id, sequence_number, true);
    ActivityPendingBatch empty_batch;
    pending = empty_batch;
    ActivityPagination empty_page;
@@ -109,6 +141,8 @@ void ResetAccountCapture()
    last_hint_position_id=0;
    startup_pending=true;
    prefer_recent=true;
+   deep_window_msc=0;
+   sparse_deep_windows=0;
    trade_activity_pending=false;
    sequence_number=0;
    ResetRetryState();
@@ -116,6 +150,7 @@ void ResetAccountCapture()
 
 int OnInit()
 {
+   performance.Configure(EnablePerformanceDiagnostics);
    logger.Configure("activity", TerminalId, COLLECTOR_VERSION);
    if(!IsCollectorIngestUrl(IngestUrl))
    {
@@ -166,6 +201,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
+   performance.Report(session_id, sequence_number, true);
    EventKillTimer();
    if(StringLen(pending.body) > 0 && !pending.is_heartbeat &&
       pending.from_msc > 0 && pending.to_msc >= pending.from_msc)
@@ -175,7 +211,18 @@ void OnDeinit(const int reason)
 }
 
 
+void RunCollectorCycle();
+
 void OnTimer()
+{
+   ulong started = performance.Start();
+   performance_lane = PERF_GENERAL;
+   RunCollectorCycle();
+   performance.Record(started, PERF_TIMER, performance_lane);
+   performance.Report(session_id, sequence_number);
+}
+
+void RunCollectorCycle()
 {
    if(!SelectObservedAccount())
       return;
@@ -186,6 +233,7 @@ void OnTimer()
       trade_activity_pending = true;
    if(StringLen(pending.body) > 0)
    {
+      performance_lane = pending.is_heartbeat ? PERF_HEARTBEAT : (pending.is_recent ? PERF_RECENT : PERF_DEEP);
       TrySendPending(GetTickCount64());
       return;
    }
@@ -193,6 +241,7 @@ void OnTimer()
    if(now_tick_ms - last_heartbeat_tick_ms >= (ulong)HeartbeatSeconds * 1000)
    {
       sequence_number++;
+      performance_lane = PERF_HEARTBEAT;
       pending.body = BuildEnvelope(BuildHeartbeatPayload(now_tick_ms), sequence_number,
                                    "heartbeat");
       pending.is_heartbeat = true;
@@ -226,6 +275,7 @@ void OnTimer()
    if(pagination.active)
    {
       pending.is_recent = pagination.is_recent;
+      performance_lane = pending.is_recent ? PERF_RECENT : PERF_DEEP;
       pending.from_msc = pagination.from_msc;
       pending.to_msc = pagination.to_msc;
       string page_reason = RecoveryReason(now_msc, pending.is_recent);
@@ -260,26 +310,32 @@ void OnTimer()
       TrySendPending(now_tick_ms);
       return;
    }
+   performance_lane = pending.is_recent ? PERF_RECENT : PERF_DEEP;
    long selected_from_msc = pending.is_recent ? recent_confirmed_from_msc : confirmed_from_msc;
    long selected_limit_msc = pending.is_recent ? now_msc : recent_confirmed_from_msc;
    if(selected_limit_msc <= selected_from_msc + (long)OverlapSeconds * 1000)
       return;
-   long window_end_msc = selected_from_msc + (long)WindowSeconds * 1000;
+   long window_end_msc = selected_from_msc +
+      (pending.is_recent ? (long)WindowSeconds * 1000 : DeepWindowMs());
    long target_to_msc = window_end_msc < selected_limit_msc ? window_end_msc : selected_limit_msc;
    string reason = RecoveryReason(now_msc, pending.is_recent);
    bool truncated = false;
+   bool sparse = false;
    bool use_pagination = false;
    string payload = "";
    if(preparation.active && preparation.from_msc == selected_from_msc)
       target_to_msc = preparation.to_msc;
    preparation.active = false;
-   payload = BuildActivityPayload(reason, selected_from_msc, target_to_msc, truncated);
+   payload = BuildActivityPayload(reason, selected_from_msc, target_to_msc, truncated, sparse);
    if(payload == "")
       return;
    long duration = target_to_msc - selected_from_msc;
-   bool payload_too_large = Utf8Size(payload) > MAX_PAYLOAD_BYTES - 1024;
+   int payload_bytes = Utf8Size(payload);
+   bool payload_too_large = payload_bytes > MAX_PAYLOAD_BYTES - 1024;
    if(truncated || payload_too_large)
    {
+      if(!pending.is_recent)
+         sparse_deep_windows = 0;
       if(duration <= (long)MinimumWindowSeconds * 1000)
       {
          ActivityPageKey page_start;
@@ -305,6 +361,8 @@ void OnTimer()
          target_to_msc = (halved / 1000) * 1000;
          if(target_to_msc < selected_from_msc + (long)MinimumWindowSeconds * 1000)
             target_to_msc = selected_from_msc + (long)MinimumWindowSeconds * 1000;
+         if(!pending.is_recent && EnableAdaptiveDeepWindow)
+            deep_window_msc = target_to_msc - selected_from_msc;
          preparation.active = true;
          preparation.is_recent = pending.is_recent;
          preparation.from_msc = selected_from_msc;
@@ -324,6 +382,7 @@ void OnTimer()
    pending.to_msc = target_to_msc;
    pending.blocks_recovery = truncated && !use_pagination;
    pending.is_paged = use_pagination;
+   pending.sparse = sparse && payload_bytes > 0 && payload_bytes <= (MAX_PAYLOAD_BYTES - 1024) / 4;
    pending.is_heartbeat = false;
    TrySendPending(GetTickCount64());
 }
@@ -502,7 +561,10 @@ bool FinalizeConfirmedBatch()
    if(pending.is_recent)
       recent_confirmed_from_msc = next_cursor;
    else
+   {
       confirmed_from_msc = next_cursor;
+      ObserveConfirmedDeepWindow(pending.to_msc - pending.from_msc, !pending.is_paged && pending.sparse);
+   }
    pending.blocks_recovery = false;
    pending.is_paged = false;
    pagination.active = false;
@@ -520,11 +582,13 @@ bool FinalizeConfirmedBatch()
 
 bool PersistValue(const string name, const long value)
 {
+   ulong started = performance.Start();
    ResetLastError();
-   if(GlobalVariableSet(name, (double)value) == 0)
-      return false;
-   GlobalVariablesFlush();
-   return true;
+   bool saved = GlobalVariableSet(name, (double)value) != 0;
+   if(saved)
+      GlobalVariablesFlush();
+   performance.Record(started, PERF_CURSOR, performance_lane, saved);
+   return saved;
 }
 
 
@@ -546,19 +610,25 @@ int SendMessage(const string body)
    char response_body[];
    string response_headers = "";
    string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + Token + "\r\n";
+   ulong encoding_started = performance.Start();
    int encoded = StringToCharArray(body, request_body, 0, WHOLE_ARRAY, CP_UTF8);
+   int encoding_error = encoded <= 1 ? GetLastError() : 0;
+   performance.Record(encoding_started, PERF_UTF8, performance_lane, encoded > 1);
    if(encoded <= 1)
    {
-      last_request_error = GetLastError();
+      last_request_error = encoding_error;
       logger.Error("encoding_failed", "local UTF-8 preparation failed; no HTTP request sent",
                    sequence_number, 0, last_request_error);
       return LOCAL_ENCODING_FAILURE;
    }
    ArrayResize(request_body, encoded - 1);
+   ulong http_started = performance.Start();
    ResetLastError();
    int status = WebRequest("POST", IngestUrl, headers, RequestTimeoutMs,
                            request_body, response_body, response_headers);
    last_request_error = GetLastError();
+   performance.Record(http_started, send_attempts > 0 ? PERF_RETRY_HTTP : PERF_INGEST_HTTP,
+                      performance_lane, status == 200 || status == 202);
    if(status == 400)
    {
       // Print only fixed diagnostic codes, never an arbitrary response or the batch.
@@ -578,14 +648,19 @@ int SendMessage(const string body)
 #endif
 
 string BuildActivityPayload(const string reason, const long from_msc, const long to_msc,
-                            bool &truncated)
+                            bool &truncated, bool &sparse)
 {
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
+   ulong selection_started = performance.Start();
    ResetLastError();
-   if(to_msc < from_msc || !HistorySelect((datetime)from_seconds, (datetime)to_seconds))
+   bool selected = to_msc >= from_msc && HistorySelect((datetime)from_seconds, (datetime)to_seconds);
+   int selection_error = selected ? 0 : GetLastError();
+   if(to_msc >= from_msc)
+      performance.Record(selection_started, PERF_HISTORY_SELECT, performance_lane, selected);
+   if(!selected)
    {
-      logger.Warn("history_select_failed", StringFormat("TradingLab activity: HistorySelect failed (%d)", GetLastError()));
+      logger.Warn("history_select_failed", StringFormat("TradingLab activity: HistorySelect failed (%d)", selection_error));
       return "";
    }
    if(HistoryDealsTotal() > MaxItemsPerCollection ||
@@ -598,8 +673,10 @@ string BuildActivityPayload(const string reason, const long from_msc, const long
    bool valid = true;
    int deal_total = 0;
    int order_total = 0;
+   ulong rows_started = performance.Start();
    string deals = BuildHistoricalDeals(from_msc, to_msc, deal_total, valid);
    string orders = BuildHistoricalOrders(from_msc, to_msc, order_total, valid);
+   performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, performance_lane, valid);
    if(!valid)
    {
       logger.Warn("history_invalid", "TradingLab activity: history read returned invalid data");
@@ -608,6 +685,7 @@ string BuildActivityPayload(const string reason, const long from_msc, const long
    bool deals_truncated = deal_total > MaxItemsPerCollection;
    bool orders_truncated = order_total > MaxItemsPerCollection;
    truncated = deals_truncated || orders_truncated;
+   sparse = deal_total <= MaxItemsPerCollection / 4 && order_total <= MaxItemsPerCollection / 4;
    string payload = "{";
    payload += "\"reason\":\"" + reason + "\",";
    payload += "\"identity\":" + BuildIdentity() + ",";
@@ -635,10 +713,15 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
 {
    long from_seconds = from_msc / 1000;
    long to_seconds = (to_msc + 999) / 1000;
+   ulong selection_started = performance.Start();
    ResetLastError();
-   if(to_msc < from_msc || !HistorySelect((datetime)from_seconds, (datetime)to_seconds))
+   bool selected = to_msc >= from_msc && HistorySelect((datetime)from_seconds, (datetime)to_seconds);
+   int selection_error = selected ? 0 : GetLastError();
+   if(to_msc >= from_msc)
+      performance.Record(selection_started, PERF_HISTORY_SELECT, performance_lane, selected);
+   if(!selected)
    {
-      logger.Warn("history_select_failed", StringFormat("TradingLab activity: paged HistorySelect failed (%d)", GetLastError()));
+      logger.Warn("history_select_failed", StringFormat("TradingLab activity: paged HistorySelect failed (%d)", selection_error));
       return "";
    }
 
@@ -670,13 +753,17 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
          return "";
       }
    }
+   ulong scan_started = performance.Start();
    int processed = 0;
    ulong started_ms = GetTickCount64();
    while(page_scan.deal_index < selected_deals || page_scan.order_index < selected_orders)
    {
       if(processed >= MaxHistoryRowsPerCycle ||
          (processed > 0 && GetTickCount64() - started_ms >= (ulong)CycleBudgetMs))
+      {
+         performance.Record(scan_started, PERF_PAGE_SCAN, performance_lane);
          return ""; // Continue the same scan on the next timer; no ACK/cursor change.
+      }
       processed++;
       ActivityPageKey key;
       ResetLastError();
@@ -695,6 +782,7 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
       if(key.ticket == 0 || GetLastError() != 0)
       {
          page_scan.active = false;
+         performance.Record(scan_started, PERF_PAGE_SCAN, performance_lane, false);
          return "";
       }
       if(key.time_msc < from_msc || key.time_msc > to_msc)
@@ -706,8 +794,12 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
       page_scan.snapshot_sum += (ulong)fingerprint;
       ConsiderPageKey(key, after, page_scan.keys, page_scan.key_count, page_scan.remaining_count);
       if(capture_state == CAPTURE_STOPPED)
+      {
+         performance.Record(scan_started, PERF_PAGE_SCAN, performance_lane, false);
          return "";
+      }
    }
+   performance.Record(scan_started, PERF_PAGE_SCAN, performance_lane);
    page_scan.active = false;
    bool valid = true;
    int key_count = page_scan.key_count;
@@ -721,6 +813,7 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
 
    string deals = "[";
    string orders = "[";
+   ulong rows_started = performance.Start();
    int emitted_deals = 0;
    int emitted_orders = 0;
    for(int index = 0; index < key_count; index++)
@@ -730,7 +823,10 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
       {
          string row = BuildHistoricalDeal(key.ticket, valid);
          if(!valid)
+         {
+            performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, performance_lane, false);
             return "";
+         }
          if(emitted_deals++ > 0)
             deals += ",";
          deals += row;
@@ -739,7 +835,10 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
       {
          string row = BuildHistoricalOrder(key.ticket, valid);
          if(!valid)
+         {
+            performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, performance_lane, false);
             return "";
+         }
          if(emitted_orders++ > 0)
             orders += ",";
          orders += row;
@@ -747,6 +846,7 @@ string BuildPagedActivityPayload(const string reason, const long from_msc, const
    }
    deals += "]";
    orders += "]";
+   performance.Record(rows_started, PERF_HISTORY_ROWS_JSON, performance_lane);
    through = page_scan.keys[key_count - 1];
    has_more = page_scan.remaining_count > key_count;
    string page_status = has_more ? "partial" : "paged_complete";
@@ -998,6 +1098,7 @@ string BuildHeartbeatPayload(const ulong now_tick_ms)
 
 string BuildEnvelope(const string payload, const ulong sequence, const string kind)
 {
+   ulong started = performance.Start();
    string event_id = session_id + ":" + IntegerToString((long)sequence);
    string body = "{";
    body += "\"schema_version\":\"" + SCHEMA_VERSION + "\",";
@@ -1008,6 +1109,7 @@ string BuildEnvelope(const string payload, const ulong sequence, const string ki
    body += "\"event_id\":\"" + JsonEscape(event_id) + "\",";
    body += "\"captured_at\":\"" + IsoUtcTimestamp() + "\",";
    body += "\"kind\":\"" + kind + "\",\"payload\":" + payload + "}";
+   performance.Record(started, PERF_ENVELOPE, performance_lane);
    return body;
 }
 
@@ -1027,7 +1129,10 @@ bool PayloadSizeIsValid(const string body)
 int Utf8Size(const string value)
 {
    char encoded[];
-   return StringToCharArray(value, encoded, 0, WHOLE_ARRAY, CP_UTF8) - 1;
+   ulong started = performance.Start();
+   int size = StringToCharArray(value, encoded, 0, WHOLE_ARRAY, CP_UTF8) - 1;
+   performance.Record(started, PERF_UTF8, performance_lane, size > 0);
+   return size;
 }
 
 

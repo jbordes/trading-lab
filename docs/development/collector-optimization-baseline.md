@@ -17,6 +17,28 @@ Demo Juampi, historial configurado desde el 1 de noviembre de 2026 hasta la pues
 
 La proporción de Telemetry depende del intervalo elegido. Los tamaños describen la representación JSON de SQLite. Los hashes incluyen los campos de la fila de negocio y permiten cambiar la agrupación por lotes. Un bróker puede corregir el histórico posteriormente. Ante una discrepancia, comparar por ticket y campo en privado antes de atribuirla al collector.
 
+## Control con almacenamiento nuevo y los mismos collectors
+
+Segunda corrida del 25 de noviembre de 2026 en la demo de Juampi. Se mantuvo abierta la terminal con los EAs operadores, se retiraron ambos collectors y se preservaron las bases anteriores. Con el relay drenado se activaron una central con la misma alta y fecha desde y una cola vacía. El auxiliar guardó los cursores y reinició exclusivamente el estado de Activity de esa cuenta. Activity 0.9.0 y Telemetry 0.3.4 emitieron una sesión cada uno. El estado de la caché de MT5 no se controló.
+
+| Medida | Primera corrida | Segunda corrida de control |
+| --- | ---: | ---: |
+| Primer lote → cobertura completa del mismo intervalo de órdenes y ejecuciones | 29 min 19,908 s | 27 min 40,091 s |
+| Primer lote → primer heartbeat saludable con atraso ≤ 5 s | 29 min 40,041 s | 28 min 30,034 s |
+| Lotes / vacíos / paginados | 136 / 49 / 0 | 135 / 49 / 0 |
+
+El control comenzó a las 19:02:54.507330 UTC y notificó la puesta al día a las 19:31:24.541824 UTC. Para reproducir el primer indicador, recorrer las ventanas completas en orden de admisión central, unir sus intervalos por colección y tomar la primera recepción en que ambas uniones cubran desde 1793491200000 hasta 1795618323000 ms del bróker inclusive. La segunda corrida siguió hasta 1795642264000 ms con cobertura continua. En el corte común coincidieron las huellas indicadas arriba para las 8.021 órdenes y 71 ejecuciones. También coincidieron los campos de ciclo y detalle de las 35 posiciones reconstruidas cuyo inicio y último evento quedaron dentro del corte, comparando la proyección disponible en cada base al leerla. Se recibieron 344 capturas de Telemetry hasta el heartbeat, incluida la anterior al primer lote. La comprobación posterior del relay registró 524 confirmados y cero pendientes o rechazados.
+
+| Métrica del proceso completo de MT5 | Antes de volver a cargar los collectors | Durante la recuperación |
+| --- | ---: | ---: |
+| Muestras / segundos entre primera y última muestra | 67 / 330,57 | 342 / 1.707,67 |
+| CPU media, equivalente de un núcleo lógico | 29,55 % | 29,56 % |
+| CPU p95 de los intervalos de muestreo | 37,46 % | 34,95 % |
+| Pico de memoria residente | 304,73 MiB | 304,88 MiB |
+| Pico de memoria privada | 366,84 MiB | 376,66 MiB |
+
+Se tomó CPU acumulada del proceso y reloj monotónico cada cinco segundos. La media es 100 × segundos de CPU / segundos transcurridos. Los segmentos son consecutivos y de distinta duración. Se desconoce qué fracción corresponde a los collectors y cómo varió la carga de los operadores. La latencia de los EAs y el costo interno por fase siguen pendientes. La diferencia de tiempos entre dos corridas de la misma versión sirve como referencia de variación.
+
 ## Reproducción de la referencia
 
 Abrir la base central mediante URI SQLite con `mode=ro` y `PRAGMA query_only=ON`. Usar un intervalo semiabierto y una sola cuenta/sesión de Activity. Estas consultas reproducen la corrida histórica en esa instalación. En una base con múltiples cuentas, filtrar explícitamente la fuente de cada collector antes de agregar.

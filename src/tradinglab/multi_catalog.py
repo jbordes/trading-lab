@@ -10,11 +10,16 @@ from contextlib import AsyncExitStack, asynccontextmanager, closing
 from datetime import UTC, datetime
 from pathlib import Path
 
+import anyio
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import ClientDisconnect
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from tradinglab.telemetry.central_api import CentralSettings, create_central_app
+from tradinglab.telemetry.contract import MAX_BODY_BYTES
 from tradinglab.telemetry.remote_host import CENTRAL_KEYS
 
 
@@ -117,6 +122,77 @@ def bearer(request: Request) -> str:
     return values[0][7:]
 
 
+class CatalogAdmission:
+    def __init__(self, app: ASGIApp, keys: dict) -> None:
+        self.app = app
+        self.keys = keys
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "").rstrip("/")
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or not (path == "/catalog" or path.startswith(("/resolve/", "/pair/")))
+        ):
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive)
+        try:
+            token = bearer(request)
+            if path.startswith("/resolve/"):
+                role = path.removeprefix("/resolve/")
+                if role == "trading-events-raw":
+                    role = "trading-events"
+                authorized = role in ("account-state", "trading-events") and valid_credential(
+                    token, self.keys["pairing"], role
+                )
+            else:
+                authorized = hmac.compare_digest(token, self.keys["admin"])
+            if not authorized:
+                raise HTTPException(401, "unauthorized")
+            lengths = request.headers.getlist("content-length")
+            if lengths and (
+                len(lengths) != 1
+                or request.headers.getlist("transfer-encoding")
+                or not re.fullmatch(r"[0-9]{1,19}", lengths[0])
+            ):
+                raise HTTPException(400, "invalid_length")
+            length = int(lengths[0]) if lengths else None
+            if length is not None and length > MAX_BODY_BYTES:
+                raise HTTPException(413, "too_large")
+            body = bytearray()
+            with anyio.fail_after(5):
+                async for chunk in request.stream():
+                    if len(body) + len(chunk) > MAX_BODY_BYTES:
+                        raise HTTPException(413, "too_large")
+                    body.extend(chunk)
+            if length is not None and length != len(body):
+                raise HTTPException(400, "incomplete_body")
+        except ClientDisconnect:
+            return
+        except (HTTPException, TimeoutError) as exc:
+            code, detail = (
+                (exc.status_code, exc.detail)
+                if isinstance(exc, HTTPException)
+                else (408, "request_timeout")
+            )
+            await JSONResponse(
+                {"detail": detail}, status_code=code, headers={"Cache-Control": "no-store"}
+            )(scope, receive, send)
+            return
+
+        buffered = True
+
+        async def replay():
+            nonlocal buffered
+            if buffered:
+                buffered = False
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
 def central_app(database: Path, keys: dict, host: str) -> FastAPI:
     hosts = tuple(dict.fromkeys(("localhost", "127.0.0.1", host)))
     inners = {}
@@ -147,11 +223,9 @@ def central_app(database: Path, keys: dict, host: str) -> FastAPI:
             yield
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(hosts))
 
     @app.middleware("http")
     async def authorize_producer(request: Request, call_next):
-        from starlette.responses import JSONResponse
 
         path = request.url.path
         if path.startswith("/accounts/") and request.method == "POST":
@@ -176,6 +250,17 @@ def central_app(database: Path, keys: dict, host: str) -> FastAPI:
 
     @app.get("/health")
     def health():
+        try:
+            with closing(
+                sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.5)
+            ) as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] not in (9, 10):
+                    raise HTTPException(503, "catalog_schema_unavailable")
+                db.execute(
+                    "SELECT account_id FROM mt5_accounts JOIN accounts USING(account_id) LIMIT 1"
+                ).fetchone()
+        except sqlite3.Error:
+            raise HTTPException(503, "catalog_unavailable") from None
         return {"status": "ready"}
 
     @app.get("/catalog")
@@ -248,4 +333,6 @@ def central_app(database: Path, keys: dict, host: str) -> FastAPI:
             return {key: keys[key] for key in ("CENTRAL_ACCOUNT_READ", "CENTRAL_TRADING_READ")}
         raise HTTPException(404)
 
+    app.add_middleware(CatalogAdmission, keys=keys)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(hosts))
     return app

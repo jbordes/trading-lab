@@ -84,6 +84,32 @@ def create_relay_database(path: Path) -> None:
         os.link(staged, path)
 
 
+def _validate_queue(db: sqlite3.Connection, version: int) -> None:
+    if version not in (1, 2):
+        raise RelayStorageError("Esquema de cola no admitido")
+    if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+        raise RelayStorageError("Cola inválida")
+    with closing(sqlite3.connect(":memory:")) as reference:
+        reference.executescript(SCHEMA_V1 if version == 1 else SCHEMA)
+        sql = "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
+        if db.execute(sql).fetchall() != reference.execute(sql).fetchall():
+            raise RelayStorageError("El esquema de cola no coincide")
+    actual = db.execute("SELECT count(*),coalesce(sum(length(body)),0) FROM messages").fetchone()
+    if db.execute("SELECT records,pending_bytes FROM usage WHERE id=1").fetchone() != actual:
+        raise RelayStorageError("Los contadores de cola no coinciden")
+
+
+def inspect_relay_database(path: Path) -> None:
+    if not path.is_file():
+        raise ValueError("Falta la cola previamente vinculada: " + str(path))
+    try:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+            db.execute("BEGIN")
+            _validate_queue(db, db.execute("PRAGMA user_version").fetchone()[0])
+    except sqlite3.Error as exc:
+        raise ValueError("Cola ocupada o ilegible: " + str(path)) from exc
+
+
 class RelayQueue:
     """Serialize local commits; retain deduplication metadata after central ACK."""
 
@@ -108,29 +134,11 @@ class RelayQueue:
                 initial_version = self._db.execute("PRAGMA user_version").fetchone()[0]
                 self._db.execute("BEGIN IMMEDIATE" if initial_version == 1 else "BEGIN")
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (1, 2):
-                    raise RelayStorageError("Esquema de cola no admitido")
-                if self._db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                    raise RelayStorageError("Cola inválida")
-                with closing(sqlite3.connect(":memory:")) as reference:
-                    reference.executescript(SCHEMA_V1 if version == 1 else SCHEMA)
-                    sql = "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
-                    if self._db.execute(sql).fetchall() != reference.execute(sql).fetchall():
-                        raise RelayStorageError("El esquema de cola no coincide")
+                _validate_queue(self._db, version)
                 if version == 1:
                     for statement in INDEXES:
                         self._db.execute(statement)
                     self._db.execute("PRAGMA user_version=2")
-                actual = self._db.execute(
-                    "SELECT count(*),coalesce(sum(length(body)),0) FROM messages"
-                ).fetchone()
-                if (
-                    self._db.execute(
-                        "SELECT records,pending_bytes FROM usage WHERE id=1"
-                    ).fetchone()
-                    != actual
-                ):
-                    raise RelayStorageError("Los contadores de cola no coinciden")
         except BaseException:
             self._db.close()
             raise

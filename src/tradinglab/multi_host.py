@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import uvicorn
 
 from tradinglab.dashboard.auth import validate_dashboard_token
-from tradinglab.installation import private_directory, write_private
+from tradinglab.installation import private_directory, verify_installation_files, write_private
 from tradinglab.multi_catalog import central_app, credential
 from tradinglab.multi_config import Settings, api_request, save_json
 from tradinglab.multi_dashboard import serve_dashboard
@@ -26,7 +26,11 @@ from tradinglab.multi_relay import MultiRelay
 from tradinglab.telemetry.central_schema import create_central_database, validate_central_schema
 from tradinglab.telemetry.operational_job import JobAlreadyRunningError, exclusive_job_lock
 from tradinglab.telemetry.relay_http import relay_listeners
-from tradinglab.telemetry.relay_queue import RelayQueue, create_relay_database
+from tradinglab.telemetry.relay_queue import (
+    RelayQueue,
+    create_relay_database,
+    inspect_relay_database,
+)
 from tradinglab.telemetry.remote_host import CENTRAL_KEYS
 
 SERVICES = ("api", "relay", "dashboard")
@@ -45,9 +49,14 @@ def _keys(path: Path, factory) -> dict:
 def prepare(config: Settings, admin: str, password: str) -> None:
     dest = Path(config.data_dir)
     marker = dest / "setup.version"
+    if dest.parent.resolve(strict=True) != dest.parent or dest.is_symlink() or dest.is_junction():
+        raise ValueError("Ruta de instalación indirecta o inválida")
     if not dest.exists():
         private_directory(dest)
+        verify_installation_files(dest)
         write_private(marker, "2")
+    else:
+        verify_installation_files(dest)
     if dest.is_symlink() or dest.is_junction():
         raise ValueError("La carpeta de datos de TradingLab no puede ser un enlace")
     # Accept the marker of existing SetUp installations when explicitly selected.
@@ -76,6 +85,8 @@ def prepare(config: Settings, admin: str, password: str) -> None:
                 with TemporaryDirectory(dir=dest) as temp:
                     staged = Path(temp) / db.name
                     create_central_database(staged, multicuenta=True)
+                    if os.name != "nt":
+                        staged.chmod(0o600)
                     os.link(staged, db)
             with closing(sqlite3.connect(db)) as connection:
                 validate_central_schema(connection)
@@ -86,6 +97,26 @@ def prepare(config: Settings, admin: str, password: str) -> None:
                 continue
             path = dest / (role + ".private.json")
             stored = _read(path) if path.exists() else {}
+            required = {"api", "id"} | (
+                {"terminal_master", "account-state", "trading-events"}
+                if role == "relay"
+                else {"password", "CENTRAL_ACCOUNT_READ", "CENTRAL_TRADING_READ"}
+            )
+            if path.exists() and (
+                not isinstance(stored, dict)
+                or not all(
+                    isinstance(stored.get(field), str) and stored[field] for field in required
+                )
+            ):
+                raise ValueError("Configuración privada inválida para " + role)
+            if role == "relay":
+                queue_path = dest / "relay.sqlite3"
+                if path.exists():
+                    inspect_relay_database(queue_path)
+                elif queue_path.exists():
+                    raise ValueError(
+                        "Cola existente sin credenciales de relay. Revise la instalación."
+                    )
             if stored and stored["api"] == config.api_base_url:
                 continue
             identity = stored.get("id") or uuid.uuid4().hex
@@ -117,7 +148,9 @@ def prepare(config: Settings, admin: str, password: str) -> None:
                             raise ValueError("Esta cola pertenece a otra instalación central")
                 keys["terminal_master"] = stored.get("terminal_master") or secrets.token_urlsafe(32)
                 if not (dest / "relay.sqlite3").exists():
-                    create_relay_database(dest / "relay.sqlite3")
+                    create_relay_database(queue_path)
+                    if os.name != "nt":
+                        queue_path.chmod(0o600)
             else:
                 keys["password"] = access
             save_json(path, keys | {"id": identity, "api": config.api_base_url})
@@ -208,7 +241,7 @@ def run_service(config: Settings, role: str) -> None:
                         config.relay_port(url)
                         for url in (config.snapshot_ingest_url, config.activity_ingest_url)
                     ]
-                    with relay_listeners(relay, ports):
+                    with relay_listeners(relay, tuple(dict.fromkeys(ports))):
                         worker = threading.Thread(target=relay.forward, args=(stop,), daemon=True)
                         worker.start()
                         try:

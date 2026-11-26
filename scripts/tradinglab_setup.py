@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def main() -> int:
+    from tradinglab.installation import verify_installation_files
     from tradinglab.multi_config import Settings, save_json
     from tradinglab.multi_host import SERVICES, run_service
     from tradinglab.multi_operations import dispatch
@@ -21,7 +22,10 @@ def main() -> int:
         if role not in SERVICES:
             raise ValueError("Servicio desconocido")
         folder = Path(dest)
+        verify_installation_files(folder)
         config = Settings.model_validate_json((folder / "setup.json").read_bytes())
+        if Path(config.data_dir) != folder:
+            raise ValueError("La configuración pertenece a otra carpeta de datos")
         try:
             run_service(config, role)
         except KeyboardInterrupt:

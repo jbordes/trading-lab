@@ -15,12 +15,45 @@ from tradinglab.telemetry.cycle_evidence import cycle_document, position_cycle
 
 
 def refresh_remote_positions(
-    db: sqlite3.Connection, account: str, payload: dict, changes: list[tuple[int, int]]
+    db: sqlite3.Connection,
+    account: str,
+    payload: dict,
+    changes: list[tuple[int, int]],
+    message_id: int,
+    source_id: str,
+    captured: str,
 ) -> None:
     positions = set()
+    repeated = set()
     for entity in ("deal", "order"):
         items = payload[entity + "s"]["items"]
-        if items:
+        if not items:
+            continue
+        # Inspect prior evidence in bulk. Any earlier reassignment or conflicting
+        # version takes the full path, even if the incoming content matches one row.
+        stable_tickets = {
+            row[0]
+            for row in db.execute(
+                """SELECT n.ticket FROM activity_observations n
+                   JOIN activity_observations old ON old.account_id=n.account_id
+                     AND old.entity_type=n.entity_type AND old.ticket=n.ticket
+                     AND old.message_id!=n.message_id
+                   WHERE n.message_id=? AND n.entity_type=?
+                   GROUP BY n.ticket
+                   HAVING max(old.captured_at_utc)<min(n.captured_at_utc)
+                      AND min(old.row_json=n.row_json)=1""",
+                (message_id, entity),
+            )
+        }
+        dirty_tickets = []
+        for item in items:
+            if item["ticket"] in stable_tickets:
+                repeated.update(
+                    p for p in (item["position_id"], item.get("position_by_id")) if p and p != "0"
+                )
+            else:
+                dirty_tickets.append(item["ticket"])
+        if dirty_tickets:
             # Include former assignments if the broker corrects a ticket.
             positions.update(
                 position
@@ -30,7 +63,7 @@ def refresh_remote_positions(
                        FROM activity_observations
                        WHERE account_id=? AND entity_type=?
                          AND ticket IN (SELECT value FROM json_each(?))""",
-                    (account, entity, json.dumps([row["ticket"] for row in items])),
+                    (account, entity, json.dumps(dirty_tickets)),
                 )
                 for position in pair
                 if position and position != "0"
@@ -47,6 +80,22 @@ def refresh_remote_positions(
                 (account, json.dumps(changes)),
             )
         )
+    for position in repeated - positions:
+        # Preserve the same latest witness selected by the full rebuild.
+        existing = db.execute(
+            """SELECT c.captured_at_utc,c.message_id FROM remote_position_cycles c
+               JOIN pending_position_coverage d USING(account_id,position_id)
+               WHERE c.account_id=? AND c.position_id=?""",
+            (account, position),
+        ).fetchone()
+        if existing is None:
+            positions.add(position)
+        elif (captured, message_id) > existing:
+            db.execute(
+                """UPDATE remote_position_cycles SET captured_at_utc=?,message_id=?,source_id=?
+                   WHERE account_id=? AND position_id=?""",
+                (captured, message_id, source_id, account, position),
+            )
     if positions:
         rebuild_positions(db, account, positions)
 

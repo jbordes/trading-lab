@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler
@@ -36,6 +38,7 @@ from tradinglab.telemetry.relay_config import load_relay_producers
 from tradinglab.telemetry.relay_delivery import HttpRelayTransport
 from tradinglab.telemetry.relay_http import create_relay_server, relay_listeners
 from tradinglab.telemetry.relay_queue import (
+    SCHEMA_V1,
     RelayConflict,
     RelayQueue,
     RelayStorageError,
@@ -387,6 +390,24 @@ class RelayTest(unittest.TestCase):
         with self.assertRaises(RelayStorageError):
             self.enqueue(2)
         self.assertEqual(self.queue.status(now=20)["states"], {"pending": 1})
+
+    def test_previous_queue_upgrades_without_losing_pending_message(self):
+        path = self.root / "previous.sqlite3"
+        with closing(sqlite3.connect(path)) as db:
+            db.executescript(SCHEMA_V1)
+            db.execute(
+                "INSERT INTO messages(stream,session,sequence,event_id,digest,body,state,first_seen) "
+                "VALUES ('s','x','9','e','d',x'01','pending',1)"
+            )
+            db.execute("UPDATE usage SET records=1,pending_bytes=1")
+            db.commit()
+        with closing(RelayQueue(path)) as queue:
+            self.assertEqual(queue.status(now=2)["pending_bytes"], 1)
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(
+                db.execute("SELECT sequence,body FROM messages").fetchone(), ("9", b"\x01")
+            )
 
     def test_record_limit_counts_only_unconfirmed_messages(self) -> None:
         self.queue.close()

@@ -19,7 +19,8 @@ from tradinglab.telemetry.admission_v2 import (
     V2AuthenticationError,
     V2AuthorizationError,
 )
-from tradinglab.telemetry.contract import parse_envelope
+from tradinglab.telemetry.contract import TelemetryEnvelope, parse_envelope
+from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 from tradinglab.telemetry.relay_delivery import (
     HttpRelayTransport,
     RelayTransport,
@@ -127,6 +128,18 @@ class RelayIngress:
     def store(
         self, producer: RelayProducer, contract: str, body: bytes, authorization: str, *, now: float
     ) -> tuple[bool, int, bool]:
+        envelope = parse_envelope_v2(body) if contract == "trading-events" else parse_envelope(body)
+        return self.store_envelope(producer, contract, envelope, authorization, now=now)
+
+    def store_envelope(
+        self,
+        producer: RelayProducer,
+        contract: str,
+        envelope: TelemetryEnvelope,
+        authorization: str,
+        *,
+        now: float,
+    ) -> tuple[bool, int, bool]:
         if contract == "trading-events":
             directory = TradingEventsProducerDirectory(
                 (
@@ -139,9 +152,8 @@ class RelayIngress:
                     ),
                 )
             )
-            envelope = directory.authorize(body, authorization).envelope
+            directory.authorize_envelope(envelope, authorization)
         else:
-            envelope = parse_envelope(body)
             if envelope.source_id != producer.source_id:
                 raise V2AuthorizationError(
                     "Fuente no autorizada", reason=AuthorizationRejection.SOURCE

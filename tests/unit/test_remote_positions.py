@@ -7,13 +7,14 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from test_telemetry_v2_sqlite import ACTIVITY_CREDENTIAL, IDENTITY, directory, fixture
 
 from tradinglab.telemetry.admission_v2 import ProducerRole
 from tradinglab.telemetry.central_schema import MULTI_SCHEMA
 from tradinglab.telemetry.remote_activity_upgrade import upgrade
-from tradinglab.telemetry.sqlite_store_v2 import open_v2_registry
+from tradinglab.telemetry.sqlite_store_v2 import open_v2_history_reader, open_v2_registry
 
 
 class RemotePositionsTest(unittest.TestCase):
@@ -39,9 +40,11 @@ class RemotePositionsTest(unittest.TestCase):
                 ("account-demo", "Broker", "1234", "demo", self.start // 1000, 0),
             )
 
-    def send(self, seq, start, end, indices):
+    def send(self, seq, start, end, indices, *, captured=None):
         msg = fixture("activity-position-reconcile")
         msg.update(sequence=seq, event_id=f"synthetic-session-1:{seq}")
+        if captured is not None:
+            msg["captured_at"] = captured
         payload = msg["payload"]
         payload.update(
             reason="recovery", window=dict(from_server_msc=str(start), to_server_msc=str(end))
@@ -69,6 +72,25 @@ class RemotePositionsTest(unittest.TestCase):
             self.assertEqual(items[0].details["close_price"], 4210)
             self.assertEqual(store.position_cycle_magics("account-demo"), ("11122",))
         self.assertEqual(upgrade(self.path, apply=True), (10, 10))
+
+    def test_repeated_evidence_advances_witness_and_lightweight_page_matches(self):
+        upgrade(self.path, apply=True)
+        middle = (self.start + self.end) // 2
+        self.send(1, self.start, middle, [0])
+        self.send(2, middle + 1, self.end, [1])
+        with open_v2_registry(self.path) as store:
+            original = store.position_cycles("account-demo").items[0]
+        with patch("tradinglab.telemetry.remote_positions._rebuild", side_effect=AssertionError):
+            self.send(3, middle + 1, self.end, [1], captured="2026-10-22T08:59:59Z")
+        with open_v2_registry(self.path) as store:
+            expected = store.position_cycles("account-demo", include_details=False)
+        with open_v2_history_reader(self.path) as reader:
+            self.assertEqual(
+                reader.position_cycles("account-demo", include_details=False), expected
+            )
+        item = expected.items[0]
+        self.assertGreater(item.message_id, original.message_id)
+        self.assertEqual(item.cycle, original.cycle)
 
     def test_same_capture_preserves_distinct_windows_for_both_consumers(self):
         upgrade(self.path, apply=True)

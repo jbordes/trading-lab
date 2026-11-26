@@ -70,6 +70,19 @@ class RemotePositionsTest(unittest.TestCase):
             self.assertEqual(store.position_cycle_magics("account-demo"), ("11122",))
         self.assertEqual(upgrade(self.path, apply=True), (10, 10))
 
+    def test_same_capture_preserves_distinct_windows_for_both_consumers(self):
+        upgrade(self.path, apply=True)
+        middle = (self.start + self.end) // 2
+        self.send(1, self.start, middle, [0])
+        self.send(2, middle + 1, self.end, [1])
+        with open_v2_registry(self.path) as store:
+            for entity in ("deal", "order"):
+                report = store.coverage_report(
+                    "account-demo", entity, from_msc=self.start, to_msc=self.end + 1
+                )
+                self.assertEqual(report.complete_ranges, ((str(self.start), str(self.end)),))
+            self.assertEqual(len(store.position_cycles("account-demo").items), 1)
+
     def test_pending_order_placed_before_cutoff_and_partial_closes(self):
         upgrade(self.path, apply=True)
         deals = self.sample["payload"]["deals"]["items"]

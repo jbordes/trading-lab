@@ -692,7 +692,7 @@ function coverageState(coverage, query) {
     coveredUntil = Math.max(coveredUntil, end);
   }
   return {
-    complete: coverage.incomplete_batches === 0 && coveredUntil >= query.toMsc - 1,
+    complete: coveredUntil >= query.toMsc - 1,
     coveredUntil,
     incompleteBatches: coverage.incomplete_batches,
   };
@@ -721,10 +721,11 @@ function renderHistoryCoverage() {
       const earliestGap = Math.min(...states.map((state) => state.coveredUntil));
       title = complete
         ? "SQLite confirma cobertura completa para todo el período filtrado."
-        : `La evidencia no cubre todo el período${incomplete ? `; ${incomplete} lote(s) incompleto(s)` : ""}.`
+        : "La evidencia no cubre todo el período."
           + (earliestGap >= historyQuery.fromMsc
             ? ` Cobertura continua hasta Broker ${operationalTime(earliestGap)?.broker || "desconocido"}.`
             : "");
+      if (incomplete) title += ` Observaciones de cobertura parcial o discrepante: ${incomplete}.`;
     }
   }
   historyCoverage.className = `coverage-indicator ${tone}`;

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
+import logging
 import re
 import sqlite3
 from contextlib import ExitStack, asynccontextmanager, closing
@@ -40,6 +42,10 @@ from tradinglab.telemetry.http_contracts_v2 import (
 )
 from tradinglab.telemetry.persistent_receiver import PersistentTelemetryReceiver
 from tradinglab.telemetry.persistent_receiver_v2 import PersistentV2TelemetryReceiver
+from tradinglab.telemetry.remote_positions import (
+    previously_ambiguous_windows,
+    reconcile_cycle_batch,
+)
 from tradinglab.telemetry.sqlite_store import (
     DealHistoryCursor,
     MessageAdmissionError,
@@ -162,6 +168,16 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
             ).fetchone()
             if source != (settings.account_id, "snapshot"):
                 raise ValueError("La fuente de telemetría no corresponde a la cuenta central")
+            needs_reconciliation = registry.execute("PRAGMA user_version").fetchone()[
+                0
+            ] == 10 and bool(
+                registry.execute(
+                    """SELECT 1 FROM remote_position_cycles WHERE account_id=?
+                       UNION ALL SELECT 1 FROM pending_position_coverage WHERE account_id=? LIMIT 1""",
+                    (settings.account_id, settings.account_id),
+                ).fetchone()
+            )
+        app.state.cycle_status = "projection_rebuilding" if needs_reconciliation else None
         with ExitStack() as stack:
             v1 = PersistentTelemetryReceiver(settings.database, source_id=settings.source_id)
             stack.callback(v1.close)
@@ -173,9 +189,48 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
             )
             stack.callback(v2.close)
             app.state.services = CentralServices(v1, v2)
+            stop_reconciliation = asyncio.Event()
+
+            async def reconcile() -> None:
+                after = ""
+                ambiguous = None
+                while not stop_reconciliation.is_set():
+                    try:
+                        if ambiguous is None:
+                            ambiguous = await anyio.to_thread.run_sync(
+                                previously_ambiguous_windows, database, settings.account_id
+                            )
+                        cursor = await anyio.to_thread.run_sync(
+                            reconcile_cycle_batch, database, settings.account_id, after, ambiguous
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if getattr(exc, "sqlite_errorcode", 0) & 255 in (
+                            sqlite3.SQLITE_BUSY,
+                            sqlite3.SQLITE_LOCKED,
+                        ):
+                            await anyio.sleep(0.5)
+                            continue
+                        app.state.cycle_status = "projection_rebuild_failed"
+                        logging.getLogger(__name__).exception("Error al reconstruir ciclos")
+                        return
+                    except Exception:
+                        app.state.cycle_status = "projection_rebuild_failed"
+                        logging.getLogger(__name__).exception("Error al reconstruir ciclos")
+                        return
+                    if cursor is None:
+                        app.state.cycle_status = None
+                        return
+                    after = cursor
+                    await anyio.sleep(0.05)
+
+            # Mounted account lifespans may be opened and closed by different requests.
+            worker = asyncio.create_task(reconcile()) if needs_reconciliation else None
             try:
                 yield
             finally:
+                if worker is not None:
+                    stop_reconciliation.set()
+                    await worker
                 del app.state.services
 
     app = FastAPI(
@@ -604,6 +659,8 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
     def magics(request: Request):
         if request.query_params:
             raise HTTPException(400, "invalid_query")
+        if request.app.state.cycle_status is not None:
+            raise HTTPException(503, request.app.state.cycle_status)
         return {"magics": list(services(request).trading_events.position_cycle_magics())}
 
     @app.get(
@@ -627,6 +684,8 @@ def create_central_app(settings: CentralSettings) -> FastAPI:
     ):
         try:
             query = parse_position_cycles_query(request.url.query)
+            if request.app.state.cycle_status is not None:
+                raise HTTPException(503, request.app.state.cycle_status)
             page = services(request).trading_events.position_cycles(**query)
         except ValueError:
             raise HTTPException(400, "invalid_position_cycles_query") from None

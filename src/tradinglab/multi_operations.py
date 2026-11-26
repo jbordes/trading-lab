@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 from tradinglab.multi_catalog import Registration, credential
 from tradinglab.multi_config import Settings, api_request, save_json
 from tradinglab.multi_host import SERVICES, launch, prepare, running, stop_service
-from tradinglab.multi_terminal import COLLECTORS, HELPER, stage_collectors
+from tradinglab.multi_terminal import COLLECTORS, HELPER, stage_collectors, verified_collector_build
 from tradinglab.telemetry.operational_job import exclusive_job_lock
 
 
@@ -30,8 +30,7 @@ def attach(root: Path, cfg: Settings, admin: str = "") -> None:
     terminal = Path(cfg.mt5_data_dir).resolve(strict=True)
     registry = dest / "terminals.json"
     binaries = root / "collectors"
-    if not binaries.is_dir():
-        binaries = root / "_storage/setup/compiled"
+    checkout_binaries = None if binaries.is_dir() else verified_collector_build(root)[1]
     with exclusive_job_lock(dest / "prepare.lock"):
         terminals = json.loads(registry.read_bytes()) if registry.exists() else {}
         path_key = os.path.normcase(str(terminal))
@@ -59,6 +58,11 @@ def attach(root: Path, cfg: Settings, admin: str = "") -> None:
                 raise ValueError("La API devolvió una vinculación de terminal inválida")
         with TemporaryDirectory(dir=dest) as tmp:
             presets = Path(tmp)
+            if checkout_binaries is not None:
+                binaries = presets / "compiled"
+                binaries.mkdir()
+                for filename, contents in checkout_binaries.items():
+                    (binaries / filename).write_bytes(contents)
             for name, url, role in zip(
                 COLLECTORS,
                 (cfg.snapshot_ingest_url, cfg.activity_ingest_url),

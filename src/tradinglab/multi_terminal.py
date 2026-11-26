@@ -1,6 +1,7 @@
 """Stage the multicuenta collectors in one explicitly selected MT5 data directory."""
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -10,6 +11,38 @@ from tradinglab.installation import private_directory
 
 COLLECTORS = ("TradingLabTelemetry", "TradingLabActivity")
 HELPER = "TradingLabAttachCollectors"
+
+
+def verified_collector_build(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """Snapshot all checked inputs and EX5s under the Windows compiler's build lock."""
+    source = root / "apps/mt5-telemetry-collector"
+    compiled = root / "_storage/setup/compiled"
+    try:
+        # MetaEditor's build wrapper opens this file with FileShare.None.
+        # Keeping it open prevents a publication throughout this read on Windows.
+        lock = (compiled / "build.lock").open("rb")
+    except PermissionError as exc:
+        raise ValueError("La compilación está en curso o el build no es accesible") from exc
+    with lock:
+        headers = {path.name: path.read_bytes() for path in source.glob("*.mqh")}
+        sources = dict(headers)
+        binaries = {}
+        for name in (*COLLECTORS, HELPER):
+            filename = name + ".mq5"
+            sources[filename] = (source / filename).read_bytes()
+            inputs = headers | {filename: sources[filename]}
+            expected = {key: hashlib.sha256(data).hexdigest() for key, data in inputs.items()}
+            receipt = json.loads((compiled / (name + ".build.json")).read_bytes())
+            binary = (compiled / (name + ".ex5")).read_bytes()
+            if (
+                not binary
+                or not isinstance(receipt, dict)
+                or receipt.get("inputs") != expected
+                or receipt.get("binary") != hashlib.sha256(binary).hexdigest()
+            ):
+                raise ValueError("Recompile MT5 antes de usar " + name)
+            binaries[name + ".ex5"] = binary
+    return sources, binaries
 
 
 def replace_preset(path: Path, encoded: bytes) -> None:

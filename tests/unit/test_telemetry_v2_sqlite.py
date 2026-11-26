@@ -223,7 +223,11 @@ class V2SqliteTest(unittest.TestCase):
                 )
                 self.assertEqual(parsed.cycle.exclusions, item.cycle.exclusions)
                 transport = Mock(spec=LoopbackV2HistoryClient)
-                transport.deal_history.return_value.coverage = {"status": "complete"}
+                transport.deal_history.return_value = Mock(
+                    account_id="account-demo",
+                    coverage={"complete_ranges": [], "incomplete_batches": 0},
+                )
+                transport.order_history.return_value = transport.deal_history.return_value
                 transport.position_cycles.return_value = TelemetryPositionCyclePage(
                     "account-demo", "synthetic-activity", None, (parsed,), None
                 )
@@ -954,6 +958,31 @@ class V2SqliteTest(unittest.TestCase):
                 ),
                 received_at=self.now,
             )
+
+    def test_complete_batch_matches_differently_paginated_session(self) -> None:
+        self._store_two_page_chain()
+        other = fixture("activity-truncated")
+        other.update(session_id="another-terminal", sequence=1, event_id="another-terminal:1")
+        deals = [
+            other["payload"]["deals"]["items"][0]
+            | {"ticket": str(ticket), "time_msc": "1792656030000"}
+            for ticket in (18446744073709551614, 18446744073709551615)
+        ]
+        other["payload"]["deals"] = {"status": "complete", "total": 2, "items": deals}
+        other["payload"]["orders"] = {"status": "complete", "total": 0, "items": []}
+        with open_v2_registry(self.path) as registry:
+            for seq, expected in ((1, True), (2, False)):
+                if seq == 2:
+                    other.update(sequence=seq, event_id="another-terminal:2")
+                    deals[0]["profit"] += 1
+                envelope = directory().authorize(
+                    json.dumps(other).encode(), f"Bearer {ACTIVITY_CREDENTIAL}"
+                )
+                registry.store_authorized(envelope, received_at=self.now)
+                report = registry.coverage_report(
+                    "account-demo", "deal", from_msc=1792656000000, to_msc=1792656060001
+                )
+                self.assertEqual(bool(report.complete_ranges), expected)
 
     def test_chain_query_decodes_only_page_links_and_preserves_uint64_tickets(self) -> None:
         self._store_two_page_chain()

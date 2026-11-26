@@ -31,6 +31,18 @@ class TelemetryBackupTest(unittest.TestCase):
         ).apply(clock=self.now)
         self.plan = BackupPlan(self.root, "pilot.sqlite3")
 
+    def test_multicuenta_backups_restore_both_supported_schemas(self) -> None:
+        from tradinglab.telemetry.central_schema import CENTRAL_SCHEMAS, validate_central_schema
+
+        for version in (9, 10):
+            name = f"multi-{version}.sqlite3"
+            with closing(sqlite3.connect(self.plan.storage / name)) as db:
+                db.executescript(CENTRAL_SCHEMAS[version])
+            result = BackupPlan(self.root, name).apply(clock=self.now)
+            with closing(sqlite3.connect(result.directory / "data.sqlite3")) as restored:
+                validate_central_schema(restored, check_integrity=True)
+                self.assertEqual(restored.execute("PRAGMA user_version").fetchone()[0], version)
+
     def test_online_backup_has_valid_manifest_without_touching_source(self) -> None:
         with open_registry(self.source) as registry:
             registry.register_account(

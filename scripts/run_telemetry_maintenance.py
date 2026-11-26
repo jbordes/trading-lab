@@ -37,14 +37,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         storage = args.storage_root.resolve(strict=True)
-        plan = BackupPlan(ROOT, args.database, storage, (CENTRAL_SCHEMA_VERSION,))
-        _ = plan.source
+        plan = (
+            BackupPlan(ROOT, args.database, storage, (CENTRAL_SCHEMA_VERSION,))
+            if args.daily_account_id is not None
+            else BackupPlan(ROOT, args.database, storage)
+        )
         daily_arguments = {
             "max_days": args.daily_max_days,
             "max_batches": args.daily_max_batches,
             "budget_seconds": args.daily_budget_seconds,
         }
         if not args.apply:
+            _ = plan.source
             print("Vista previa: se crearía una copia SQLite central verificada.")
             if args.daily_account_id is not None:
                 print(

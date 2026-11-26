@@ -70,6 +70,7 @@ int transaction_hint_head = 0;
 int transaction_hint_count = 0;
 long transaction_hints_dropped = 0;
 ulong last_transaction_tick_ms = 0;
+bool data_turn_due = false;
 ulong last_heartbeat_tick_ms = 0;
 ulong last_hint_deal_ticket = 0;
 ulong last_hint_order_ticket = 0;
@@ -139,6 +140,7 @@ void ResetAccountCapture()
    last_hint_deal_ticket=0;
    last_hint_order_ticket=0;
    last_hint_position_id=0;
+   data_turn_due=false;
    startup_pending=true;
    prefer_recent=true;
    deep_window_msc=0;
@@ -238,7 +240,12 @@ void RunCollectorCycle()
       return;
    }
    ulong now_tick_ms = GetTickCount64();
-   if(now_tick_ms - last_heartbeat_tick_ms >= (ulong)HeartbeatSeconds * 1000)
+   bool recent_lane = false;
+   bool data_ready = preparation.active || pagination.active ||
+      SelectRecoveryLane((long)TimeCurrent() * 1000, recent_lane);
+   bool give_data_turn = data_turn_due && data_ready;
+   data_turn_due = false;
+   if(!give_data_turn && now_tick_ms - last_heartbeat_tick_ms >= (ulong)HeartbeatSeconds * 1000)
    {
       sequence_number++;
       performance_lane = PERF_HEARTBEAT;
@@ -257,8 +264,9 @@ void RunCollectorCycle()
    long now_msc = (long)TimeCurrent() * 1000;
    if(!pagination.active && !preparation.active)
    {
-      if(!SelectRecoveryLane(now_msc, pending.is_recent))
+      if(!data_ready)
          return;
+      pending.is_recent = recent_lane;
       if(pending.is_recent && saved_recent_page.active)
       {
          pagination = saved_recent_page;
@@ -473,6 +481,7 @@ bool TrySendPending(const ulong now_ms)
          pending.body = "";
          pending.is_heartbeat = false;
          last_heartbeat_tick_ms = now_ms;
+         data_turn_due = true;
          ResetRetryState();
          return true;
       }

@@ -6,13 +6,16 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "_storage/setup"
-EXPERTS = ("TradingLabTelemetry", "TradingLabActivity", "TradingLabAttachCollectors")
+sys.path.insert(0, str(ROOT / "src"))
+
+from tradinglab.multi_terminal import verified_collector_build  # noqa: E402
 
 
 def package() -> Path:
@@ -21,36 +24,28 @@ def package() -> Path:
         "TradingLab SetUp.cmd",
         "scripts/tradinglab_setup_windows.ps1",
         "scripts/tradinglab_setup.py",
+        "scripts/backup_telemetry_db.py",
+        "scripts/run_telemetry_maintenance.py",
         "pyproject.toml",
         "uv.lock",
         ".python-version",
         "docs/development/tradinglab-setup.md",
     ):
         content[name] = (ROOT / name).read_bytes()
-    assets = set(
-        subprocess.check_output(
-            ["git", "ls-files", "-z", "--", "src/tradinglab/dashboard/static"], cwd=ROOT
-        )
+    tracked = (
+        subprocess.check_output(["git", "ls-files", "-z", "--", "src/tradinglab"], cwd=ROOT)
         .decode()
         .split("\0")
     )
-    for path in sorted((ROOT / "src/tradinglab").rglob("*")):
-        if path.is_file() and (path.suffix == ".py" or path.relative_to(ROOT).as_posix() in assets):
-            if path.is_symlink() or path.name.startswith(".") or "__pycache__" in path.parts:
-                raise ValueError("Archivo inesperado en los fuentes del paquete")
-            content[path.relative_to(ROOT).as_posix()] = path.read_bytes()
-    source = ROOT / "apps/mt5-telemetry-collector"
-    for path in [*(source.glob("*.mqh")), *(source / (name + ".mq5") for name in EXPERTS)]:
-        if path.read_text(encoding="utf-8-sig") != (BUILD / "compiled" / path.name).read_text(
-            encoding="utf-8-sig"
-        ):
-            raise ValueError("Recompile MT5 antes de empaquetar " + path.name)
-        content[path.relative_to(ROOT).as_posix()] = path.read_bytes()
-    for name in EXPERTS:
-        binary = (BUILD / "compiled" / (name + ".ex5")).read_bytes()
-        if not binary:
-            raise ValueError("EX5 vacío")
-        content["collectors/" + name + ".ex5"] = binary
+    for name in sorted(filter(None, tracked)):
+        path = ROOT / name
+        if path.suffix == ".py" or name.startswith("src/tradinglab/dashboard/static/"):
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Archivo inesperado en el paquete: " + name)
+            content[name] = path.read_bytes()
+    sources, binaries = verified_collector_build(ROOT)
+    content.update({"apps/mt5-telemetry-collector/" + name: data for name, data in sources.items()})
+    content.update({"collectors/" + name: data for name, data in binaries.items()})
     content["LEEME.md"] = content["docs/development/tradinglab-setup.md"]
     manifest = {
         "layout": "tradinglab-setup-v2",

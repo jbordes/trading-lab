@@ -83,16 +83,18 @@ REMOTE_MULTI_SCHEMA = MULTI_SCHEMA.replace(
 )
 
 
+CENTRAL_SCHEMAS = {CENTRAL_SCHEMA_VERSION: CENTRAL_SCHEMA, 9: MULTI_SCHEMA, 10: REMOTE_MULTI_SCHEMA}
+
+
 def validate_central_schema(
     connection: sqlite3.Connection, *, check_integrity: bool = False
 ) -> None:
     """Verify central schema; scan all rows only during creation or backup checks."""
 
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    schemas = {CENTRAL_SCHEMA_VERSION: CENTRAL_SCHEMA, 9: MULTI_SCHEMA, 10: REMOTE_MULTI_SCHEMA}
-    if version not in schemas:
+    if version not in CENTRAL_SCHEMAS:
         raise ValueError("Versión de esquema central no admitida")
-    if schema_objects(connection) != expected_schema_objects(schemas[version]):
+    if schema_objects(connection) != expected_schema_objects(CENTRAL_SCHEMAS[version]):
         raise ValueError("El esquema no coincide con TradingLab Central")
     if check_integrity:
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:

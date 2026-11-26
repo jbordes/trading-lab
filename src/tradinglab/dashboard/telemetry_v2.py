@@ -433,6 +433,7 @@ class LoopbackV2HistoryClient:
         magic_number: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> TelemetryHistoricalOrderPage:
         parameters: dict[str, str | int] = {
             "entity": "order",
@@ -449,8 +450,7 @@ class LoopbackV2HistoryClient:
             headers={"Authorization": self._authorization, "Accept": "application/json"},
         )
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                body = response.read(MAX_BODY_BYTES + 1)
+            body = self._history_body(request, timeout_seconds)
         except urllib.error.HTTPError as exc:
             exc.close()
             if 300 <= exc.code < 400:
@@ -1195,6 +1195,16 @@ class V2HistoryProvider:
         remaining()
         if evidence.coverage is None:
             raise DashboardReadError("El receptor no informó cobertura de deals")
+        orders = self._client.order_history(
+            from_msc=from_msc,
+            to_msc=to_msc,
+            magic_number=owner_magic,
+            limit=1,
+            timeout_seconds=remaining(),
+        )
+        if orders.account_id != evidence.account_id or orders.coverage is None:
+            raise DashboardReadError("Cobertura de órdenes no disponible para esta cuenta")
+        coverage = _financial_coverage(evidence.coverage, orders.coverage)
         combined = StreamingWorkbookMetrics()
         by_magic: dict[str, StreamingWorkbookMetrics] = {}
         available_magics: set[str] = set()
@@ -1216,7 +1226,7 @@ class V2HistoryProvider:
                 timeout_seconds=remaining(),
             )
             remaining()
-            if account_id is not None and page.account_id != account_id:
+            if page.account_id != evidence.account_id:
                 raise DashboardReadError("La cuenta cambió durante el cálculo")
             if source_id is not None and page.source_id != source_id:
                 raise DashboardReadError("La fuente cambió durante el cálculo")
@@ -1268,7 +1278,7 @@ class V2HistoryProvider:
             "to_msc": to_msc,
             "magic_number": owner_magic,
             "formula_version": "position-cycle-v1",
-            "coverage": evidence.coverage,
+            "coverage": coverage,
             "reference_capital": float(combined_snapshot.reference_capital),
             "risk_amount": float(combined_snapshot.risk_amount),
             **_streaming_metric_values(combined_snapshot),
@@ -1291,7 +1301,7 @@ class V2HistoryProvider:
             to_msc,
             owner_magic,
             (),
-            evidence.coverage,
+            coverage,
             prepared,
         )
 
@@ -1350,3 +1360,24 @@ class V2HistoryProvider:
             magic_number=magic_number,
             selection=calculate_closed_deal_metrics(deals),
         )
+
+
+def _financial_coverage(deals: dict, orders: dict) -> dict:
+    """Intersect sorted inclusive ranges. Count incomplete entity windows across both feeds."""
+    intersections = []
+    left, right = deals["complete_ranges"], orders["complete_ranges"]
+    i = j = 0
+    while i < len(left) and j < len(right):
+        start = max(int(left[i]["from_msc"]), int(right[j]["from_msc"]))
+        end_left, end_right = int(left[i]["to_msc"]), int(right[j]["to_msc"])
+        end = min(end_left, end_right)
+        if start <= end:
+            intersections.append({"from_msc": str(start), "to_msc": str(end)})
+        if end_left <= end_right:
+            i += 1
+        if end_right <= end_left:
+            j += 1
+    return {
+        "complete_ranges": intersections,
+        "incomplete_batches": deals["incomplete_batches"] + orders["incomplete_batches"],
+    }

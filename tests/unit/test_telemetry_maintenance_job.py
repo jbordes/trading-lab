@@ -13,6 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from tradinglab.telemetry.central_schema import create_central_database
 from tradinglab.telemetry.operational_job import (
     JobAlreadyRunningError,
     exclusive_job_lock,
@@ -27,8 +28,7 @@ class TelemetryMaintenanceJobTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.storage = Path(directory.name)
-        # Only path validation is exercised here; backup behavior is tested separately.
-        (self.storage / "central.sqlite3").write_bytes(b"synthetic-source")
+        create_central_database(self.storage / "central.sqlite3")
         self.status = self.storage / "operations" / "maintenance-status.json"
         self.lock = self.storage / "operations" / "maintenance.lock"
         self.main = runpy.run_path(str(ROOT / "scripts/run_telemetry_maintenance.py"))["main"]

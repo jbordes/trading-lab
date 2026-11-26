@@ -5,13 +5,18 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable
+from contextlib import closing
 from decimal import Decimal
+from pathlib import Path
 
 from tradinglab.metrics.trade_details import trade_details
+from tradinglab.telemetry.activity_coverage import resolved_coverage
 from tradinglab.telemetry.cycle_evidence import cycle_document, position_cycle
 
 
-def refresh_remote_positions(db: sqlite3.Connection, account: str, payload: dict) -> None:
+def refresh_remote_positions(
+    db: sqlite3.Connection, account: str, payload: dict, changes: list[tuple[int, int]]
+) -> None:
     positions = set()
     for entity in ("deal", "order"):
         items = payload[entity + "s"]["items"]
@@ -30,33 +35,25 @@ def refresh_remote_positions(db: sqlite3.Connection, account: str, payload: dict
                 for position in pair
                 if position and position != "0"
             )
-    window = payload["window"]
-    positions.update(
-        row[0]
-        for row in db.execute(
-            """SELECT position_id FROM pending_position_coverage
-               WHERE account_id=? AND from_msc<=? AND to_msc>=?""",
-            (account, int(window["to_server_msc"]), int(window["from_server_msc"])),
+    if changes:
+        positions.update(
+            row[0]
+            for row in db.execute(
+                """SELECT position_id FROM pending_position_coverage p
+                   WHERE account_id=? AND EXISTS (
+                       SELECT 1 FROM json_each(?) r
+                       WHERE p.from_msc<=json_extract(r.value,'$[1]')
+                         AND p.to_msc>=json_extract(r.value,'$[0]'))""",
+                (account, json.dumps(changes)),
+            )
         )
-    )
-    rebuild_positions(db, account, positions)
+    if positions:
+        rebuild_positions(db, account, positions)
 
 
 def _covered(db: sqlite3.Connection, account: str, entity: str, start: int, end: int) -> bool:
-    next_time = start
-    for left, right in db.execute(
-        """SELECT from_server_msc, to_server_msc FROM activity_coverage
-           WHERE account_id=? AND entity_type=? AND status='complete'
-             AND from_server_msc<=? AND to_server_msc>=?
-           ORDER BY from_server_msc, to_server_msc DESC""",
-        (account, entity, end, start),
-    ):
-        if left > next_time:
-            break
-        next_time = max(next_time, right + 1)
-        if next_time > end:
-            return True
-    return False
+    ranges, _ = resolved_coverage(db, account, entity, start, end)
+    return ranges == [[start, end]]
 
 
 def rebuild_positions(db: sqlite3.Connection, account: str, positions: Iterable[str]) -> None:
@@ -135,13 +132,14 @@ def _rebuild(db: sqlite3.Connection, account: str, position: str, cutoff: int) -
         return
     cover_start = max(cutoff, min(start, int(opening["setup_time_msc"])))
     cover_end = max(end, *(int(o["done_time_msc"]) for o in orders))
+    # Retain dependencies for completed cycles too: a later revision can revoke coverage.
+    db.execute(
+        "INSERT INTO pending_position_coverage VALUES (?,?,?,?)",
+        (account, position, cover_start, cover_end),
+    )
     if not all(
         _covered(db, account, entity, cover_start, cover_end) for entity in ("deal", "order")
     ):
-        db.execute(
-            "INSERT INTO pending_position_coverage VALUES (?,?,?,?)",
-            (account, position, cover_start, cover_end),
-        )
         return
     details = trade_details(cycle, {"deals": {"items": deals}, "orders": {"items": orders}})
     db.execute(
@@ -157,3 +155,54 @@ def _rebuild(db: sqlite3.Connection, account: str, position: str, cutoff: int) -
             json.dumps(details),
         ),
     )
+
+
+def previously_ambiguous_windows(database: Path, account: str) -> str:
+    """Snapshot historical page ties once per account; new messages are handled at admission."""
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+        rows = db.execute(
+            """SELECT from_server_msc,to_server_msc FROM activity_coverage WHERE account_id=?
+               GROUP BY entity_type,from_server_msc,to_server_msc,captured_at_utc
+               HAVING count(*)>1 AND (count(DISTINCT session_id)>1 OR count(DISTINCT source_id)>1)
+                 AND max(json_extract(collection_json,'$.status')='paged_complete')=1
+               ORDER BY from_server_msc,to_server_msc""",
+            (account,),
+        )
+        ranges: list[list[int]] = []
+        for lo, hi in rows:
+            if ranges and lo <= ranges[-1][1] + 1:
+                ranges[-1][1] = max(hi, ranges[-1][1])
+            else:
+                ranges.append([lo, hi])
+        return json.dumps(ranges)
+
+
+def reconciliation_candidates(
+    db: sqlite3.Connection, account: str, after: str, ambiguous: str
+) -> list[str]:
+    rows = db.execute(
+        """SELECT c.position_id FROM remote_position_cycles c
+           WHERE c.account_id=? AND c.position_id>? AND NOT EXISTS (
+               SELECT 1 FROM pending_position_coverage p
+               WHERE p.account_id=c.account_id AND p.position_id=c.position_id)
+           UNION ALL
+           SELECT p.position_id FROM pending_position_coverage p
+           LEFT JOIN remote_position_cycles c USING(account_id,position_id)
+           WHERE p.account_id=? AND p.position_id>? AND (c.position_id IS NULL OR EXISTS (
+               SELECT 1 FROM json_each(?) WHERE json_extract(value,'$[0]')<=p.to_msc
+                 AND json_extract(value,'$[1]')>=p.from_msc))
+           ORDER BY 1 LIMIT 100""",
+        (account, after, account, after, ambiguous),
+    )
+    return [row[0] for row in rows]
+
+
+def reconcile_cycle_batch(database: Path, account: str, after: str, ambiguous: str) -> str | None:
+    with closing(sqlite3.connect(database.as_uri() + "?mode=rw", uri=True, timeout=1)) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
+        positions = reconciliation_candidates(db, account, after, ambiguous)
+        if not positions:
+            return None
+        db.execute("BEGIN IMMEDIATE")
+        rebuild_positions(db, account, positions)
+        return positions[-1]

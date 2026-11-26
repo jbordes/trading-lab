@@ -45,6 +45,16 @@ $env:PYTHONPATH = (Resolve-Path src).Path
 
 Con aprobación del operador, repita el comando con `--apply` para actualizar la base elegida y reconstruir los ciclos. Una segunda aplicación sobre el esquema 10 es idempotente. Inicie la API y el relay actualizados antes de cargar Activity 0.9.0. Una base multicuenta nueva ya incluye el esquema 10.
 
+## Copia de una base multicuenta
+
+Desde la carpeta del SetUp, indique el directorio de datos configurado para la API. Compruebe la vista previa y agregue `--apply` al mismo comando para crear una copia verificada en la subcarpeta `backups` de ese directorio.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/backup_telemetry_db.py --storage-root "C:\ruta\datos" --filename central.sqlite3
+```
+
+Al abrir una base de esquema 10, la API comprueba en lectura si hay ciclos que requieren revisión. Cada cuenta con trabajo pendiente los revisa en segundo plano, en transacciones de hasta 100 posiciones. La ingestión y las otras cuentas siguen disponibles. Durante la revisión, las consultas de ciclos y magics de esa cuenta devuelven HTTP 503. Performance financiera usa los intervalos completos comunes a deals y órdenes. Un lote parcial queda como diagnóstico si otra captura válida acredita todo el período.
+
 ## Comprobación manual de aceptación
 
 - En un directorio nuevo, prepare los tres servicios, abra y guarde un perfil y reabra SetUp. Compruebe que la API y el relay continúan cuando cierra la consola del dashboard.

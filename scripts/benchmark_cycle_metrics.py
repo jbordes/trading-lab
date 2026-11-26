@@ -30,6 +30,7 @@ _TO_MSC = _FROM_MSC + 10_000_000_000
 @dataclass(frozen=True, slots=True)
 class _CoverageEvidence:
     coverage: dict[str, object]
+    account_id: str = "synthetic-account"
 
 
 class _SyntheticHistoryClient:
@@ -41,6 +42,8 @@ class _SyntheticHistoryClient:
 
     def deal_history(self, **_: object) -> _CoverageEvidence:
         return _CoverageEvidence({"complete_ranges": [], "incomplete_batches": 0})
+
+    order_history = deal_history
 
     def position_cycles(
         self, *, cursor: str | None = None, **_: object

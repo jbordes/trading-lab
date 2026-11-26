@@ -12,7 +12,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tradinglab.telemetry.central_schema import CENTRAL_SCHEMA_VERSION, DATABASE_NAME
+from tradinglab.telemetry.central_schema import (
+    CENTRAL_SCHEMAS,
+    DATABASE_NAME,
+    validate_central_schema,
+)
 from tradinglab.telemetry.operational_job import JobAlreadyRunningError, exclusive_job_lock
 
 
@@ -28,7 +32,7 @@ class BackupPlan:
     root: Path
     filename: str
     storage_root: Path | None = None
-    expected_schema_versions: tuple[int, ...] = (CENTRAL_SCHEMA_VERSION,)
+    expected_schema_versions: tuple[int, ...] = tuple(CENTRAL_SCHEMAS)
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not DATABASE_NAME.fullmatch(self.filename):
@@ -57,7 +61,16 @@ class BackupPlan:
         path = self.storage / self.filename
         if not path.is_file() or path.is_symlink():
             raise FileNotFoundError("La base local no existe o es un enlace")
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            self.validate(db)
         return path
+
+    def validate(self, db: sqlite3.Connection) -> None:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in self.expected_schema_versions:
+            raise ValueError("Versión SQLite de TradingLab no admitida")
+        if version in CENTRAL_SCHEMAS:
+            validate_central_schema(db)
 
     def apply(self, *, clock: datetime | None = None) -> BackupResult:
         """Publish one verified backup package; never overwrite or prune copies.
@@ -86,6 +99,7 @@ class BackupPlan:
             with closing(sqlite3.connect(copied)) as writer:
                 writer.execute("PRAGMA synchronous = FULL")
                 reader.backup(writer)
+                self.validate(writer)
                 if writer.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                     raise ValueError("La copia no pasó la comprobación SQLite")
                 if writer.execute("PRAGMA foreign_key_check").fetchone() is not None:

@@ -51,7 +51,11 @@ class CycleMetricsBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.clock = Clock()
         self.client = Mock(spec=LoopbackV2HistoryClient)
-        self.client.deal_history.return_value.coverage = {"status": "complete"}
+        self.evidence = Mock(
+            account_id="account", coverage={"complete_ranges": [], "incomplete_batches": 0}
+        )
+        self.client.deal_history.return_value = self.evidence
+        self.client.order_history.return_value = self.evidence
         self.provider = V2HistoryProvider(self.client, metrics_budget_seconds=1, clock=self.clock)
 
     def calculate(self) -> dict[str, object]:
@@ -60,7 +64,7 @@ class CycleMetricsBudgetTest(unittest.TestCase):
     def test_valid_numeric_progress_preserves_metrics_and_passes_remaining_budget(self) -> None:
         def coverage(**_: object) -> Mock:
             self.clock.now += 0.2
-            return Mock(coverage={"status": "complete"})
+            return self.evidence
 
         pages = iter((page(cycle(1, "2"), cycle(1, "10"), cursor="1:10"), page(cycle(2, "1"))))
 
@@ -77,6 +81,23 @@ class CycleMetricsBudgetTest(unittest.TestCase):
         calls = self.client.position_cycles.call_args_list
         self.assertAlmostEqual(calls[0].kwargs["timeout_seconds"], 0.8)
         self.assertAlmostEqual(calls[1].kwargs["timeout_seconds"], 0.5)
+
+    def test_financial_range_requires_both_deals_and_orders(self) -> None:
+        self.evidence.coverage = {
+            "complete_ranges": [{"from_msc": "0", "to_msc": "100"}],
+            "incomplete_batches": 0,
+        }
+        self.client.order_history.return_value = Mock(
+            account_id="account",
+            coverage={
+                "complete_ranges": [{"from_msc": "10", "to_msc": "25"}],
+                "incomplete_batches": 1,
+            },
+        )
+        self.client.position_cycles.return_value = page()
+        self.assertEqual(
+            self.calculate()["coverage"], self.client.order_history.return_value.coverage
+        )
 
     def test_empty_final_page_is_valid(self) -> None:
         self.client.position_cycles.return_value = page()
@@ -110,7 +131,7 @@ class CycleMetricsBudgetTest(unittest.TestCase):
     def test_coverage_uses_the_same_budget_and_prevents_further_reads(self) -> None:
         def coverage(**_: object) -> Mock:
             self.clock.now = 1
-            return Mock(coverage={"status": "complete"})
+            return self.evidence
 
         self.client.deal_history.side_effect = coverage
         with self.assertRaisesRegex(DashboardReadError, "agotó"):

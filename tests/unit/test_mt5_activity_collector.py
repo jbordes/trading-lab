@@ -104,7 +104,8 @@ class Mql5ActivityCollectorSafetyTest(unittest.TestCase):
         for suffix in (".C", ".B", ".R", ".RB"):
             self.assertIn(f'cursor_prefix+"{suffix}"', self.source)
         timer = self.source.split("void OnTimer()", 1)[1].split("void OnTradeTransaction", 1)[0]
-        self.assertIn("SelectRecoveryLane(now_msc, pending.is_recent)", timer)
+        self.assertIn("SelectRecoveryLane((long)TimeCurrent() * 1000, recent_lane)", timer)
+        self.assertIn("data_turn_due && data_ready", timer)
         self.assertNotIn("CheckPilotSafety() || recovery_blocked", timer)
         finalizer = self.source.split("bool FinalizeConfirmedBatch", 1)[1].split(
             "bool PersistValue", 1

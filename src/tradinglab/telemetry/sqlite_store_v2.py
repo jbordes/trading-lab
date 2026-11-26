@@ -19,6 +19,7 @@ from tradinglab.metrics.position_cycles import (
     PositionCycle,
 )
 from tradinglab.metrics.trade_details import trade_details
+from tradinglab.telemetry.activity_coverage import changed_intervals, resolved_coverage
 from tradinglab.telemetry.admission_v2 import (
     AdmissionDisposition,
     AuthorizedEnvelope,
@@ -431,16 +432,32 @@ class V2TelemetryRegistry:
             pagination["snapshot_id"],
             payload["deals"]["total"],
             payload["orders"]["total"],
+            final_after=V2TelemetryRegistry._stored_page_key(pagination["after"]),
         ):
             raise V2StorageError("La página final no tiene una cadena durable completa")
+        records_coverage = payload["reason"] != "position_reconcile" and (
+            pagination is None or paged_complete
+        )
+        remote_projection = connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        lo, hi = int(window["from_server_msc"]), int(window["to_server_msc"])
+        track_dependencies = (
+            remote_projection
+            and records_coverage
+            and connection.execute(
+                """SELECT 1 FROM pending_position_coverage
+               WHERE account_id=? AND from_msc<=? AND to_msc>=? LIMIT 1""",
+                (account_id, hi, lo),
+            ).fetchone()
+            is not None
+        )
+        changes = []
         for collection, entity_type, time_field in (
             ("deals", "deal", "time_msc"),
             ("orders", "order", "done_time_msc"),
         ):
             evidence = payload[collection]
-            records_coverage = payload["reason"] != "position_reconcile" and (
-                pagination is None or paged_complete
-            )
+            if track_dependencies:
+                previous_ranges, _ = resolved_coverage(connection, account_id, entity_type, lo, hi)
             if records_coverage:
                 coverage_status = "complete" if paged_complete else evidence["status"]
                 connection.execute(
@@ -488,6 +505,9 @@ class V2TelemetryRegistry:
                         canonical_row,
                     ),
                 )
+            if track_dependencies:
+                current_ranges, _ = resolved_coverage(connection, account_id, entity_type, lo, hi)
+                changes.extend(changed_intervals(previous_ranges, current_ranges))
         if payload["reason"] == "position_reconcile":
             V2TelemetryRegistry._project_position_cycle(
                 connection,
@@ -498,8 +518,8 @@ class V2TelemetryRegistry:
                 payload["deals"]["items"],
             )
 
-        if connection.execute("PRAGMA user_version").fetchone()[0] == 10:
-            refresh_remote_positions(connection, account_id, payload)
+        if remote_projection:
+            refresh_remote_positions(connection, account_id, payload, changes)
 
     @staticmethod
     def _has_complete_pagination_chain(
@@ -511,6 +531,8 @@ class V2TelemetryRegistry:
         snapshot_id: str,
         deal_total: int,
         order_total: int,
+        *,
+        final_after: tuple[int, int, int] | None = None,
     ) -> bool:
         # Coverage needs page links, not the potentially large deal/order arrays.
         rows = connection.execute(
@@ -549,8 +571,10 @@ class V2TelemetryRegistry:
             visited.add(current)
             for through, has_more in edges.get(current, ()):
                 if not has_more:
-                    return True
-                frontier.append(through)
+                    if final_after is None or current == final_after:
+                        return True
+                else:
+                    frontier.append(through)
         return False
 
     @staticmethod
@@ -726,41 +750,9 @@ class V2TelemetryRegistry:
             raise ValueError("entity_type debe ser deal u order")
         if not 0 <= from_msc < to_msc <= 2**63 - 1:
             raise ValueError("Rango temporal inválido")
-        rows = self._connection.execute(
-            """WITH session_ranked AS (
-                SELECT c.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY captured_at_utc, session_id
-                        ORDER BY length(sequence) DESC, sequence DESC, message_id DESC
-                    ) AS session_rank
-                FROM activity_coverage c
-                WHERE account_id = ? AND entity_type = ?
-            ), capture_summary AS (
-                SELECT captured_at_utc, COUNT(DISTINCT collection_json) AS variants
-                FROM session_ranked WHERE session_rank = 1
-                GROUP BY captured_at_utc
-            ), resolved AS (
-                SELECT s.* FROM session_ranked s
-                JOIN capture_summary c USING(captured_at_utc)
-                WHERE s.session_rank = 1 AND c.variants = 1
-            )
-            SELECT from_server_msc, to_server_msc, status
-            FROM resolved
-            WHERE to_server_msc >= ? AND from_server_msc < ?
-            ORDER BY from_server_msc, to_server_msc""",
-            (account, entity_type, from_msc, to_msc),
-        ).fetchall()
-        merged: list[list[int]] = []
-        incomplete = 0
-        for start_text, end_text, status in rows:
-            if status != "complete":
-                incomplete += 1
-                continue
-            start, end = max(start_text, from_msc), min(end_text, to_msc)
-            if merged and start <= merged[-1][1] + 1:
-                merged[-1][1] = max(merged[-1][1], end)
-            else:
-                merged.append([start, end])
+        merged, incomplete = resolved_coverage(
+            self._connection, account, entity_type, from_msc, to_msc, exclude_start_at_end=True
+        )
         return V2CoverageReport(
             account,
             entity_type,

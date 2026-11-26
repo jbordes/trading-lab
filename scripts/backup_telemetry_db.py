@@ -17,13 +17,14 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--filename", required=True, help="Base existente bajo _storage/.")
+    parser.add_argument("--storage-root", type=Path, default=None)
     parser.add_argument("--apply", action="store_true", help="Crear una copia verificada.")
     args = parser.parse_args(argv)
     try:
-        plan = BackupPlan(ROOT, args.filename)
+        plan = BackupPlan(ROOT, args.filename, args.storage_root)
         source = plan.source
         if not args.apply:
-            print(f"Vista previa: se copiaría {source} en _storage/backups/.")
+            print(f"Vista previa: se copiaría {source} en {plan.storage / 'backups'}.")
             return 0
         result = plan.apply()
         print(f"Copia verificada: {result.directory}")

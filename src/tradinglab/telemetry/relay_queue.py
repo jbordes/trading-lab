@@ -14,7 +14,7 @@ from tempfile import TemporaryDirectory
 from tradinglab.telemetry.admission_v2 import V2StaleSequenceError
 from tradinglab.telemetry.contract import MAX_BODY_BYTES, TelemetryEnvelope
 
-SCHEMA = """
+SCHEMA_V1 = """
 CREATE TABLE messages (
  id INTEGER PRIMARY KEY,
  stream TEXT NOT NULL,
@@ -43,6 +43,15 @@ CREATE TABLE usage (
 INSERT INTO usage VALUES(1,0,0);
 PRAGMA user_version = 1;
 """
+
+
+INDEXES = (
+    "CREATE INDEX session_sequence_order ON messages(stream,session,length(sequence),sequence)",
+    "CREATE INDEX confirmed_time ON messages(confirmed_at) WHERE confirmed_at IS NOT NULL",
+)
+SCHEMA = SCHEMA_V1.replace(
+    "PRAGMA user_version = 1;", ";\n".join((*INDEXES, "PRAGMA user_version = 2;"))
+)
 
 
 class RelayStorageError(RuntimeError):
@@ -94,23 +103,34 @@ class RelayQueue:
         )
         try:
             self._db.execute("PRAGMA synchronous=FULL")
-            if self._db.execute("PRAGMA user_version").fetchone()[0] != 1:
-                raise RelayStorageError("Esquema de cola no admitido")
-            if self._db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                raise RelayStorageError("Cola inválida")
-            with closing(sqlite3.connect(":memory:")) as reference:
-                reference.executescript(SCHEMA)
-                sql = "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
-                if self._db.execute(sql).fetchall() != reference.execute(sql).fetchall():
-                    raise RelayStorageError("El esquema de cola no coincide")
-            actual = self._db.execute(
-                "SELECT count(*),coalesce(sum(length(body)),0) FROM messages"
-            ).fetchone()
-            if (
-                self._db.execute("SELECT records,pending_bytes FROM usage WHERE id=1").fetchone()
-                != actual
-            ):
-                raise RelayStorageError("Los contadores de cola no coinciden")
+            # Serialize first open by two relay processes upgrading the same queue.
+            with self._db:
+                initial_version = self._db.execute("PRAGMA user_version").fetchone()[0]
+                self._db.execute("BEGIN IMMEDIATE" if initial_version == 1 else "BEGIN")
+                version = self._db.execute("PRAGMA user_version").fetchone()[0]
+                if version not in (1, 2):
+                    raise RelayStorageError("Esquema de cola no admitido")
+                if self._db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                    raise RelayStorageError("Cola inválida")
+                with closing(sqlite3.connect(":memory:")) as reference:
+                    reference.executescript(SCHEMA_V1 if version == 1 else SCHEMA)
+                    sql = "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
+                    if self._db.execute(sql).fetchall() != reference.execute(sql).fetchall():
+                        raise RelayStorageError("El esquema de cola no coincide")
+                if version == 1:
+                    for statement in INDEXES:
+                        self._db.execute(statement)
+                    self._db.execute("PRAGMA user_version=2")
+                actual = self._db.execute(
+                    "SELECT count(*),coalesce(sum(length(body)),0) FROM messages"
+                ).fetchone()
+                if (
+                    self._db.execute(
+                        "SELECT records,pending_bytes FROM usage WHERE id=1"
+                    ).fetchone()
+                    != actual
+                ):
+                    raise RelayStorageError("Los contadores de cola no coinciden")
         except BaseException:
             self._db.close()
             raise
@@ -277,28 +297,34 @@ class RelayQueue:
             return count
 
     def status(self, *, now: float) -> dict[str, object]:
-        with self._lock:
+        with self._lock, self._db:
+            self._db.execute("BEGIN")
+            retained_records, pending_bytes = self._db.execute(
+                "SELECT records,pending_bytes FROM usage WHERE id=1"
+            ).fetchone()
             rows = self._db.execute(
-                "SELECT state,count(*),coalesce(sum(length(body)),0),min(first_seen) "
-                "FROM messages GROUP BY state"
+                "SELECT state,count(*),min(first_seen) "
+                "FROM messages WHERE state != 'acked' GROUP BY state"
             ).fetchall()
-            oldest = [r[3] for r in rows if r[0] != "acked"]
-            retained_records = sum(r[1] for r in rows)
-            active_records = retained_records - sum(r[1] for r in rows if r[0] == "acked")
+            oldest = [row[2] for row in rows]
+            states = {row[0]: row[1] for row in rows}
+            active_records = sum(states.values())
+            if retained_records > active_records:
+                states["acked"] = retained_records - active_records
             return {
-                "states": {r[0]: r[1] for r in rows},
+                "states": states,
                 "active_records": active_records,
                 "retained_records": retained_records,
-                "pending_bytes": sum(r[2] for r in rows),
+                "pending_bytes": pending_bytes,
                 "oldest_pending_seconds": max(0, now - min(oldest)) if oldest else 0,
                 "max_records": self._max_records,
                 "max_bytes": self._max_bytes,
                 "last_central_ack_at": self._db.execute(
-                    "SELECT max(confirmed_at) FROM messages"
+                    "SELECT max(confirmed_at) FROM messages WHERE confirmed_at IS NOT NULL"
                 ).fetchone()[0],
                 "errors": dict(
                     self._db.execute(
-                        "SELECT error,count(*) FROM messages WHERE error IS NOT NULL GROUP BY error"
+                        "SELECT error,count(*) FROM messages WHERE state != 'acked' AND error IS NOT NULL GROUP BY error"
                     ).fetchall()
                 ),
             }

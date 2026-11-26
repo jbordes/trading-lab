@@ -13,8 +13,10 @@ from pydantic import ValidationError
 from tradinglab.multi_catalog import Observed, valid_credential
 from tradinglab.multi_config import api_request
 from tradinglab.telemetry.admission_v2 import ProducerIdentity, ProducerRole, V2AuthenticationError
-from tradinglab.telemetry.contract import TelemetryValidationError
+from tradinglab.telemetry.contract import parse_envelope
+from tradinglab.telemetry.contract_v2 import parse_envelope_v2
 from tradinglab.telemetry.relay import RelayForwarder, RelayIngress, RelayProducer
+from tradinglab.telemetry.relay_delivery import HttpRelayTransport
 from tradinglab.telemetry.relay_queue import RelayQueue, RelayStorageError
 
 
@@ -103,27 +105,26 @@ class MultiRelay(RelayIngress):
         self, contract: str, body: bytes, authorization: str, *, now: float
     ) -> tuple[bool, int, bool]:
         terminal_credential = self.terminal_token(authorization, contract)
-        try:
-            source = json.loads(body)["source_id"]
-            if not isinstance(source, str):
-                raise ValueError
-        except (ValueError, TypeError, KeyError, RecursionError) as exc:
-            raise TelemetryValidationError("Mensaje inválido") from exc
+        envelope = parse_envelope_v2(body) if contract == "trading-events" else parse_envelope(body)
         with self.lock:
-            producer = self.routes.get(contract + ":" + source)
+            producer = self.routes.get(contract + ":" + envelope.source_id)
         if producer is None:
             raise RelayStorageError("La fuente necesita resolución")
-        return self.store(
+        return self.store_envelope(
             replace(producer, local_token=terminal_credential),
             contract,
-            body,
+            envelope,
             authorization,
             now=now,
         )
 
     def forward(self, stop: threading.Event) -> None:
-        while not stop.is_set():
-            with self.lock:
-                producers = tuple(self.routes.values())
-            RelayForwarder(self.queue, producers).run_once()
-            stop.wait(0.25)
+        transport = HttpRelayTransport(keep_alive=True)
+        try:
+            while not stop.is_set():
+                with self.lock:
+                    producers = tuple(self.routes.values())
+                RelayForwarder(self.queue, producers, transport=transport).run_once()
+                stop.wait(0.25)
+        finally:
+            transport.close()

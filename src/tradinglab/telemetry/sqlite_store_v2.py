@@ -519,7 +519,9 @@ class V2TelemetryRegistry:
             )
 
         if remote_projection:
-            refresh_remote_positions(connection, account_id, payload, changes)
+            refresh_remote_positions(
+                connection, account_id, payload, changes, message_id, envelope.source_id, captured
+            )
 
     @staticmethod
     def _has_complete_pagination_chain(
@@ -876,9 +878,19 @@ class V2TelemetryRegistry:
         source = (
             "SELECT p.*, NULL AS details_json FROM position_cycle_observations p WHERE account_id=?"
         )
-        if remote:
+        # A history reader holds a SQLite read transaction for the entire page.
+        # Only bypass revision resolution when that snapshot contains no legacy rows.
+        raw_only = (
+            remote
+            and self._connection.in_transaction
+            and not self._connection.execute(
+                "SELECT 1 FROM position_cycle_observations WHERE account_id=? LIMIT 1", (account,)
+            ).fetchone()
+        )
+        detail_column = "r.details_json" if include_details else "NULL"
+        if remote and not raw_only:
             # Same-capture legacy proof takes precedence. A later verified raw cycle can revise it.
-            source += """
+            source += f"""
               AND started_at_msc >= (SELECT history_from*1000 FROM mt5_accounts WHERE account_id=p.account_id)
               UNION ALL SELECT r.message_id,r.account_id,r.position_id,r.owner_magic,r.started_at_msc,
                 r.last_event_at_msc,json_extract(r.cycle_json,'$.lifecycle'),
@@ -887,13 +899,12 @@ class V2TelemetryRegistry:
                 json_array_length(r.cycle_json,'$.exclusions')=0,
                 json_extract(r.cycle_json,'$.observed_magics'),json_extract(r.cycle_json,'$.deal_tickets'),
                 json_extract(r.cycle_json,'$.exclusions'),r.cycle_json,r.source_id,r.captured_at_utc,
-                r.details_json FROM remote_position_cycles r WHERE r.account_id=?
+                {detail_column} AS details_json FROM remote_position_cycles r WHERE r.account_id=?
                 AND NOT EXISTS (SELECT 1 FROM position_cycle_observations p
                                 WHERE p.account_id=r.account_id AND p.position_id=r.position_id
                                   AND p.captured_at_utc >= r.captured_at_utc)"""
             parameters.insert(1, account)
-        rows = self._connection.execute(
-            f"""WITH filtered AS (
+        revisions = f"""WITH filtered AS (
                 {source}
             ), capture_summary AS (
                 SELECT account_id, position_id, captured_at_utc,
@@ -909,14 +920,28 @@ class V2TelemetryRegistry:
                 FROM filtered p
                 JOIN capture_summary c USING(account_id, position_id, captured_at_utc)
                 WHERE c.variants = 1
-            )
+            )"""
+        conflict = """(SELECT MAX(c.captured_at_utc) FROM capture_summary c
+                    WHERE c.position_id = e.position_id AND c.variants > 1
+                      AND c.captured_at_utc > e.captured_at_utc)"""
+        if raw_only:
+            revisions = """WITH eligible AS (
+                SELECT r.*, 1 AS capture_rank, json_extract(cycle_json,'$.lifecycle') AS lifecycle,
+                       json_extract(cycle_json,'$.remaining_signed_volume') AS remaining_signed_volume,
+                       json_extract(cycle_json,'$.observed_net_result') AS observed_net_result,
+                       json_array_length(cycle_json,'$.exclusions')=0 AS eligible,
+                       json_extract(cycle_json,'$.observed_magics') AS observed_magics_json,
+                       json_extract(cycle_json,'$.deal_tickets') AS deal_tickets_json,
+                       json_extract(cycle_json,'$.exclusions') AS exclusions_json
+                FROM remote_position_cycles r WHERE account_id=?)"""
+            conflict = "NULL"
+        rows = self._connection.execute(
+            f"""{revisions}
             SELECT message_id, cycle_json, source_id, captured_at_utc,
                    position_id, owner_magic, started_at_msc, last_event_at_msc,
                    lifecycle, remaining_signed_volume, observed_net_result, eligible,
                    observed_magics_json, deal_tickets_json, exclusions_json,
-                   (SELECT MAX(c.captured_at_utc) FROM capture_summary c
-                    WHERE c.position_id = e.position_id AND c.variants > 1
-                      AND c.captured_at_utc > e.captured_at_utc) AS conflict_at, details_json
+                   {conflict} AS conflict_at, {"details_json" if include_details else "NULL"}
             FROM eligible e WHERE {result_filter}
             ORDER BY last_event_at_msc {direction}, length(position_id) {direction},
                      position_id {direction}

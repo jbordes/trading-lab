@@ -8,14 +8,16 @@ import os
 import re
 import uuid
 from datetime import UTC, datetime
+from http.client import HTTPException
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib import request
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
+from tradinglab.installation import verify_installation_files
 from tradinglab.multi_catalog import Registration, credential
-from tradinglab.multi_config import Settings, api_request, save_json
+from tradinglab.multi_config import NoRedirect, Settings, api_request, save_json
 from tradinglab.multi_host import SERVICES, launch, prepare, running, stop_service
 from tradinglab.multi_terminal import COLLECTORS, HELPER, stage_collectors, verified_collector_build
 from tradinglab.telemetry.operational_job import exclusive_job_lock
@@ -84,41 +86,82 @@ def attach(root: Path, cfg: Settings, admin: str = "") -> None:
             save_json(registry, terminals)
 
 
+def _probe(url: str, role: str) -> tuple[str, int | None]:
+    opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(url, timeout=1.5) as response:
+            body = response.read(65537)
+        if len(body) > 65536:
+            raise ValueError
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            raise ValueError
+        if role == "relay" and data.get("storage") == "relay-outbox":
+            count = data.get("active_records")
+            if type(count) is int and count >= 0:
+                return "disponible", count
+        elif role != "relay" and data.get("status") == "ready":
+            return "disponible", None
+        return "respuesta de estado inesperada", None
+    except HTTPError as exc:
+        exc.close()
+        return f"degradado (HTTP {exc.code})", None
+    except TimeoutError:
+        return "tiempo de espera agotado", None
+    except URLError as exc:
+        return (
+            "tiempo de espera agotado" if isinstance(exc.reason, TimeoutError) else "sin respuesta"
+        ), None
+    except OSError, HTTPException:
+        return "sin respuesta", None
+    except ValueError, RecursionError:
+        return "respuesta inválida", None
+
+
 def status(config: Settings) -> str:
     dest = Path(config.data_dir)
     lines = []
-    for role in SERVICES:
+    for role in config.components:
         if not running(dest, role):
             note = "detenido"
             error = dest / (role + ".error.json")
             if error.is_file():
-                note += " · último error: " + json.loads(error.read_bytes())["error"]
+                try:
+                    code = json.loads(error.read_bytes()).get("error")
+                except ValueError, OSError, AttributeError:
+                    code = None
+                if isinstance(code, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", code):
+                    note += " · último error: " + code
             lines.append(f"{role}: {note}")
             continue
-        port = (
-            config.relay_port(config.snapshot_ingest_url) if role == "relay" else config.port(role)
-        )
-        try:
-            with request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
-                health = json.load(response)
-            extra = f" · lotes pendientes: {health['active_records']}" if role == "relay" else ""
-            lines.append(f"{role}: en ejecución, responde{extra}")
-        except OSError, ValueError, KeyError:
-            lines.append(f"{role}: proceso activo, esperando respuesta")
-    try:
-        with request.build_opener(request.ProxyHandler({})).open(
-            config.api_base_url + "/health", timeout=2
-        ) as response:
-            available = json.load(response).get("status") == "ready"
-    except OSError, ValueError, URLError:
-        available = False
-    lines.append("API configurada: " + ("disponible" if available else "sin respuesta"))
+        if role != "relay":
+            state, _ = _probe(f"http://127.0.0.1:{config.port(role)}/health", role)
+            lines.append(f"{role}: proceso activo · {state}")
+            continue
+        listeners: dict[int, list[str]] = {}
+        for label, url in (
+            ("Telemetry", config.snapshot_ingest_url),
+            ("Activity", config.activity_ingest_url),
+        ):
+            listeners.setdefault(config.relay_port(url), []).append(label)
+        pending = None
+        for port, labels in listeners.items():
+            state, count = _probe(f"http://127.0.0.1:{port}/health", role)
+            lines.append(f"relay {' / '.join(labels)} ({port}): proceso activo · {state}")
+            if count is not None:
+                pending = count
+        if pending is not None:
+            lines.append(f"Cola del relay · lotes pendientes: {pending}")
+    state, _ = _probe(config.api_base_url + "/health", "api")
+    lines.append("API configurada: " + state)
     return "\n".join(lines)
 
 
 def dispatch(root: Path, action: str, form: dict) -> dict:
     cfg = Settings.model_validate(form["config"])
     dest = Path(cfg.data_dir)
+    if action not in {"validate", "prepare"} and (dest.exists() or dest.is_symlink()):
+        verify_installation_files(dest)
     if action == "prepare":
         prepare(cfg, form.get("admin", ""), form.get("password", ""))
         instructions = ["Configuración preparada. Puede iniciar los servicios seleccionados."]
@@ -165,6 +208,8 @@ def dispatch(root: Path, action: str, form: dict) -> dict:
     if not (dest / "setup.json").is_file():
         raise ValueError("Primero prepare este equipo o abra su setup.json existente")
     stored = Settings.model_validate_json((dest / "setup.json").read_bytes())
+    if Path(stored.data_dir) != dest:
+        raise ValueError("La configuración pertenece a otra carpeta de datos")
     if action == "attach":
         attach(
             root,

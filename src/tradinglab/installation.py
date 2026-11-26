@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import subprocess
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -126,6 +127,58 @@ def private_directory(directory: Path) -> None:
         capture_output=True,
         timeout=10,
     )
+
+
+def verify_installation_files(directory: Path) -> None:
+    """Inspect metadata before opening a restored host's configuration or credentials."""
+    if directory.resolve(strict=True) != directory or not directory.is_dir():
+        raise ValueError("Ruta de instalación indirecta o inválida: " + str(directory))
+    paths = [directory]
+    for path in directory.iterdir():
+        if path.suffix not in {
+            ".json",
+            ".sqlite3",
+            ".version",
+            ".lock",
+        } and not path.name.startswith(("central.sqlite3-", "relay.sqlite3-")):
+            continue
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue  # Atomic replacement or transient SQLite journal.
+        if not stat.S_ISREG(info.st_mode) or path.is_junction() or info.st_nlink != 1:
+            raise ValueError("Archivo de instalación indirecto o inválido: " + str(path))
+        paths.append(path)
+    if os.name != "nt":
+        for path in paths:
+            info = path.stat()
+            mask = 0o077 if path == directory or path.suffix in {".json", ".sqlite3"} else 0o022
+            if info.st_uid != os.getuid() or info.st_mode & mask:
+                raise ValueError("Permisos de instalación inseguros: " + str(path))
+        return
+    # Use SIDs and raw descriptors so localized names and null DACLs are unambiguous.
+    script = """
+$ErrorActionPreference = 'Stop'
+$allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18')
+foreach ($item in (ConvertFrom-Json $env:TRADINGLAB_ACL_PATHS)) {
+    $acl = Get-Acl -LiteralPath $item
+    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)
+    if ($raw.Owner.Value -notin ($allowed + 'S-1-5-32-544') -or $null -eq $raw.DiscretionaryAcl) { exit 1 }
+    foreach ($ace in $raw.DiscretionaryAcl) {
+        if ($ace.AceType -eq 'AccessDenied') { continue }
+        if ($ace.AceType -ne 'AccessAllowed' -or $ace.SecurityIdentifier.Value -notin $allowed) { exit 1 }
+    }
+}
+"""
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        env=os.environ | {"TRADINGLAB_ACL_PATHS": json.dumps([str(p) for p in paths])},
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError("Revise el propietario y los permisos privados de " + str(directory))
 
 
 def write_private(path: Path, content: str) -> None:

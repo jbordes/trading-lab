@@ -66,7 +66,7 @@ class Settings(BaseModel):
             self.mt5_data_dir and not Path(self.mt5_data_dir).is_absolute()
         ):
             raise ValueError("Seleccione carpetas absolutas")
-        ports = []
+        ports = {}
         for role, url, suffix in (
             ("api", self.api_base_url, None),
             ("dashboard", self.dashboard_url, "/dashboard"),
@@ -110,9 +110,9 @@ class Settings(BaseModel):
             else:
                 port = self.port(role)
             if role in self.components:
-                if port < 1024 or port in ports:
+                if port < 1024 or (port in ports and not (role == ports[port] == "relay")):
                     raise ValueError("Revise los puertos locales de escucha y del proxy HTTPS")
-                ports.append(port)
+                ports[port] = role
         if len(set(self.components)) != len(self.components):
             raise ValueError("Componente duplicado")
         return self

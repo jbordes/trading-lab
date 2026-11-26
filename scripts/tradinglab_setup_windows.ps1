@@ -18,12 +18,43 @@ function Find-Uv {
 }
 try {
     $uv = Find-Uv
+    if ($uv) {
+        $reported = & $uv --version
+        if ($LASTEXITCODE -ne 0 -or $reported -notmatch '^uv (\d+\.\d+\.\d+)\b' -or [version]$Matches[1] -lt [version]'0.13.0') { $uv = $null }
+    }
     if (!$uv) {
-        $installer = Join-Path ([IO.Path]::GetTempPath()) ("tradinglab-uv-"+[guid]::NewGuid().ToString('N')+".ps1")
-        Invoke-WebRequest -UseBasicParsing 'https://astral.sh/uv/install.ps1' -OutFile $installer
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
-        if ($LASTEXITCODE -ne 0) { throw 'Falló la instalación de uv.' }
-        $uv = Find-Uv
+        # SHA-256 and artifact paths published by PyPI for uv 0.13.0 (CI version).
+        $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+        $platform, $hash, $blob = switch ($arch) {
+            'AMD64' { 'win_amd64','0367b4e0ae4dcef32da4aa2ad2f3853b6ad81d50c187abe50d343d892b8fea21','b20073abae6cafcdb868d42b2c71bf12c9c2eb06a8d229a09569760c41b7948d' }
+            'ARM64' { 'win_arm64','286d5976bffe3ed0c62601c0393adb3748f0d88aa24f38cd80ebab773f5b5f74','e792cf7f8765cb61e56d61015e6e01acbe1edfe3ee5029ab9137c85239ddb4f8' }
+            'x86' { 'win32','0d9886f69a2e6f9e85a7a11c37f208353aa559bdb5c91d7b69fe883c038439a1','556b98b4a16c96b9a6fefd8795228643a2e849347d54cc91cc2d07bb21afa572' }
+            default { throw "Arquitectura no admitida: $arch" }
+        }
+        $folder = Join-Path $env:LOCALAPPDATA "TradingLab\tools\uv-0.13.0-$platform"
+        [IO.Directory]::CreateDirectory($folder) | Out-Null
+        $uv = Join-Path $folder 'uv.exe'
+        if (![IO.File]::Exists($uv)) {
+            $name = "uv-0.13.0-py3-none-$platform.whl"
+            $url = 'https://files.pythonhosted.org/packages/{0}/{1}/{2}/{3}' -f $blob.Substring(0,2),$blob.Substring(2,2),$blob.Substring(4),$name
+            $stage = Join-Path $folder ([guid]::NewGuid().ToString('N'))
+            $wheel = "$stage.whl"
+            try {
+                Invoke-WebRequest -UseBasicParsing $url -OutFile $wheel
+                if ((Get-FileHash -LiteralPath $wheel -Algorithm SHA256).Hash -ne $hash) { throw 'Huella de uv incorrecta.' }
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $zip = [IO.Compression.ZipFile]::OpenRead($wheel)
+                try {
+                    $entries = @($zip.Entries | Where-Object Name -ceq 'uv.exe')
+                    if ($entries.Count -ne 1) { throw 'Contenido de uv inesperado.' }
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $stage)
+                } finally { $zip.Dispose() }
+                try { [IO.File]::Move($stage,$uv) } catch [IO.IOException] { if (![IO.File]::Exists($uv)) { throw } }
+            } finally {
+                [IO.File]::Delete($wheel)
+                [IO.File]::Delete($stage)
+            }
+        }
     }
     if (!$uv) { throw 'No se encontró uv.' }
     & $uv sync --locked --no-dev

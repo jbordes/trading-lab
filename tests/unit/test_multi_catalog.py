@@ -75,3 +75,21 @@ class MultiCatalogTest(unittest.TestCase):
                     self.assertEqual(missing.headers["X-TradingLab-Reason"], reason)
                 wrong_role = api.post("/resolve/account-state", json=identity, headers=activity)
                 self.assertEqual(wrong_role.status_code, 401)
+
+    def test_catalog_admission_precedes_parsing_and_health_never_creates_storage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "central.sqlite3"
+            keys = {"admin": "fixture-admin", "pairing": "fixture-pairing"}
+            api = TestClient(central_app(database, keys, "localhost"), base_url="http://localhost")
+            self.assertEqual(api.post("/catalog", content=b"{").status_code, 401)
+            self.assertEqual(
+                api.post(
+                    "/catalog",
+                    headers={"Authorization": "Bearer fixture-admin"},
+                    content=b"x" * (256 * 1024 + 1),
+                ).status_code,
+                413,
+            )
+            self.assertEqual(api.get("/health").status_code, 503)
+            self.assertFalse(database.exists())
+            api.close()
